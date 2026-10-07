@@ -45,7 +45,7 @@
 \providededit{段生命周期和记录解码已完成；公开 \method{read(offset,maxRecords,maxBytes)} 会把默认 hint 传给内部方法。}{\pathcode{exercises/src/main/java/io/simplekafka/storage/SegmentLog.java}：\method{readFrom(long offset,long bytePositionHint,int maxRecords,int maxBytes)}。}
 \lessoncontract{参数 offset 可从 baseOffset 到 LEO（含 LEO 的空读）；段内超出有效范围报 \method{OFFSET_OUT_OF_RANGE}。maxRecords/maxBytes 必须为正。返回记录按 offset 连续且不超过两个预算；第一条自身超 byte budget 时结果为空。有效 hint 必须位于记录边界且不能越过目标 offset，否则报 \method{INVALID_REQUEST}。读取不得移动追加位置或改变 LEO。}
 \lessonhints{把“找到候选字节位置”与“输出应从哪个 offset 开始”视为两个独立问题。}{为 byte budget 计算完整记录占用，并考虑 length 前缀；不按 payload 字节数近似。}{设计一个 hint 指向目标之前的边界、另一个越过目标的边界，分别验证可用和拒绝条件。}
-\expected{追加 offset 0–4 后，\pathcode{read(2, 2, 4096)} 得 offset 2、3。再调用 \pathcode{readFrom(2,hint,2,4096)}，把 hint 设为 offset 1 记录在文件中的实际起始字节位置，仍应返回 offset 2、3；hint 是物理位置，不是逻辑 offset 数字。\pathcode{read(5, 2, 4096)} 返回空；第一条完整记录超过 maxBytes 时返回空而不是部分 bytes。对应 \method{Step03Test}。}
+\expected{追加 offset 0–4 后，\pathcode{read(2, 2, 4096)} 得 offset 2、3。再调用 \pathcode{readFrom(2,hint,2,4096)}，把 hint 设为 offset 1 记录在文件中的实际起始字节位置，仍应返回 offset 2、3；hint 是物理位置，不是逻辑 offset 数字。\pathcode{read(5, 2, 4096)} 返回空；从 offset 1 以 66 byte 预算读取恰好返回 1、2，以更小预算只返回 1。第一条完整记录超过 maxBytes 时返回空而不是部分 bytes。对应 \method{Step03Test}。}
 \pitfalls{offset 2 不是文件第 2 字节；将两者混为一谈会在索引出现后随机丢记录。忽略前缀预算会超过调用者内存预算。真实 Kafka fetch 通常以 batch 与网络字节上限协商，本实现以单记录为原子返回单位，消费跨段的总预算由下一章统一处理。}
 \lessoncommand{3}
 \lessonquestions{稀疏索引为什么只能提供搜索起点，不能直接决定读取结果？}{第一条记录比 maxBytes 大时，返回部分记录会造成什么问题？}

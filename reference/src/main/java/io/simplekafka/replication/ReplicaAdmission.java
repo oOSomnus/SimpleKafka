@@ -7,13 +7,18 @@ import io.simplekafka.cluster.ClusterAuthority.PartitionState;
 import io.simplekafka.cluster.RecoveryProof;
 import io.simplekafka.cluster.RecoveryProofRegistry;
 import io.simplekafka.model.TopicPartition;
+import io.simplekafka.storage.PartitionLog;
 import java.util.Objects;
 
 /** Adds a recovered replica only while its proof still describes the current leader prefix. */
 public final class ReplicaAdmission {
     private final ClusterAuthority authority;
+    private final PartitionLog localLog;
 
-    public ReplicaAdmission(ClusterAuthority authority) { this.authority = Objects.requireNonNull(authority); }
+    public ReplicaAdmission(ClusterAuthority authority, PartitionLog localLog) {
+        this.authority = Objects.requireNonNull(authority);
+        this.localLog = Objects.requireNonNull(localLog);
+    }
 
     public boolean tryAdd(int brokerId, TopicPartition tp, int epoch) {
         if (brokerId < 0 || epoch < 0) throw new CourseException(ErrorCode.INVALID_REQUEST, "negative broker id or epoch");
@@ -24,21 +29,25 @@ public final class ReplicaAdmission {
             if (!state.assigned(brokerId)) throw new CourseException(ErrorCode.INVALID_REQUEST, "broker is not assigned to partition");
             if (epoch != state.epoch || !online || brokerId == state.leaderId) return false;
             if (state.isr.contains(brokerId)) return true;
-            RecoveryProof proof = RecoveryProofRegistry.find(authority, tp, brokerId).orElse(null);
-            long leaderLeo = state.reportedLEO.getOrDefault(state.leaderId, -1L);
-            if (proof == null || proof.brokerId() != brokerId || !proof.tp().equals(tp)
-                    || proof.epoch() != state.epoch || proof.leaderLEO() != leaderLeo
-                    || proof.localLEO() != leaderLeo || proof.highWatermark() > proof.leaderLEO()) {
+            synchronized (localLog) {
+                RecoveryProof proof = RecoveryProofRegistry.find(authority, tp, brokerId).orElse(null);
+                long leaderLeo = state.reportedLEO.getOrDefault(state.leaderId, -1L);
+                if (proof == null || proof.brokerId() != brokerId || !proof.tp().equals(tp)
+                        || proof.epoch() != state.epoch || proof.leaderLEO() != leaderLeo
+                        || proof.localLEO() != leaderLeo || proof.highWatermark() > proof.leaderLEO()
+                        || proof.localLog() != localLog || proof.localMutationVersion() != localLog.mutationVersion()
+                        || localLog.logStartOffset() != 0 || localLog.logEndOffset() != leaderLeo) {
+                    RecoveryProofRegistry.clear(authority, tp, brokerId);
+                    return false;
+                }
+                state.isr.add(brokerId);
+                state.reportedLEO.put(brokerId, leaderLeo);
+                state.lastCaughtUpMillis.put(brokerId, authority.clock().nowMillis());
+                advanceHighWatermark(state);
+                state.changed.signalAll();
                 RecoveryProofRegistry.clear(authority, tp, brokerId);
-                return false;
+                return true;
             }
-            state.isr.add(brokerId);
-            state.reportedLEO.put(brokerId, leaderLeo);
-            state.lastCaughtUpMillis.put(brokerId, authority.clock().nowMillis());
-            advanceHighWatermark(state);
-            state.changed.signalAll();
-            RecoveryProofRegistry.clear(authority, tp, brokerId);
-            return true;
         } finally {
             state.lock.unlock();
         }

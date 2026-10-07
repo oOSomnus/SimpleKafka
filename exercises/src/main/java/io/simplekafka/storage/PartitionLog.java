@@ -24,6 +24,7 @@ public final class PartitionLog implements AutoCloseable {
     private final ReentrantLock lock = new ReentrantLock();
     private final TreeMap<Long, SegmentEntry> segments = new TreeMap<>();
     private boolean closed;
+    private long mutationVersion;
 
     public PartitionLog(Path directory, long segmentBytes, int indexInterval) {
         if (directory == null || segmentBytes <= 0 || indexInterval <= 0)
@@ -34,8 +35,9 @@ public final class PartitionLog implements AutoCloseable {
         initialize();
     }
 
-    /** Step 6: append a prevalidated batch across byte-limited segments with contiguous global offsets. See Step06Test and book step 6. */
-    public AppendResult append(List<RecordData> records) {
+    /** Step 6: append a prevalidated batch across byte-limited segments with contiguous global offsets.
+     * Call {@link #markMutation()} once after all input validation and before the first write. See Step06Test and book step 6. */
+    public synchronized AppendResult append(List<RecordData> records) {
         throw new ExerciseNotImplementedException(6, "PartitionLog.append");
     }
 
@@ -44,15 +46,19 @@ public final class PartitionLog implements AutoCloseable {
         throw new ExerciseNotImplementedException(6, "PartitionLog.read");
     }
 
-    /** Step 7: delete only closed segments whose final offset is before the requested bound; return the actual new start. See Step07Test and book step 7. */
-    public long deleteBefore(long offset) {
+    /** Step 7: delete only closed segments whose final offset is before the requested bound; return the actual new start.
+     * Call {@link #markMutation()} once before the first deletion that changes the log. See Step07Test and book step 7. */
+    public synchronized long deleteBefore(long offset) {
         throw new ExerciseNotImplementedException(7, "PartitionLog.deleteBefore");
     }
 
-    /** Step 8: retain the prefix below the requested next offset, remove later segments, and rebuild the active index. See Step08Test and book step 8. */
-    public void truncateTo(long nextOffset) {
+
+    /** Step 8: retain the prefix below the requested next offset, remove later segments, and rebuild the active index.
+     * For a valid non-no-op truncation, call {@link #markMutation()} before the first write/delete. See Step08Test and book step 8. */
+    public synchronized void truncateTo(long nextOffset) {
         throw new ExerciseNotImplementedException(8, "PartitionLog.truncateTo");
     }
+
 
     public long logStartOffset() {
         lock.lock();
@@ -65,6 +71,13 @@ public final class PartitionLog implements AutoCloseable {
         try { ensureOpen(); return segments.lastEntry().getValue().log.logEndOffset(); }
         finally { lock.unlock(); }
     }
+    /** In-memory generation for detecting changes made through this open log instance. */
+    public long mutationVersion() {
+        lock.lock();
+        try { ensureOpen(); return mutationVersion; }
+        finally { lock.unlock(); }
+    }
+
 
     private void initialize() {
         try {
@@ -146,6 +159,11 @@ public final class PartitionLog implements AutoCloseable {
         if (closed) throw new CourseException(ErrorCode.STORAGE_ERROR, "partition log is closed: " + directory);
     }
 
+    /** Call under the partition-log lock immediately before the first persistent mutation in a valid operation. */
+    private void markMutation() {
+        mutationVersion++;
+    }
+
     private static Path indexPath(Path logFile) {
         String name = logFile.getFileName().toString();
         return logFile.resolveSibling(name.substring(0, name.length() - ".log".length()) + ".index");
@@ -155,7 +173,7 @@ public final class PartitionLog implements AutoCloseable {
         return new CourseException(ErrorCode.STORAGE_ERROR, "failed to " + action, cause);
     }
 
-    @Override public void close() {
+    @Override public synchronized void close() {
         lock.lock();
         try {
             if (closed) return;

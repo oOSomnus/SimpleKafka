@@ -24,7 +24,7 @@ public final class FollowerReplicator {
         this.replicaState = Objects.requireNonNull(replicaState);
     }
 
-    /** Step 21: fetch one bounded TCP batch and append its contiguous suffix. See Step21Test and book step 21. */
+    /** Step 21: capture role/epoch under the state monitor, perform RPC outside it, then recheck and append under it. */
     public int pollOnce(int maxRecords, int maxBytes) {
         throw new ExerciseNotImplementedException(21, "FollowerReplicator.pollOnce");
     }

@@ -39,9 +39,9 @@ public final class SimpleConsumer implements AutoCloseable {
     }
 
     /**
-     * Step 14: replace the manual assignment, de-duplicate and sort partitions, and start at zero.
-     * Contract: do not consult committed offsets; new positions are zero. Test: Step14Test.
-     * Lesson: docs/book/chapters/04-client-offset.tex, Step 14.
+     * Step 14: replace the manual assignment, de-duplicate and sort partitions, and initialize only new positions to zero.
+     * Contract: retain positions for partitions that remain assigned; do not consult committed offsets.
+     * Test: Step14Test. Lesson: docs/book/chapters/04-client-offset.tex, Step 14.
      */
     public void assign(Collection<TopicPartition> partitions) {
         throw new ExerciseNotImplementedException(14, "assign");
@@ -92,8 +92,32 @@ public final class SimpleConsumer implements AutoCloseable {
 
     void setGroupToken(GroupToken token) { this.token = token; }
 
+    /**
+     * Replaces a group assignment: retained positions survive, revoked partitions are dropped,
+     * and only newly assigned partitions resume from their committed next offset or zero.
+     */
     void applyGroupAssignment(Collection<TopicPartition> partitions) {
-        resume(partitions);
+        ensureOpen();
+        Objects.requireNonNull(partitions, "partitions");
+        TreeMap<TopicPartition, Long> replacement = new TreeMap<>();
+        try {
+            for (TopicPartition tp : partitions) {
+                Objects.requireNonNull(tp);
+                Long existing = positions.get(tp);
+                replacement.put(tp, existing);
+            }
+        } catch (RuntimeException exception) {
+            throw new CourseException(ErrorCode.INVALID_REQUEST, "invalid group assignment", exception);
+        }
+        for (Map.Entry<TopicPartition, Long> entry : replacement.entrySet()) {
+            if (entry.getValue() != null) continue;
+            Messages.OffsetBody body = ClientSupport.requireBody(
+                    controlCall(new Messages.FetchOffsetRequest(new OffsetKey(group, entry.getKey()))),
+                    Messages.OffsetBody.class);
+            entry.setValue(body.nextOffset().orElse(0));
+        }
+        positions.clear();
+        positions.putAll(replacement);
     }
     Messages.Reply controlCall(Messages.Request request) {
         if (router != null) {

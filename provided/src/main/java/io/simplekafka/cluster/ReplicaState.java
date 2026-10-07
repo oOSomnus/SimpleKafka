@@ -13,7 +13,7 @@ public final class ReplicaState {
     public int epoch() { return epoch; }
     public boolean isLeader() { return leader; }
     public boolean isOnline() { return online; }
-    public void update(int epoch, boolean leader, boolean online) {
+    public synchronized void update(int epoch, boolean leader, boolean online) {
         this.epoch = epoch; this.leader = leader; this.online = online;
     }
 }

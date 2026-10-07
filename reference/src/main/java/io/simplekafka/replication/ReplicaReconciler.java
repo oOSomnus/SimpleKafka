@@ -47,6 +47,7 @@ public final class ReplicaReconciler {
         int capturedEpoch;
         long capturedHw;
         long capturedLeaderLeo;
+        long localMutationVersion = log.mutationVersion();
         state.lock.lock();
         try {
             if (expectedEpoch != state.epoch) throw new CourseException(ErrorCode.FENCED_EPOCH, "reconciliation epoch is stale");
@@ -69,8 +70,6 @@ public final class ReplicaReconciler {
             throw new CourseException(ErrorCode.CORRUPT_RECORD, "full-prefix reconciliation requires log start offset 0");
         List<LogRecord> localRecords = readPrefix(localLeo);
         long mismatch = firstMismatch(localRecords, leaderRecords, localLeo, capturedLeaderLeo);
-        if (mismatch >= 0 && mismatch < capturedHw)
-            throw new CourseException(ErrorCode.CORRUPT_RECORD, "replica diverges inside the captured committed prefix at offset " + mismatch);
         boolean truncate = mismatch >= 0 || localLeo > capturedLeaderLeo;
         long divergence = mismatch >= 0 ? mismatch : Math.min(localLeo, capturedLeaderLeo);
 
@@ -78,28 +77,33 @@ public final class ReplicaReconciler {
         try {
             if (state.epoch != capturedEpoch || state.leaderId != leaderId)
                 throw new CourseException(ErrorCode.FENCED_EPOCH, "leader changed during reconciliation");
-            if (log.logEndOffset() != localLeo || log.logStartOffset() != localStart)
-                throw new CourseException(ErrorCode.REQUEST_TIMEOUT, "local log changed during reconciliation");
-            if (state.highWatermark > capturedLeaderLeo)
-                throw new CourseException(ErrorCode.CORRUPT_RECORD, "captured leader prefix no longer contains the committed high watermark");
-            if (truncate && divergence < state.highWatermark)
-                throw new CourseException(ErrorCode.CORRUPT_RECORD, "replica diverges inside the current committed prefix at offset " + divergence);
+            synchronized (log) {
+                if (log.logEndOffset() != localLeo || log.logStartOffset() != localStart
+                        || log.mutationVersion() != localMutationVersion)
+                    throw new CourseException(ErrorCode.REQUEST_TIMEOUT, "local log changed during reconciliation");
+                if (state.highWatermark > capturedLeaderLeo)
+                    throw new CourseException(ErrorCode.CORRUPT_RECORD, "captured leader prefix no longer contains the committed high watermark");
+                if (mismatch >= 0 && mismatch < capturedHw)
+                    throw new CourseException(ErrorCode.CORRUPT_RECORD, "replica diverges inside the captured committed prefix at offset " + mismatch);
+                if (truncate && divergence < state.highWatermark)
+                    throw new CourseException(ErrorCode.CORRUPT_RECORD, "replica diverges inside the current committed prefix at offset " + divergence);
 
-            if (truncate && divergence < localLeo) log.truncateTo(divergence);
-            long appendFrom = truncate ? divergence : localLeo;
-            if (appendFrom < capturedLeaderLeo) {
-                List<RecordData> suffix = new ArrayList<>();
-                for (long offset = appendFrom; offset < capturedLeaderLeo; offset++)
-                    suffix.add(leaderRecords.get(Math.toIntExact(offset)).data());
-                log.append(suffix);
+                if (truncate && divergence < localLeo) log.truncateTo(divergence);
+                long appendFrom = truncate ? divergence : localLeo;
+                if (appendFrom < capturedLeaderLeo) {
+                    List<RecordData> suffix = new ArrayList<>();
+                    for (long offset = appendFrom; offset < capturedLeaderLeo; offset++)
+                        suffix.add(leaderRecords.get(Math.toIntExact(offset)).data());
+                    log.append(suffix);
+                }
+                long repairedLeo = log.logEndOffset();
+                if (repairedLeo != capturedLeaderLeo)
+                    throw new CourseException(ErrorCode.CORRUPT_RECORD, "reconciled LEO does not match captured leader LEO");
+                RecoveryProof proof = new RecoveryProof(brokerId, tp, capturedEpoch, capturedLeaderLeo,
+                        repairedLeo, capturedHw, log, log.mutationVersion());
+                RecoveryProofRegistry.record(authority, proof);
+                return repairedLeo;
             }
-            long repairedLeo = log.logEndOffset();
-            if (repairedLeo != capturedLeaderLeo)
-                throw new CourseException(ErrorCode.CORRUPT_RECORD, "reconciled LEO does not match captured leader LEO");
-            RecoveryProof proof = new RecoveryProof(brokerId, tp, capturedEpoch, capturedLeaderLeo,
-                    repairedLeo, capturedHw);
-            RecoveryProofRegistry.record(authority, proof);
-            return repairedLeo;
         } finally {
             state.lock.unlock();
         }

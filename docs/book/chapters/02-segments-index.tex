@@ -29,9 +29,9 @@
 
 \lessonsection{6}{分段日志}
 \goals{把单段日志组合成可滚动的分区日志，并让读取跨 segment 连续工作。需要理解段边界、容量估算、索引与全局 LEO。}
-\background{PartitionLog 按 baseOffset 排序持有多个 SegmentLog。活动段若容纳不了下一条合法记录，就封闭当前段并新建 base=当前 LEO 的段；单条记录即使大于配置 segmentBytes，只要记录自身合法，也应独占新段而非永远无法追加。一次 batch 可以横跨段边界，offset 在整个 partition 范围连续。读取先定位目标段，然后用该段索引 floor 得到提示，顺扫后如有需要进入下一段，并把 maxRecords/maxBytes 作为跨段总预算。创建新文件前需要预检整个 batch 的合法性，避免已知非法输入改变目录结构。}
-\providededit{每个 segment 的 create/open/recover、稀疏索引与资源关闭都已提供；\method{PartitionLog} 维护按 baseOffset 排序的段表。}{\pathcode{exercises/src/main/java/io/simplekafka/storage/PartitionLog.java}：\method{append(List<RecordData>)}、\method{read(long,int,int)}。}
-\lessoncontract{append 返回整个 batch 的 [first,next) 区间，跨段 offset 仍无间隙。容量不足时只在追加前滚段；非法 batch 不得先滚段。读操作按 offset 顺序跨段，累计总记录与字节限制；段直接追加本身不负责滚动。重开已存在目录后恢复 LEO，不重复分配旧 offset。目录发现只处理约定 \pathcode{.log/.index} 文件，不删除陌生文件。}
+    \background{PartitionLog 按 baseOffset 排序持有多个 SegmentLog。活动段若容纳不了下一条合法记录，就封闭当前段并新建 base=当前 LEO 的段；单条记录即使大于配置 segmentBytes，只要记录自身合法，也应独占新段而非永远无法追加。一次 batch 可以横跨段边界，offset 在整个 partition 范围连续。读取先定位目标段，然后用该段索引 floor 得到提示，顺扫后如有需要进入下一段，并把 maxRecords/maxBytes 作为跨段总预算。创建新文件前需要预检整个 batch 的合法性，避免已知非法输入改变目录结构。版本标记在整批预检后、首次写盘或滚段前递增一次；无效输入不增加版本，写入尝试即使之后遇到 I/O 错误也已使旧 proof 失效。}
+    \providededit{每个 segment 的 create/open/recover、稀疏索引与资源关闭都已提供；PartitionLog 骨架提供 mutationVersion() 与私有 markMutation()，追加实现必须在正确位置调用。}{\pathcode{exercises/src/main/java/io/simplekafka/storage/PartitionLog.java}：\method{append(List<RecordData>)}、\method{read(long,int,int)}。}
+    \lessoncontract{append 返回整个 batch 的 [first,next) 区间，跨段 offset 仍无间隙。容量不足时只在追加前滚段；非法 batch 不得先滚段。读操作按 offset 顺序跨段，累计总记录与字节限制；段直接追加本身不负责滚动。重开已存在目录后恢复 LEO，不重复分配旧 offset。目录发现只处理约定 \pathcode{.log/.index} 文件，不删除陌生文件。每个有效追加批次对本打开的日志对象 mutationVersion 加一；这只是内存代数，不写入磁盘。}
 \lessonhints{容量判断应该使用编码后的完整记录字节数，而不是只计算 value 长度。}{决定一次 batch 的每条记录与段边界如何配合，同时保持全局 offset 连续。}{将测试分成初次 append、滚动后 append、关闭重开后的 append，再逐条核对所有 offset。}
 \expected{配置 256 字节段并追加十条记录，关闭重开再追加一条，读取范围应仍为 0 到 10 且没有重复 offset。测试也覆盖 batch 正好跨段、单条记录独占新段、非法超长记录前后目录/LEO不变；对应 \method{Step06Test}。}
 \pitfalls{容量只看原始 payload 会漏算固定头、长度和 CRC；只让每个 batch 单独检查 offset 会造成跨段冲突。真实 Kafka segment 更常按字节规模滚动并结合索引文件和时间策略；课程也用容量滚动，但索引间隔是记录数。单段 append 不自动滚段是有意分层。}
@@ -40,9 +40,9 @@
 
 \lessonsection{7}{日志保留}
 \goals{安全删除已过期的封闭段，同时保留 active segment 与当前 LEO。需要区分日志起点、消费进度和单条删除。}
-\background{分区日志实际只有一段可保留范围 \pathcode{[logStartOffset, LEO)}。课程用显式调用进行保留，不运行后台定时器。\method{deleteBefore(offset)} 只删除最后记录 offset 小于阈值的封闭段，不能按记录切割一段，也不能移除活动段；新起点必须落在真实段边界。消费者若请求已经删除的数据会得到 \method{OFFSET_OUT_OF_RANGE}，不静默把 position 改到新起点。消费组 offset 提交与物理删日志独立，推进消费位点不会自动触发保留。}
-\providededit{多段目录扫描、日志起点和段关闭路径由 \method{PartitionLog} 骨架持有；步骤 6 的段表与索引可以复用。}{\pathcode{exercises/src/main/java/io/simplekafka/storage/PartitionLog.java}：\method{deleteBefore(long)}。}
-\lessoncontract{只删满足条件的封闭段及同 base 的 \pathcode{.index}，不删 active，不删除未知文件。返回实际新的 logStartOffset。LEO 不倒退；重开后新起点仍正确。若已有读取位点低于新起点，读取必须明确报范围错误，不自动 seek。}
+    \background{分区日志实际只有一段可保留范围 \pathcode{[logStartOffset, LEO)}。课程用显式调用进行保留，不运行后台定时器。\method{deleteBefore(offset)} 只删除最后记录 offset 小于阈值的封闭段，不能按记录切割一段，也不能移除活动段；新起点必须落在真实段边界。消费者若请求已经删除的数据会得到 \method{OFFSET_OUT_OF_RANGE}，不静默把 position 改到新起点。消费组 offset 提交与物理删日志独立，推进消费位点不会自动触发保留。只有确实删除至少一个段时才递增一次本日志对象的 mutationVersion；阈值无效或没有可删段的调用不变更版本。}
+    \providededit{多段目录扫描、日志起点和段关闭路径由 \method{PartitionLog} 骨架持有；\method{mutationVersion()} 与私有 \method{markMutation()} 已提供。}{\pathcode{exercises/src/main/java/io/simplekafka/storage/PartitionLog.java}：\method{deleteBefore(long)}。}
+    \lessoncontract{只删满足条件的封闭段及同 base 的 \pathcode{.index}，不删 active，不删除未知文件。返回实际新的 logStartOffset。LEO 不倒退；重开后新起点仍正确。若已有读取位点低于新起点，读取必须明确报范围错误，不自动 seek。发生删除前仅标记一次；no-op 不增加 mutationVersion。}
 \lessonhints{从段 base 与下一段 base 确认哪些逻辑 offset 属于可删前缀。}{空 active 段与有数据 active 段都要单独考虑，不能把“最后一个段”当成可删项。}{删除后关闭并重新打开，再从边界前后分别读取，以验证磁盘文件和内存起点一致。}
 \expected{构造三个段、保留最后一个活动段并删除旧封闭段后，实际 logStartOffset 移到保留边界；重开仍返回相同起点且 LEO 不变。低于新起点读取报 \method{OFFSET_OUT_OF_RANGE}。对应 \method{Step07Test}。}
 \pitfalls{只删 \pathcode{.log} 不删配对索引会制造悬空索引；按阈值删掉 active 会令后续追加失去起点。真实 Kafka 保留常由时间/大小配置与后台管理触发，并可能有 retention 与 consumer 独立关系；课程只提供明确同步调用，不替消费者重置位点。}
@@ -51,9 +51,9 @@
 
 \lessonsection{8}{尾部截断}
 \goals{把日志尾部截回某个下一条位点，删除分叉尾数据并恢复可追加状态。需要理解 half-open 区间、记录边界和段 base。}
-\background{截断目标 \pathcode{nextOffset} 表示保留所有 offset<nextOffset 的记录；合法范围为 [logStartOffset,LEO]。若目标恰在已有段边界，应有可追加的 active segment 以该 base 开始；若位于某段内部，应截断到该记录的物理边界，删除后续 segment，并重建被保留段索引。截到 LEO 是无变化；截到 logStartOffset 留下空段，下一条 append 使用这个 offset。截断只改变本地日志尾，不会自动改变复制状态、HW 或消费位点。}
-\providededit{段关闭、文件截断、索引重建和全局段表已由前面步骤建立；资源管理仍由 PartitionLog 提供。}{\pathcode{exercises/src/main/java/io/simplekafka/storage/PartitionLog.java}：\method{truncateTo(long)}。}
-\lessoncontract{只允许 [logStartOffset,LEO] 内的 nextOffset，超范围拒绝且日志不变。保留 offset<nextOffset，所有之后数据及其索引移除；LEO 更新到 nextOffset。成功之后可立刻追加且新记录的 offset 正好等于 nextOffset。未知文件不可删除。}
+    \background{截断目标 \pathcode{nextOffset} 表示保留所有 offset<nextOffset 的记录；合法范围为 [logStartOffset,LEO]。若目标恰在已有段边界，应有可追加的 active segment 以该 base 开始；若位于某段内部，应截断到该记录的物理边界，删除后续 segment，并重建被保留段索引。截到 LEO 是无变化；截到 logStartOffset 留下空段，下一条 append 使用这个 offset。截断只改变本地日志尾，不会自动改变复制状态、HW 或消费位点。有效且非 no-op 的截断在首次写入/删除前递增一次本对象 mutationVersion，非法与 no-op 不增加。}
+    \providededit{段关闭、文件截断、索引重建和全局段表已由前面步骤建立；PartitionLog 骨架提供 mutationVersion() 与私有 markMutation()，有效截断实现须在首次文件变更前调用。}{\pathcode{exercises/src/main/java/io/simplekafka/storage/PartitionLog.java}：\method{truncateTo(long)}。}
+    \lessoncontract{只允许 [logStartOffset,LEO] 内的 nextOffset，超范围拒绝且日志不变。保留 offset<nextOffset，所有之后数据及其索引移除；LEO 更新到 nextOffset。成功之后可立刻追加且新记录的 offset 正好等于 nextOffset。未知文件不可删除。错误参数和截到当前 LEO 不增加 mutationVersion；任何有效内容变化均在首个 I/O 前标记。}
 \lessonhints{将目标理解成“下一条要写的 offset”，而不是要保留的最后一条 offset。}{分别列出截在段中、截在段边界、截在当前 LEO、截在 logStartOffset 的磁盘状态。}{重开截断后的目录并追加一条；只检查内存 nextOffset 不足以证明索引和文件同步。}
 \expected{写入 offset 0–8 后执行 \pathcode{truncateTo(5)}，offset 0–4 仍可读；已删除的 5–8 不会返回，读取新的 LEO 5 得到空结果，下一条追加得到 offset 5。\pathcode{truncateTo(LEO)} 不改变内容；截到起点后保留空 active 并从该起点追加。对应 \method{Step08Test}。}
 \pitfalls{误将 nextOffset 解释为最后保留记录，会产生 off-by-one；只 truncate 文件不重建索引，可能使之后读取跳到删除的分叉记录。真实 Kafka 截断往往与 leader epoch、HW 和副本协议联动；本步只提供日志原语，不允许拿它单独推断安全选举。}

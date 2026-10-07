@@ -26,6 +26,7 @@ public final class PartitionLog implements AutoCloseable {
     private final ReentrantLock lock = new ReentrantLock();
     private final TreeMap<Long, SegmentEntry> segments = new TreeMap<>();
     private boolean closed;
+    private long mutationVersion;
 
     public PartitionLog(Path directory, long segmentBytes, int indexInterval) {
         if (directory == null || segmentBytes <= 0 || indexInterval <= 0)
@@ -36,7 +37,7 @@ public final class PartitionLog implements AutoCloseable {
         initialize();
     }
 
-    public AppendResult append(List<RecordData> records) {
+    public synchronized AppendResult append(List<RecordData> records) {
         if (records == null || records.isEmpty())
             throw new CourseException(ErrorCode.INVALID_REQUEST, "append batch must not be empty");
         lock.lock();
@@ -53,6 +54,7 @@ public final class PartitionLog implements AutoCloseable {
                     throw new CourseException(ErrorCode.INVALID_REQUEST, "log end offset overflow", exception);
                 }
             }
+            markMutation();
 
             long nextOffset = firstOffset;
             int index = 0;
@@ -143,15 +145,20 @@ public final class PartitionLog implements AutoCloseable {
         }
     }
 
-    public long deleteBefore(long offset) {
+    public synchronized long deleteBefore(long offset) {
         if (offset < 0) throw new CourseException(ErrorCode.INVALID_REQUEST, "retention offset must be nonnegative");
         lock.lock();
         try {
             ensureOpen();
+            boolean mutationMarked = false;
             while (segments.size() > 1) {
                 Map.Entry<Long, SegmentEntry> first = segments.firstEntry();
                 SegmentEntry entry = first.getValue();
                 if (entry.log.logEndOffset() > offset) break;
+                if (!mutationMarked) {
+                    markMutation();
+                    mutationMarked = true;
+                }
                 closeEntry(entry);
                 deleteEntryFiles(entry);
                 segments.remove(first.getKey());
@@ -162,7 +169,7 @@ public final class PartitionLog implements AutoCloseable {
         }
     }
 
-    public void truncateTo(long nextOffset) {
+    public synchronized void truncateTo(long nextOffset) {
         lock.lock();
         try {
             ensureOpen();
@@ -177,6 +184,8 @@ public final class PartitionLog implements AutoCloseable {
             SegmentEntry target = targetEntry.getValue();
             if (nextOffset > target.log.logEndOffset())
                 throw new CourseException(ErrorCode.CORRUPT_RECORD, "partition segments contain an offset gap");
+            markMutation();
+
 
             target.log.truncateToOffset(nextOffset);
             target.index.rebuild(target.log.path(), target.log.baseOffset());
@@ -202,6 +211,12 @@ public final class PartitionLog implements AutoCloseable {
         try { ensureOpen(); return logEndOffsetLocked(); }
         finally { lock.unlock(); }
     }
+    public long mutationVersion() {
+        lock.lock();
+        try { ensureOpen(); return mutationVersion; }
+        finally { lock.unlock(); }
+    }
+
 
     private void initialize() {
         try {
@@ -304,6 +319,10 @@ public final class PartitionLog implements AutoCloseable {
     private void ensureOpen() {
         if (closed) throw new CourseException(ErrorCode.STORAGE_ERROR, "partition log is closed: " + directory);
     }
+    private void markMutation() {
+        mutationVersion++;
+    }
+
 
     private static Path indexPath(Path logFile) {
         String name = logFile.getFileName().toString();
@@ -314,7 +333,7 @@ public final class PartitionLog implements AutoCloseable {
         return new CourseException(ErrorCode.STORAGE_ERROR, "failed to " + action, cause);
     }
 
-    @Override public void close() {
+    @Override public synchronized void close() {
         lock.lock();
         try {
             if (closed) return;

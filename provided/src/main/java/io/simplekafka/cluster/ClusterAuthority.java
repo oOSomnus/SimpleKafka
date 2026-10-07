@@ -105,7 +105,7 @@ public final class ClusterAuthority {
         private BrokerInfo(Endpoint endpoint, boolean online) { this.endpoint = endpoint; this.online = online; }
     }
 
-    /** Mutable only while lock is held. Lock order: authority state, then local partition log. */
+    /** Mutable only while lock is held. Lock order: authority state, then local partition log monitor and its internal lock. */
     public static final class PartitionState {
         public final TopicPartition tp;
         public final ReentrantLock lock = new ReentrantLock();

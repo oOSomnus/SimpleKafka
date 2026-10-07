@@ -6,7 +6,6 @@ import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class Step17Test {
     @Test
@@ -21,23 +20,51 @@ class Step17Test {
         assertEquals(Map.of(
                 "a", List.of(new TopicPartition("orders", 0), new TopicPartition("orders", 2), new TopicPartition("orders", 4)),
                 "b", List.of(new TopicPartition("orders", 1), new TopicPartition("orders", 3))), assigned);
-        assertEquals(5, assigned.values().stream().mapToInt(List::size).sum());
-        assertTrue(Math.abs(assigned.get("a").size() - assigned.get("b").size()) <= 1);
     }
 
     @Test
-    void retainsEmptyMemberAssignmentsAndHandlesNoMembers() {
+    void assignsFivePartitionsToTheFirstFiveOfSevenSortedMembersAndKeepsEmptyMembers() {
         RoundRobinAssignor assignor = new RoundRobinAssignor();
-        List<TopicPartition> five = List.of(
+        List<TopicPartition> partitions = List.of(
                 new TopicPartition("orders", 4), new TopicPartition("orders", 3),
                 new TopicPartition("orders", 2), new TopicPartition("orders", 1),
                 new TopicPartition("orders", 0));
-        Map<String, List<TopicPartition>> assigned = assignor.assign(five,
-                List.of("e", "d", "c", "b", "a", "unused-1", "unused-0"));
-        assertEquals(7, assigned.size());
-        assertEquals(5, assigned.values().stream().filter(list -> list.size() == 1).count());
-        assertEquals(2, assigned.values().stream().filter(List::isEmpty).count());
-        assertEquals(Map.of(), assignor.assign(five, List.of()));
-        assertEquals(Map.of("a", List.of(), "b", List.of()), assignor.assign(List.of(), List.of("b", "a")));
+        Map<String, List<TopicPartition>> assigned = assignor.assign(partitions,
+                List.of("g", "f", "e", "d", "c", "b", "a"));
+
+        assertEquals(Map.of(
+                "a", List.of(new TopicPartition("orders", 0)),
+                "b", List.of(new TopicPartition("orders", 1)),
+                "c", List.of(new TopicPartition("orders", 2)),
+                "d", List.of(new TopicPartition("orders", 3)),
+                "e", List.of(new TopicPartition("orders", 4)),
+                "f", List.of(),
+                "g", List.of()), assigned);
+        assertEquals(Map.of(), assignor.assign(partitions, List.of()));
+        assertEquals(Map.of("a", List.of(), "b", List.of()),
+                assignor.assign(List.of(), List.of("b", "a")));
+        assertEquals(Map.of(), assignor.assign(List.of(), List.of()));
+    }
+
+    @Test
+    void sortsCrossTopicPartitionsAndMemberIdsLexicallyAfterDeduplication() {
+        RoundRobinAssignor assignor = new RoundRobinAssignor();
+        List<TopicPartition> input = List.of(
+                new TopicPartition("payments", 1), new TopicPartition("orders", 2),
+                new TopicPartition("orders", 0), new TopicPartition("payments", 0),
+                new TopicPartition("orders", 1), new TopicPartition("orders", 0));
+
+        assertEquals(Map.of(
+                "10", List.of(new TopicPartition("orders", 0)),
+                "2", List.of(new TopicPartition("orders", 1)),
+                "A", List.of(new TopicPartition("orders", 2)),
+                "a", List.of(new TopicPartition("payments", 0)),
+                "b", List.of(new TopicPartition("payments", 1))),
+                assignor.assign(input, List.of("b", "10", "A", "a", "2", "a")));
+        assertEquals(Map.of(
+                "a", List.of(new TopicPartition("orders", 0), new TopicPartition("orders", 2),
+                        new TopicPartition("payments", 1)),
+                "b", List.of(new TopicPartition("orders", 1), new TopicPartition("payments", 0))),
+                assignor.assign(input, List.of("b", "a", "a")));
     }
 }

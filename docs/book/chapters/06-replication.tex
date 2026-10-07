@@ -18,9 +18,9 @@
 
 \lessonsection{21}{拉取复制}
 \goals{让 follower 通过 \pathcode{REPLICA_FETCH} 请求把 leader 的记录持久化到本地。需要理解 leader LEO、follower LEO 和读请求为何不同于消费者 fetch。}
-\background{FollowerReplicator 每次从本地 LEO 请求记录，leader 返回 records、epoch、HW、leader LEO。正常复制可以读到当前 leader LEO，不受普通消费者 HW 可见性限制；否则副本无法追赶待提交后缀。follower 要验证响应 epoch 与记录首 offset，再复用 PartitionLog.append 写入并检查本地 offset 对齐。只有本地 append 持久化成功后，下一轮 poll 才能报告新的本地进度。课程刻意将第 21 步复制与第 22 步 ISR/HW 算法分开：此步网络只读写日志，不调用尚未实现的 report。}
+    \background{FollowerReplicator 在第一次 state monitor 临界区验证 online/follower 并捕获 epoch，随后完全在锁外执行 \pathcode{REPLICA_FETCH}。leader 返回 records、epoch、HW、leader LEO；复制可读到当前 leader LEO，不受普通消费者 HW 限制。follower 检查响应 epoch、首 offset、连续性与 append offset 对齐，再进入第二次短临界区，先复核 epoch，再复核 online/follower，并在同一临界区完成空 poll 或日志 append。provided ReplicaState.update 同步发布角色，避免末次检查与 append 间切换角色；网络调用不持 state monitor。只有本地 append 持久化成功后，下一轮 poll 才能报告进度。第 21 步网络只读写日志，不调用尚未实现的 report。}
 \providededit{三节点 TCP harness、\pathcode{REPLICA_FETCH} 消息类型、ReplicaState 与 PartitionLog 生命周期已提供；fixture seed 会把 leader 实际 LEO 放入初始进度。}{\pathcode{exercises/src/main/java/io/simplekafka/replication/FollowerReplicator.java}：\method{pollOnce(int,int)}；同时增补 BrokerHandler 的 \pathcode{REPLICA_FETCH} 分支。}
-\lessoncontract{仅 follower 当前 epoch、正确分区可执行复制；错误 epoch/非 leader 报明确错误，不写本地日志。正常拉取从本地 LEO 起，验证批次首 offset 与连续性后 append；重复空 poll 不重写。第 21 步只验证副本数据一致，不报告进度或推进 HW。}
+    \lessoncontract{仅当前 online follower 可复制正确分区；发送请求前捕获 epoch，返回后必须在网络锁外确认响应格式，再在本地 state monitor 内复核当前 epoch 与角色。期间 epoch 改变报 \method{FENCED_EPOCH}，角色变为 leader/offline 报 \method{NOT_LEADER}；这些失败不能追加。重复空 poll 不重写。第 21 步只验证副本数据一致，不报告进度或推进 HW。}
 \lessonhints{把“收到网络响应”与“本地持久化完成”分成两阶段观察。}{记录响应包含多项边界信息：分别理解 HW 与 leader LEO 的不同用途。}{让 follower 重复 poll、让响应 epoch 错误、让第一条 offset 不符，确认只有有效 batch 改变本地 LEO。}
 \expected{leader 含 offset 0–2，follower 起点为 0；一次 poll 后 follower 磁盘读取到同样 key/value 与 offset 0、1、2，第二次空 poll 返回 0 条且 LEO 不变。epoch 错误不能改 follower。对应 \method{Step21Test} 的真实 TCP 与文件断言。}
 \pitfalls{直接共享 leader 的 PartitionLog 对象会绕过 TCP 和本地落盘，测试就不再评估复制。把 HW 当成 leader LEO 会阻止 follower 追赶；把收到 bytes 当成功则忽略本地写失败。真实 Kafka 有批量复制请求和更多 epoch/状态交互；课程自定义 \pathcode{REPLICA_FETCH} 是教学 API。}

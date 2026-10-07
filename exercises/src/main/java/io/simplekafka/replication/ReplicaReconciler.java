@@ -26,7 +26,7 @@ public final class ReplicaReconciler {
         this.authority = Objects.requireNonNull(authority);
     }
 
-    /** Step 26: fetch, compare, and repair a captured leader prefix. See Step26Test and book step 26. */
+    /** Step 26: capture log version before scanning, then check, repair and publish proof under authority-state and local-log monitors. See Step26Test and book step 26. */
     public long reconcile(int expectedEpoch) {
         throw new ExerciseNotImplementedException(26, "ReplicaReconciler.reconcile");
     }

@@ -35,9 +35,13 @@ public final class FollowerReplicator {
     /** Fetches and durably appends one bounded batch; it never reports progress itself. */
     public int pollOnce(int maxRecords, int maxBytes) {
         if (maxRecords <= 0 || maxBytes <= 0) throw new CourseException(ErrorCode.INVALID_REQUEST, "replication limits must be positive");
-        if (!replicaState.isOnline()) throw new CourseException(ErrorCode.NOT_LEADER, "follower broker is offline");
-        if (replicaState.isLeader()) throw new CourseException(ErrorCode.NOT_LEADER, "leader cannot run follower replication");
-        int epoch = replicaState.epoch();
+        int epoch;
+        synchronized (replicaState) {
+            if (!replicaState.isOnline()) throw new CourseException(ErrorCode.NOT_LEADER, "follower broker is offline");
+            if (replicaState.isLeader()) throw new CourseException(ErrorCode.NOT_LEADER, "leader cannot run follower replication");
+            epoch = replicaState.epoch();
+        }
+
         long localLeo = log.logEndOffset();
         Messages.Reply reply = client.call(new Messages.ReplicaFetchRequest(tp, brokerId, epoch,
                 localLeo, maxRecords, maxBytes, false));
@@ -56,12 +60,22 @@ public final class FollowerReplicator {
             data.add(record.data());
             expected++;
         }
-        if (data.isEmpty()) return 0;
-        AppendResult appended = log.append(data);
-        if (appended.firstOffset() != localLeo || appended.nextOffset() != expected)
-            throw new CourseException(ErrorCode.CORRUPT_RECORD, "follower append offset diverged from leader");
-        return data.size();
+
+        synchronized (replicaState) {
+            if (replicaState.epoch() != epoch)
+                throw new CourseException(ErrorCode.FENCED_EPOCH, "replica epoch changed during fetch");
+            if (!replicaState.isOnline())
+                throw new CourseException(ErrorCode.NOT_LEADER, "follower broker is offline");
+            if (replicaState.isLeader())
+                throw new CourseException(ErrorCode.NOT_LEADER, "leader cannot run follower replication");
+            if (data.isEmpty()) return 0;
+            AppendResult appended = log.append(data);
+            if (appended.firstOffset() != localLeo || appended.nextOffset() != expected)
+                throw new CourseException(ErrorCode.CORRUPT_RECORD, "follower append offset diverged from leader");
+            return data.size();
+        }
     }
+
 
     private static CourseException remoteFailure(Messages.Reply reply) {
         String message = reply.body() instanceof Messages.ErrorBody error ? error.message() : reply.error().name();

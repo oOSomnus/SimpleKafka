@@ -251,7 +251,10 @@ public final class ClusterHarness implements AutoCloseable {
     }
 
     public synchronized boolean admit(int brokerId, TopicPartition tp) {
-        return new ReplicaAdmission(authority).tryAdd(brokerId, tp, authority.metadata(tp).epoch());
+        if (!authority.partitionState(tp).assigned(brokerId))
+            throw new CourseException(ErrorCode.INVALID_REQUEST, "broker is not assigned to partition");
+        PartitionLog localLog = node(brokerId).catalog.partition(tp);
+        return new ReplicaAdmission(authority, localLog).tryAdd(brokerId, tp, authority.metadata(tp).epoch());
     }
 
     public ReplicationSnapshot snapshot(TopicPartition tp) { return authority.snapshot(tp); }
