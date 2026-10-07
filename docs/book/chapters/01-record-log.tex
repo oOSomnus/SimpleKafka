@@ -1,0 +1,62 @@
+\chapter{记录与单段持久化}
+这一章回答一个基础但关键的问题：消息写进文件后，如何知道它完整、顺序正确，并能在进程重启后恢复？一个 Kafka partition 在概念上是只追加的日志；本课程先把每条记录直接编码到一个单段文件，然后再加入分段、索引和保留。这里的 offset 是逻辑位置，不能拿文件字节位置替代。
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[x=0.76mm,y=1mm,font=\small]
+\draw[thick] (0,0) rectangle (35,12); \node at (17.5,6) {length};
+\draw[thick] (35,0) rectangle (68,12); \node at (51.5,6) {CRC32C};
+\draw[thick] (68,0) rectangle (100,12); \node at (84,6) {offset};
+\draw[thick] (100,0) rectangle (132,12); \node at (116,6) {timestamp};
+\draw[thick] (132,0) rectangle (164,12); \node at (148,6) {key/value len};
+\draw[thick] (164,0) rectangle (205,12); \node at (184.5,6) {key | value};
+\node[below=4pt] at (17,0) {4 B}; \node[below=4pt] at (51,0) {4 B};
+\node[below=4pt] at (84,0) {8 B}; \node[below=4pt] at (116,0) {8 B};
+\node[below=4pt] at (148,0) {8 B}; \node[below=4pt] at (184,0) {变长};
+\end{tikzpicture}
+\caption{一条磁盘记录。length 不包含最前面的 4 字节自身。}
+\end{figure}
+
+\lessonsection{1}{记录编解码}
+\goals{定义稳定的磁盘边界，使写入和读取方对字节有同一解释。需要理解有符号长度、固定宽度整数、UTF-8 字节与 CRC32C；不要求先会文件扫描。}
+\background{格式为大端 \pathcode{length:int32 | crc32c:int32 | offset:int64 | timestamp:int64 | keyLength:int32 | valueLength:int32 | key | value}。length 从 CRC 字段开始计，合法范围 28 到 1,048,576；keyLength=-1 表示 null，0 表示空 key。value 必须存在但允许长度 0。CRC32C 覆盖 offset 字节起至 value 末尾；length 前缀和 CRC 字段本身不参与校验。offset/timestamp 均非负。先验证长度再按声明字段取字节，才能区分恶意/损坏长度与真正不足的 buffer。解码恰消费一条记录，即便后面还有下一条记录也不能把后缀吞掉。}
+\providededit{\pathcode{LogRecord}、\pathcode{RecordData}、\pathcode{CourseException}、\pathcode{ErrorCode}、大端字段与 CRC32C 工具类型已经提供。数组所有权交给数据类型；不要为每次字段访问重复拷贝。}{\pathcode{exercises/src/main/java/io/simplekafka/storage/RecordCodec.java}：\method{encode(LogRecord)}、\method{decode(ByteBuffer)}。}
+\lessoncontract{编码应精确分配所需记录空间，记录的 offset/timestamp 不可为负，value 不可 null。解码输入不足是 \method{INVALID_REQUEST}；格式错误或 CRC 不匹配是 \method{CORRUPT_RECORD}。成功后 buffer position 正好位于该条记录之后，后续 bytes 原样留待下一次解码。Null key 与空 key 不可混淆。}
+\lessonhints{把格式表按“定长头部”和“变长尾部”拆开，先列每个字段的字节数。}{CRC 检验时明确它保护的起止边界；length 的定义与总分配字节数不是同一个量。}{编写往返和单字节破坏测试，再分别观察短 buffer、非法长度与校验失败应该属于哪类协议错误。}
+\expected{输入 \pathcode{LogRecord(7, RecordData(null, UTF8("值"), 9))} 编码再解码，offset 仍为 7、key 仍为 null、value 仍为 UTF-8 的“值”。value 某一位翻转后 decode 报 \method{CORRUPT_RECORD}；buffer 少于一条完整记录时报 \method{INVALID_REQUEST}。这些对应 \method{Step01Test}，也验证解码未吞掉紧随其后的记录。}
+\pitfalls{把长度前缀计入 length、把 CRC 覆盖到自身、把 null key 解释为空数组，都会破坏互操作。CRC 是损坏探测而非安全签名。真实 Kafka 通常按 record batch 组织并有更丰富的压缩与批量格式；课程故意用单记录格式让字段边界可见，不宣称 Kafka 磁盘格式相同。}
+\lessoncommand{1}
+\lessonquestions{为什么 record 的逻辑 offset 不能从文件 byte position 推算？}{CRC 校验成功能证明哪些事情，不能证明哪些事情？}
+
+\lessonsection{2}{日志追加}
+\goals{实现单段日志的连续 offset 分配与可观察持久化。需要掌握第一步的编码，以及锁、全写循环和文件位置写入的区别。}
+\background{追加把数据从内存转为有序的日志事实。partition 的本地锁串行化同一分区的追加，使竞争批次不会获得交错或重叠的 offset。一次普通 FileChannel.write 可能只写部分 buffer，因此必须使用提供的 \method{ChannelIO.writeFully}。批次写完后调用 \method{force(false)}，再公布追加结果；\method{AppendResult(firstOffset,nextOffset)} 使用左闭右开区间，例如 [0,3) 表示三条记录。写入过程遇到 I/O 错误时课程不保证整批原子回滚，重启恢复负责识别物理尾部残片。}
+\providededit{\method{SegmentLog} 的 path、FileChannel、锁、baseOffset、nextOffset 与 \method{close()} 已给定；记录编码和部分写 I/O 已可复用。}{\pathcode{exercises/src/main/java/io/simplekafka/storage/SegmentLog.java}：\method{append(List<RecordData>)}。}
+\lessoncontract{空 batch 报 \method{INVALID_REQUEST}。非空 batch 在锁内以当前 LEO 为首 offset 分配连续编号；整批先做参数及单记录大小预检，不能让已知非法输入写入前缀后再失败。写出全部记录并 force 成功后返回首 offset 与下一 offset。每批记录的 timestamp/数据合法性由既定类型和 codec 契约约束。}
+\lessonhints{用一个 batch 的首尾 offset 表达结果，不把“记录数”误作下一批首 offset。}{想清楚哪类错误在取得锁以前就能判断，哪类状态必须在锁内读取。}{让并发追加只竞争同一个日志实例，并观察批次级次序与文件内容；别只断言最终 LEO。}
+\expected{空段依次追加三条、再追加两条，预期结果分别为 [0,3) 与 [3,5)，从文件解码得到 offset 0、1、2、3、4。两个并发两条记录 batch 的结果区间必须不相交，且总记录数为四。对应 \method{Step02Test} 的实际文件与并发检查。}
+\pitfalls{先写再发现某条记录超长，会留下不应存在的部分 batch。只更新 nextOffset 而不 force/检查写入同样错误。真实 Kafka 采用批处理、后台 I/O 与更复杂的持久化策略；本课程每次追加显式 force 以便观察边界，这不是 Kafka 默认每条消息同步落盘的性能模型。}
+\lessoncommand{2}
+\lessonquestions{为何验证整个 batch 应发生在任何磁盘写入之前？}{force 成功代表什么，又不代表什么？}
+
+\lessonsection{3}{按位点读取}
+\goals{从指定 offset 读取完整记录，并同时尊重记录数和字节预算。需要区分 offset、段内 byte position、记录完整性以及游标状态。}
+\background{消费者请求的是逻辑位点，文件读取需要物理 byte position。第一版公开读取从段首开始；下一章索引会把一个逻辑位点附近的物理位置提示给日志。提示只能缩短搜索，不能改变 offset 语义。每条记录是不可拆的返回单位：若下一条完整记录放不进预算，就不返回半条。预算统计包含 length 前缀。显式 position 的 FileChannel 读取避免 read 与 append 共享可变 channel cursor。}
+\providededit{段生命周期和记录解码已完成；公开 \method{read(offset,maxRecords,maxBytes)} 会把默认 hint 传给内部方法。}{\pathcode{exercises/src/main/java/io/simplekafka/storage/SegmentLog.java}：\method{readFrom(long offset,long bytePositionHint,int maxRecords,int maxBytes)}。}
+\lessoncontract{参数 offset 可从 baseOffset 到 LEO（含 LEO 的空读）；段内超出有效范围报 \method{OFFSET_OUT_OF_RANGE}。maxRecords/maxBytes 必须为正。返回记录按 offset 连续且不超过两个预算；第一条自身超 byte budget 时结果为空。有效 hint 必须位于记录边界且不能越过目标 offset，否则报 \method{INVALID_REQUEST}。读取不得移动追加位置或改变 LEO。}
+\lessonhints{把“找到候选字节位置”与“输出应从哪个 offset 开始”视为两个独立问题。}{为 byte budget 计算完整记录占用，并考虑 length 前缀；不按 payload 字节数近似。}{设计一个 hint 指向目标之前的边界、另一个越过目标的边界，分别验证可用和拒绝条件。}
+\expected{追加 offset 0–4 后，\pathcode{read(2, 2, 4096)} 得 offset 2、3。再调用 \pathcode{readFrom(2,hint,2,4096)}，把 hint 设为 offset 1 记录在文件中的实际起始字节位置，仍应返回 offset 2、3；hint 是物理位置，不是逻辑 offset 数字。\pathcode{read(5, 2, 4096)} 返回空；第一条完整记录超过 maxBytes 时返回空而不是部分 bytes。对应 \method{Step03Test}。}
+\pitfalls{offset 2 不是文件第 2 字节；将两者混为一谈会在索引出现后随机丢记录。忽略前缀预算会超过调用者内存预算。真实 Kafka fetch 通常以 batch 与网络字节上限协商，本实现以单记录为原子返回单位，消费跨段的总预算由下一章统一处理。}
+\lessoncommand{3}
+\lessonquestions{稀疏索引为什么只能提供搜索起点，不能直接决定读取结果？}{第一条记录比 maxBytes 大时，返回部分记录会造成什么问题？}
+
+\lessonsection{4}{崩溃恢复}
+\goals{从一个可能在写入中途关闭的日志恢复连续 LEO，并仅修复可证明是不完整尾部的情况。需要理解记录边界、物理截断和错误类别。}
+\background{崩溃可能发生在 length 前缀、固定头或 payload 写入期间。若 EOF 位于最后一条的 header/body 内，完整前缀之前的数据仍可构成日志，可截断到上一条边界；但一个完整记录的 CRC 坏、长度非法、offset 不连续，都不是“安全丢弃的尾部”。将完整但损坏的证据静默截掉，会把介质故障误报成成功恢复。恢复从 baseOffset 建立期望 offset，扫描到最后一个有效边界并返回下一个可写位点。}
+\providededit{\method{SegmentLog.open(file,baseOffset)} 会打开已有文件并调用恢复；步骤 1 codec 与步骤 2/3 文件布局已经建立。}{\pathcode{exercises/src/main/java/io/simplekafka/storage/SegmentLog.java}：\method{recover()}。}
+\lessoncontract{成功时返回恢复后的 LEO，下一次 append 从它继续；只允许截断文件末尾的不完整记录。完整记录 CRC 错、长度不合法或 offset 断裂必须以 \method{CORRUPT_RECORD} 失败，不得跳过错误记录继续扫描。底层 I/O 异常使用 \method{STORAGE_ERROR} 并保留 cause。}
+\lessonhints{先定义每一个扫描成功后的“共同状态”：当前有效字节边界与下一期望 offset。}{将 EOF 不足字节与已读满却内容不正确的记录分开分类。}{构造半条尾记录与完整 CRC 损坏记录的两类 reopen 测试，确认只有前者改变文件长度。}
+\expected{文件含完整 offset 0、1，再含 offset 2 的半条 body；重新 open 后 LEO=2，文件恰截到第二条结尾；追加一条得到 offset 2。若 offset 1 完整但 CRC 错，reopen 应失败而不把它当作残尾。对应 \method{Step04Test}。}
+\pitfalls{“扫描到报错就截断”会吞掉完整记录损坏和格式错误；“任何 EOF 都是无效文件”又无法处理正常崩溃尾部。\method{force(false)} 提供的是本课程写入意图，不是断电安全证明。真实 Kafka 还有 segment recovery、索引修复、日志校验与更复杂的清理策略；本步骤只恢复一段的边界。}
+\lessoncommand{4}
+\lessonquestions{哪些字节证据足以判定尾部不完整，哪些必须当成损坏上报？}{为什么恢复应返回 LEO 而不是最后一条记录的 offset？}

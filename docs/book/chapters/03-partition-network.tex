@@ -1,0 +1,59 @@
+\chapter{分区与真实网络 broker}
+上一章的日志只有本地意义；本章为 topic 建立多个 partition，再用真实 loopback TCP 请求把客户端与 broker 分开。分区决定记录的有序范围，topic metadata 告诉客户端每个 partition 的 leader。TCP 是字节流，不保留 Java write 的边界，因此协议必须自带帧长度。课程只实现教学二进制消息，不兼容 Kafka wire protocol。
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[font=\small,node distance=15mm]
+\node[draw,rounded corners,minimum width=30mm,minimum height=10mm] (cli) {client};
+\node[draw,rounded corners,minimum width=34mm,minimum height=10mm,right=of cli] (tcp) {TCP frames};
+\node[draw,rounded corners,minimum width=38mm,minimum height=10mm,right=of tcp] (broker) {broker handler};
+\node[draw,rounded corners,minimum width=42mm,minimum height=10mm,below=of broker] (logs) {partition catalog + logs};
+\draw[-{Stealth},thick] (cli) -- node[above]{request} (tcp);
+\draw[-{Stealth},thick] (tcp) -- (broker);
+\draw[-{Stealth},thick] (broker) -- node[right]{metadata / append / fetch} (logs);
+\draw[-{Stealth},thick] (broker.west) |- node[pos=.25,left]{reply} (cli.south);
+\end{tikzpicture}
+\caption{一个连接上的请求/响应路径。message body 编解码由 provided 代码承担，学生实现 frame 与业务分派。}
+\end{figure}
+
+\lessonsection{9}{分区路由}
+\goals{让相同 key 稳定进入相同分区，同时为 null key 提供可观察的轮转。需要理解 key 的字节身份、CRC32C 与取模。}
+\background{producer 必须先选择 partition 才能确定该分区内的顺序。课程规定 key 非 null 时计算 CRC32C，再把 CRC 视作 unsigned 值对分区数取模；同一字节串因此稳定命中同一 partition。key 为 null 时没有可供 hash 的键，单个 Partitioner 实例按 0 起始轮转。空 byte array 是存在但长度为零的 key，不等价 null。partition count 必须大于零。这个简单规则让输出确定，便于观察 routing 结果。}
+\providededit{partitioner 实例的 round-robin 状态与无参构造器已提供；topic metadata 会给出 partition count。}{\pathcode{exercises/src/main/java/io/simplekafka/client/Partitioner.java}：\method{choose(byte[] key,int partitions)}。}
+\lessoncontract{partitions<=0 属于非法请求。非 null key 路由依赖其 CRC32C 的 unsigned 解释；null key 对同一个实例依次选择 0..partitions-1 并循环。不同实例各自从零开始。}
+\lessonhints{先区分 null、空数组与非空数组三种输入。}{检查 Java signed int 与题设 unsigned CRC 的转换语义，避免负余数成为负 partition。}{用同一个实例混合调用有 key、null key 和不同 partition count 的情形，审视轮转游标是否只在约定输入上推进。}
+\expected{3 partitions 下，同一 key 连续 100 次选择都相同；空 key 也是确定路由。fresh Partitioner 对 null 连续六次返回 0、1、2、0、1、2。对应 \method{Step09Test}，并检查非正 partition 数被拒绝。}
+\pitfalls{把 key 的 hashCode 当作 CRC32C，或对可能负值直接取余，都会违反路由契约。真实 Kafka 默认 partitioner 的 key hash 算法和 null-key sticky batching 策略与本课程不同；此处 null key 采用实例级 round-robin，不应描述成 Kafka 默认行为。}
+\lessoncommand{9}
+\lessonquestions{为什么 hash 应作用于 key bytes 而不是 RecordData 对象的 Java hashCode？}{key 为 null 与 key 为零长度数组，在协议和路由上有何不同？}
+\lessonsection{10}{主题元数据}
+\goals{在安全目录结构中登记 topic 的固定 partition 集合，并让客户端按确定顺序发现 leader。需要了解分区元数据和幂等创建的意义。}
+\background{元数据把逻辑名称映射到物理分区。每个分区至少携带 TopicPartition、leader id、epoch、replica/ISR 列表和 Endpoint；单机模式的 epoch 为 0，replicas 与 ISR 都只含当前 broker。一个 topic 的 partition 数在这个课程 catalog 中创建时固定。目录结构为 root/topic/partition，topic 名受 \pathcode{[A-Za-z0-9._-]+} 限制并拒绝 \pathcode{.} 与 \pathcode{..}，避免路径逃逸。目录重启时显式再次创建相同 topic/count 来打开既有日志，不从偶然存在的文件猜测分区总数。}
+\providededit{endpoint、分区元数据值类型与日志注册路径已提供；Catalog 构造器固定 broker id 和 endpoint。}{\pathcode{exercises/src/main/java/io/simplekafka/broker/PartitionCatalog.java}：\method{createTopic(String,int)}、\method{metadata(String)}。}
+\lessoncontract{正数 partition count 创建固定分区；同 topic 同 count 幂等，不同 count 报 \method{INVALID_REQUEST}。未知 topic 报 \method{UNKNOWN_TOPIC_OR_PARTITION}。metadata 按 partition id 递增返回，不泄露 root 外路径。单机 metadata 的 epoch=0、replicas/isr=[brokerId]。}
+\lessonhints{创建 topic 不只是 mkdir：要考虑 partition 数和后续重启时可验证的约束。}{让同名同数量调用和同名不同数量调用走不同语义。}{用特殊路径字符、空名和目录重开做行为测试，确认名字验证在文件创建前发生。}
+\expected{创建 \pathcode{orders} 2 partitions 后，metadata 中包含 \pathcode{orders-0}、\pathcode{orders-1} 且顺序固定；再次创建相同定义无损；改为 3 报错；未知主题查询给出 topic/partition 错误码。对应 \method{Step10Test}。}
+\pitfalls{直接把用户 topic 拼进 path 会让路径穿越风险进入磁盘边界；靠目录枚举恢复 partition 数会把手工残留当元数据。真实 Kafka topic 元数据由集群控制面管理，partition 可在受控操作中扩展；本课程 catalog 只做显式固定数量，不处理动态扩容。}
+\lessoncommand{10}
+\lessonquestions{为何“同名但不同分区数”不能当成幂等成功？}{磁盘目录能提供哪些证据，不能替代哪些元数据？}
+
+\lessonsection{11}{TCP帧协议}
+\goals{把 TCP 字节流切分成有界、可匹配的请求/响应帧。需要理解 readFully、EOF 位置、长度前缀和 correlation id。}
+\providededit{Messages 请求/成功响应 body、API id 常量、Frame 值类型与 ErrorCode wire id 已提供；body codec 不由本步重写。}{\pathcode{exercises/src/main/java/io/simplekafka/protocol/FrameCodec.java}：\method{write(OutputStream,Frame)}、\method{read(InputStream)}。}
+\lessoncontract{第一字节前 EOF 返回 null；帧中途 EOF 为 \method{INVALID_REQUEST}。拒绝负数或超限长度后再分配。未知 version/api 和非零请求 error 由服务端验证拒绝。多帧连续流逐帧读取不丢边界；输出一帧不能发半帧。Stream I/O 按接口抛 IOException，协议格式错误使用课程错误码。}
+\lessonhints{帧的最短长度由固定 header 各字段宽度之和决定，不由示例 payload 推测。}{把“干净的流结束”与“帧内提前结束”分开处理。}{用每次只返回一个 byte 的 InputStream 喂入连续两帧，并用只有超长前缀的输入检查是否立即拒绝。}
+\expected{把两帧流拆成单字节块，连续两次 read 得到原 correlation id 和 payload；下一次 read 才得到 null。只有 4-byte 超长 length、没有 body 的输入会立即失败而不是等待或分配数 MB。对应 \method{Step11Test}。}
+\pitfalls{使用一次 read 期待填满 header 会受到 TCP 分段影响；先分配后检查 length 会被恶意请求放大内存。真实 Kafka 使用自己的请求头、API 版本协商与消息格式，本课程 version=1/API 列表是教学协议，不可接入官方客户端。}
+\lessoncommand{11}
+\lessonquestions{为什么 correlationId 必须被回送给对应请求？}{在流中区分“正常 EOF”和“半帧 EOF”有什么价值？}
+
+\lessonsection{12}{单机broker}
+\goals{把 metadata、produce、fetch 三种业务请求接入本地 catalog，并通过真实 TCP 端到端验证。需要完成 frame、body codec 和单段/分段日志步骤。}
+\background{broker 是请求语义边界：收到请求先验证 topic、partition、epoch 与参数，再调用日志，最后把成功结果或统一错误包装成 Reply。单机模式把 log end offset 同时视为 high watermark，因此 append 后消费者可立即读。produce 返回追加区间，fetch 按偏移和两种预算读取记录并返回 logStart、LEO、HW 与 epoch。未知 api 在 transport 层拒绝；业务错误只影响本次请求，broker 不应因此停止接受后续 TCP 请求。真实 TCP 调用能同时验证客户端 framing 与服务端 handler，而不只是直接调用方法。}
+\providededit{\method{BrokerHarness.single} 管理日志注册、TCP transport、MessageCodec、请求体解析与服务生命周期；\method{SingleBrokerMain} 使用 loopback 和 OS 分配端口。}{\pathcode{exercises/src/main/java/io/simplekafka/broker/BrokerHandler.java}：\method{handle(Request)}。}
+\lessoncontract{先实现 METADATA/PRODUCE/FETCH，未知分区错误为 \method{UNKNOWN_TOPIC_OR_PARTITION}，单机 epoch 仅接受 0，位点越界保留对应错误码。成功 produce 返回 AppendResult；成功 fetch 不越过 LEO=HW。错误 Reply 只带错误码和简短 message，不把堆栈送上线。课程 RpcClient 每次请求使用新 TCP 连接；一次业务错误不得让 broker 停止接受后续请求。}
+\lessonhints{按 API 类型分派，各请求在访问日志之前先完成身份和范围校验。}{检查 error 发生在 transport、handler 还是日志层；不同层的责任不可互相吞并。}{用一条真实 loopback 连接先 produce、fetch，再发送一个失败请求并继续发送合法请求。}
+\expected{经 TCP produce 三条记录，返回首尾区间；fetch 同一 partition 得到三个 offset/key/value 及 logStart=0、LEO=HW=3。unknown partition 返回正确错误码，随后通过一个新的 TCP 请求合法 fetch 仍成功。对应 \method{Step12Test}，命令行也可用 \coursecmd{SingleBrokerMain} 与 \coursecmd{ClientMain} 手动观察。}
+\pitfalls{仅调用 handler 单元方法无法发现 frame 边界/correlation id 错误；把异常转成空成功响应会隐藏错误且破坏客户端语义。真实 Kafka broker 还有认证、配额、请求版本兼容、持久控制面等；本课程 broker 绑定 loopback，API 与官方客户端不兼容。}
+\lessoncommand{12}
+\lessonquestions{为什么 broker 错误回复不应泄露 Java 堆栈？}{单机 HW=LEO 为何不代表副本模式下也能这样处理？}

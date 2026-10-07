@@ -1,0 +1,41 @@
+\chapter{课程地图、工具与学习方式}
+
+\section{课程交付的边界}
+本项目把消息系统的主路径做成一个小而可运行的系统：磁盘上的分区日志、TCP 请求、生产与消费、消费位点、单 topic 消费组，以及多个本机 broker 之间的拉取复制和受控切换。学习对象不是 Kafka 官方客户端的实现，也不是 Kafka wire protocol。提供的二进制协议只服务本课程，不能把官方 KafkaProducer 或 KafkaConsumer 指向本程序。
+
+三个 Java source root 是课程设计的一部分。\pathcode{provided/} 放数据类型、I/O、传输、序列化样板、生命周期和测试夹具；它让注意力集中在算法而非重复搭框架。\pathcode{exercises/} 是学生唯一需要逐步补全的工作区，所有步骤的类型和公开签名预先可见，尚未到达的方法会抛出带步骤号的 \method{ExerciseNotImplementedException}。\pathcode{reference/} 是隔离的完整答案，供对照和课程验证；它与练习代码类名相同，因此学生和参考源根绝不能同次编译。测试在两种模式下复用同一套黑盒契约；学生运行时 classpath 不含参考 classes。
+
+项目并非生产级 Kafka：没有 Kafka 线协议兼容、事务、压缩、compaction、幂等生产者、完整控制器共识或 controller HA。其 authority 是单 JVM 内的可信教学控制面；三台 broker 虽各有 TCP server、线程和磁盘目录，副本仍共享这个 authority。它可展示有控制的故障切换，不可用来声称任意网络分区下具备共识或生产级可用性。具体差异在附录和相关步骤反复标出。
+
+\section{准备 Java 21 与课程命令}
+课程使用 \pathcode{javac --release 21}，不需要 Maven、Gradle、Docker 或已启动的 Kafka。GNU Make 驱动练习，独立 JUnit Console 执行行为测试。先检查 \coursecmd{java -version}、\coursecmd{javac -version} 和 \coursecmd{make --version}，确认 Java 21。计划中的环境使用 SDKMAN 当前 Java 21.0.12；如果你的 shell 由 SDKMAN 管理 JDK，可通过 \coursecmd{sdk use java 21.0.12-amzn} 选择已经安装的同版本，或安装一个符合课程要求的 Java 21 发行版。课程不会静默替你更改 SDKMAN、系统包或 shell 配置。也可通过 \pathcode{JAVA_HOME} 显式指定 JDK。
+
+首次执行 \coursecmd{make setup} 会在仓库自己的 \pathcode{.tools/} 下准备固定版本的 JUnit 和便携 Tectonic；不需要 sudo，也不把依赖安装到系统。\coursecmd{make doctor} 检查工具与字体。\coursecmd{make compile} 编译学生骨架和测试，骨架编译成功不表示练习已经实现。PDF 的 \coursecmd{make book} 和 Java 测试分离；离线编译可使用已经预热的 TeX bundle cache，执行 \coursecmd{make book BOOK_OFFLINE=1}。
+
+\section{读懂二进制与文件 I/O}
+\method{ByteBuffer} 是一块带 position/limit 的字节视图。读取前通常要把写入完成的 buffer \method{flip()}；写出后是否清理取决于是否继续复用。协议和磁盘布局规定大端序，因此编码端与解码端都必须遵守相同字节次序。逻辑 offset 表示第几条记录；position 表示文件中的第几个字节，两者数值碰巧相同也毫无含义。
+
+\method{FileChannel} 能在指定文件偏移读写，也能把已写数据请求强制同步。课程提供了处理部分读写的 \method{ChannelIO.readFully/writeFully}；一次 channel.read 并不保证填满 buffer，一次 write 也不保证写完。步骤 2 选择每批追加后 \method{force(false)}，意味着要求文件数据持久化的一种简化，不是对掉电、电源缓存、介质损坏或文件系统语义的数学保证。CRC32C 检测记录字节意外改变；它不修复错误，也不能证明数据来源可信。
+
+\section{测试失败的阅读法}
+先读失败的 Step 测试名和断言，再回到本章契约。测试报告中的第一处异常通常比最后一段堆栈更有用：未实现方法给出步骤和方法名；课程错误应保留 \method{ErrorCode}；意外 IOException 可能被包装为 \method{STORAGE_ERROR} 并保留 cause。不要把错误映射成空列表或成功默认值来让测试变绿。一个单步定位命令只运行该步，不代表累计依赖都满足；累计命令会再次评估之前每步。
+
+\begin{center}
+\begin{tabular}{p{.23\textwidth}p{.68\textwidth}}
+\toprule
+命令 & 意义 \\
+\midrule
+\coursecmd{make list} & 显示 28 步、编辑方法与前置关系。\\
+\coursecmd{make step-test 12} & 只定位第 12 步；失败时辅助找当前问题。\\
+\coursecmd{make test 12} & 累计运行 Step01Test 至 Step12Test。\\
+\coursecmd{make test STEP=12} & 与位置参数形式等价。\\
+\coursecmd{make reference-test 28} & 对隔离参考实现运行完整 28 步契约。\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+步骤编号支持单数字和前导零形式（例如 1 与 01），也可用 \pathcode{STEP=}。章节边界是第 4、8、12、16、20、24、28 步：只有该边界累计测试全绿，才算章节完成。\coursecmd{make test 8} 通过意味着第 1–8 步全部通过；\coursecmd{make step-test 8} 通过仅表示这一次第 8 步测试通过，不授予晋级。全课程测试不应把参考源放进学生 classpath，参考模式也不能拿来代替自己的练习进度。
+
+\section{系统不变量先行}
+阅读后续章节时牢记以下四条边界：一，日志保留范围内 offset 连续，LEO 是下一条写入位点，fetch 使用左闭右开区间；二，普通消费者可见范围不能越过 HW，group committed offset 是另一个状态量；三，锁按 authority partition lock 到本地 log lock 的顺序获取，网络 I/O 不在该锁内等待；四，错误必须有意义，尤其 epoch 或 generation 失效时不以静默重试伪造 exactly-once。每章都会说明它新引入了什么不变量以及由谁验证。
+这些不变量将在具体步骤落地：磁盘格式见 \stepref{1}{记录编解码}，日志尾部边界见 \stepref{4}{崩溃恢复}，消费位置见 \stepref{14}{拉取消费者}，复制可见性见 \stepref{22}{ISR与高水位}，角色围栏见 \stepref{25}{干净选举与epoch}。

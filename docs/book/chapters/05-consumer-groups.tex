@@ -1,0 +1,60 @@
+\chapter{消费组、重平衡与提交围栏}
+消费组让多个 consumer 协作读取一个 topic：每个 partition 同一时刻分给一个成员，成员增减会改变分配。仅有“谁读取哪个分区”还不够；旧成员可能在重平衡后继续提交旧进度，因此必须用 generation token 围栏。课程刻意做一个单 topic 的即时重分配模型，不是完整 Kafka classic 协议或新式 consumer group protocol。Coordinator 是本机可信状态，不具备 HA。
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[font=\small,node distance=10mm]
+\node[draw,rounded corners,minimum width=19mm] (a1) {A joins};
+\node[draw,rounded corners,minimum width=26mm,right=of a1] (g1) {generation 1};
+\node[draw,rounded corners,minimum width=19mm,right=of g1] (b) {B joins};
+\node[draw,rounded corners,minimum width=26mm,right=of b] (g2) {generation 2};
+\node[draw,rounded corners,minimum width=23mm,below=of g2] (fence) {A gen 1 fenced};
+\draw[-{Stealth},thick] (a1)--(g1); \draw[-{Stealth},thick] (g1)--(b);
+\draw[-{Stealth},thick] (b)--(g2); \draw[-{Stealth},thick] (g2)--(fence);
+\end{tikzpicture}
+\caption{成员拓扑变化递增 generation；旧 token 不能覆盖当前提交。}
+\end{figure}
+
+\lessonsection{17}{分区分配}
+\goals{实现确定、平衡、每分区唯一 owner 的 Round Robin 分配。需要掌握集合去重、稳定排序和商余数分布。}
+\background{如果输入集合顺序由网络、HashMap 或启动顺序决定，同一组成员可能得到不稳定分配。课程先对 TopicPartition 按 topic/partition 排序、对 member 按字符串字典序排序，再把第 i 个分区交给 member[i mod n]。因此分配可复现，且分区数在成员间差最多为 1。所有已知成员都要出现在结果中，即使其分区列表为空；无成员时返回空 map。共享 topic 前提由 coordinator 检查，assignor 只处理给定的分区和成员。}
+\providededit{TopicPartition 值类型与 group coordinator 依赖接口已提供；调度算法只有一个单独 assignor。}{\pathcode{exercises/src/main/java/io/simplekafka/group/RoundRobinAssignor.java}：\method{assign(List<TopicPartition>,List<String)}。}
+\lessoncontract{先去重并按固定顺序排列输入。每个不同 partition 恰出现一次，owner 必须属于 members；member 的空列表仍保留。成员为空时结果为空。每个成员分配数量的最大值与最小值之差不大于 1。}
+\lessonhints{把唯一 owner 属性转成总覆盖与无重复两个可检查条件。}{要先明确 member 顺序；输入 List 的原始顺序不等于课程的稳定顺序。}{手算 5 个分区、2 个成员和 5 个分区、7 个成员，再测试重复输入不让分区多分一次。}
+\expected{五个排序后的 partition 与成员 \pathcode{A}、\pathcode{B} 得 A 三个、B 两个；七成员分五分区时五人各一个、两人空列表。打乱输入顺序仍产生同一结果。对应 \method{Step17Test}。}
+\pitfalls{只返回有分区的成员会丢失明确空分配；在遍历 map 时按偶然顺序分配则难以测试和复现。真实 Kafka 有多种 assignor、静态成员、协作重平衡等；课程只实现单 topic 的简单 Round Robin，不能把它等同 Kafka 默认或完整协议。}
+\lessoncommand{17}
+\lessonquestions{为何稳定排序是可观察行为的一部分，而不只是美化输出？}{成员比分区多时，空分配如何帮助调用者表达组状态？}
+
+\lessonsection{18}{成员与重平衡}
+\goals{管理 group 成员集合与 generation，并在拓扑改变时更新全体分配。需要理解 generation 不是时间戳、也不是消费位点。}
+\background{组内成员订阅同一 topic。新成员加入或已有成员离开，assignment 发生变化，generation 加一；一个组从 generation 0 开始。重复 join 同一 member 且 topic 不变只刷新心跳，不产生新 generation；改订阅 topic 在这个简化模型中非法。每次变化要用新的成员集合重新计算完整分配，不能只给加入者临时分区而忘记撤销其他成员。组变空时仍保留 generation 与 committed offsets，避免后续组状态和消费进度混淆。}
+\providededit{组锁、成员状态容器、TimeSource、assignor 接口与 generation 生命周期由构造器提供。}{\pathcode{exercises/src/main/java/io/simplekafka/group/GroupCoordinator.java}：\method{join(String,String,String)}、\method{leave(String,String)}、\method{assignment(String,String)}；handler 增补对应 API。}
+\lessoncontract{首次加入 generation=1；拓扑真实变化时恰递增一次并返回最新全组 assignment。重复相同 join 不递增；topic 不同报 \method{INVALID_REQUEST}。unknown member leave/assignment 报 \method{UNKNOWN_MEMBER}。组清空后状态及 offset 保留。}
+\lessonhints{先找出会改变成员集合的事件，再区分重复请求与新状态。}{重平衡后每个仍在组内的成员都要看到相同 generation 的全组映射。}{按照 A 加入、B 加入、A 离开的时序手工列出 generation 和 owner，再检查 empty group 之后的再加入。}
+\expected{A 首次加入得 generation 1；B 加入后为 2 且两人分摊全部 partition；A 离开后为 3，B 获得所有 partition。A 同 topic 重复 join 不再增加 generation。对应 \method{Step18Test}；JOIN、ASSIGNMENT、LEAVE 均经真实 TCP broker API 检查。}
+\pitfalls{把每个 member 自己的分配版本单独推进，会使组内 token 对不上；组为空就销毁 offset store，会让重启进度丢失。真实 Kafka 在加入、同步 assignment、cooperative revocation 等阶段有完整的协调协议；课程直接即时重分配，不模拟完整 classic barrier 或 KIP-848。}
+\lessoncommand{18}
+\lessonquestions{为什么 group generation 变化要让未离开的成员也收到新 assignment？}{组没有成员时，为什么仍可以保留消费进度？}
+
+\lessonsection{19}{心跳与过期}
+\goals{在可控时间下检测成员超时，并把同组过期成员作为一个拓扑变化原子处理。需要理解心跳时间与过期阈值。}
+\background{每个 member 保存 lastHeartbeat，心跳成功刷新它。若 \pathcode{now-lastHeartbeat >= sessionTimeoutMillis}，成员到期。时间来自注入的 TimeSource，所以测试不需要真实 sleep。过期调用可能同时发现多个成员；同一个 group 一次 expire 应一起移除到期成员，只增加一次 generation 并重新分配一次，避免一次心跳 tick 产生无意义的多代状态。未知 member 错误先于刷新；旧 generation 错误也不能延长生命期。周期调度由提供设施触发，但行为测试可直接调用 expire。}
+\providededit{注入式 TimeSource、组锁、session timeout 与调度生命周期已提供；测试可用确定性 clock。}{\pathcode{exercises/src/main/java/io/simplekafka/group/GroupCoordinator.java}：\method{heartbeat(GroupToken)}、\method{expire()}；\pathcode{exercises/src/main/java/io/simplekafka/broker/BrokerHandler.java}：\method{HEARTBEAT} 分支。}
+\lessoncontract{边界采用 >=。有效当前 token 的 heartbeat 更新时间；未知成员报 \method{UNKNOWN_MEMBER}，generation 过期报 \method{ILLEGAL_GENERATION}，失败不刷新。expire 返回被移除的 \pathcode{group/member} 标识；同组多成员到期一次只增加一次 generation。leader/partition 概念不进入此状态。}
+\lessonhints{把时钟读取、超时判断和成员移除放在一致的状态观察中。}{返回值应能精确区分被哪个 group 删除的 member，而非只有数量。}{用 1099 与 1100 两个时刻测试 timeout=100 的边界，并让 B 刷新后与 A 同时比较。}
+\expected{初始时间 1000、timeout=100，时刻 1099 时 A 保留，1100 时 A 删除；B 在 1099 心跳后到 1100 仍保留。若 A 与 C 同组同一时刻过期，generation 只增一次。对应 \method{Step19Test}；Heartbeat 经真实 TCP API，过期由注入时钟确定触发，不使用 sleep。}
+\pitfalls{使用真实系统时间和 sleep 会让测试受调度抖动影响；先改 lastHeartbeat 再验证 token 会让旧成员非法续命。真实 Kafka 的 session timeout/heartbeat 与协议、消费者配置及网络调度更复杂；课程只验证 coordinator 内的确定性状态转换。}
+\lessoncommand{19}
+\lessonquestions{为什么过期判断的等号边界必须写进契约？}{一批同组成员在同一次 expire 过期，为何不应多次 generation++？}
+
+\lessonsection{20}{消费组围栏}
+\goals{把 group assignment 和 offset 操作结合，通过 generation token 拒绝僵尸成员写入。需要理解 token 的组/member/generation 三元组与撤销分区。}
+\background{GroupToken 由 group、member 和 generation 构成。FETCH 与 COMMIT 带 token 时，coordinator 必须验证成员存在、generation 当前、partition 当前分配给该成员。generation 已变的旧 consumer 不能提交；验证和 OffsetStore.commit 必须处在 coordinator 锁的原子临界区，锁顺序为 coordinator 到 store，不持有 partition 锁。GroupConsumer 每次 poll 先 heartbeat。若遇 \method{ILLEGAL_GENERATION}，它查询当前 assignment、丢弃已撤销 partition 的旧 position、对新分区从 committed offset resume，再用新 token fetch；\method{UNKNOWN_MEMBER} 不自动重新加入，需显式 subscribe。manual token=null 保持手动模式，不伪装为成员。}
+\providededit{group 消息、RpcClient、SimpleConsumer 拉取/位点路径和成员生命周期骨架已给出；broker 带 token 的请求体已编码。}{\pathcode{exercises/src/main/java/io/simplekafka/group/GroupCoordinator.java}：\method{validate(GroupToken,TopicPartition)}；\pathcode{exercises/src/main/java/io/simplekafka/client/GroupConsumer.java}：\method{subscribe(String)}、\method{poll(int,int)}、\method{commitSync()}；同步增补 handler 围栏。}
+\lessoncontract{当前 generation 以外 token 报 \method{ILLEGAL_GENERATION}；未知 member 报 \method{UNKNOWN_MEMBER}；未分配分区报 \method{NOT_ASSIGNED}。失败不更改 store。新 assignment 生效后旧撤销 position 不能提交。commit validate 与追加在一个 coordinator 锁范围完成。服务端不保证撤回已发出的旧成员缓存记录，只保证提交围栏。}
+\lessonhints{验证请求要同时检查 token 身份、当前 generation、partition owner，不能只比较 group 名。}{过期处理后 consumer 的旧 position 哪些可以保留、哪些必须从 committed offset 重建？}{制造两个真实 TCP consumer，让旧成员以旧 token 提交较大位点，再检查失败后 store 的值。}
+\expected{A generation 1 加入，B 加入使 generation 2；A 用旧 token 提交 100 被拒，B 以有效 token 提交 7 后 store 仍为 7。真实双 consumer 分摊 4 分区，成员过期后另一成员接管并从已提交位点继续。对应 \method{Step20Test}。}
+\pitfalls{validation 后释放锁再 commit 会让重平衡插入其间，僵尸提交覆盖有效进度。把 \method{ILLEGAL_GENERATION} 和 \method{UNKNOWN_MEMBER} 都自动处理成重新 join 会隐藏身份错误。真实 Kafka 组协议涉及同步屏障和多个阶段，事务提交语义另有约束；课程的单 topic coordinator、共享 JVM authority 与本地 OffsetStore 均不是高可用 \pathcode{__consumer_offsets}。}
+\lessoncommand{20}
+\lessonquestions{generation fencing 能保证什么，又为何不能保证外部副作用 exactly-once？}{validate 与 offset append 若分开持锁，中间可能发生什么竞争？}

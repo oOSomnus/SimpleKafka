@@ -1,0 +1,186 @@
+\chapter{格式、错误码与接口索引}
+本附录把各章反复使用的稳定约定集中列出，方便实现时查阅；若和练习里的公开签名不一致，以课程 manifest 和 Java 类型为准。本课程定义的布局与错误码只属于 simpleKafka 教学接口，除非明确引用官方资料，不应把它们称为 Kafka wire、存储格式或配置默认值。
+
+\section{磁盘与网络格式}
+\subsection{记录与索引}
+记录为大端编码：
+\begin{center}
+\begin{tabular}{p{.22\textwidth}p{.17\textwidth}p{.53\textwidth}}
+\toprule
+字段 & 宽度 & 语义 \\
+\midrule
+length & int32 & 不含自身的记录长度，含 CRC；28 至 1,048,576。\\
+crc32c & int32 & 校验 offset 到 value 末尾，不含 length/CRC 字段自身。\\
+offset & int64 & 非负逻辑位点。\\
+timestamp & int64 & 非负时间戳。\\
+keyLength & int32 & -1 为 null，0 为存在的空 key，其余为 bytes 数。\\
+valueLength & int32 & 非负 bytes 数，value 不为 null。\\
+key/value & 变长 & 按前述长度紧跟在字段后。\\
+\bottomrule
+\end{tabular}
+\end{center}
+每条记录的固定长度部分（不含 length 前缀）包含 CRC、offset、timestamp、两个 length，共 28 bytes；长度前缀使最小总占用为 32 bytes。length 字段值下限仍是 28，因为其统计从 CRC 开始。每条 segment 的稀疏索引条目是 \pathcode{offset:int64,position:int64}，共 16 bytes；索引每 intervalRecords 条记录写一个点，首条总有点。索引可以丢弃并由日志重建。
+
+目录约定为 \pathcode{<root>/<topic>/<partition>/<baseOffset:020d>.log}，配对索引后缀为 \pathcode{.index}。保留范围是 [logStartOffset,LEO)，fetch 左闭右开；LEO 是下一条可写 offset，HW 是普通 consumer 能观察的最高提交边界（仅 offset < HW 可见）。group committed offset 也是 next offset，但不等于 HW。
+
+\subsection{TCP frame 与请求体}
+教学 frame 为 \pathcode{length:int32 | version:int16(1) | api:int16 | correlationId:int32 | error:int16 | payload}，length 不含自身，范围 [10,8,388,608]。读到新 frame 首字节前 EOF 返回 null；frame 内 EOF 报 \method{INVALID_REQUEST}。请求 error 字段必须为 0。未知 version/API、过长 frame 和尾随 body 字节均拒绝。每条磁盘记录上限 1 MiB，不因 frame 上限而改变。
+
+API id 固定如下：
+\begin{center}
+\begin{tabular}{rl|rl}
+\toprule
+ID & API & ID & API \\
+\midrule
+1 & METADATA & 6 & \method{JOIN_GROUP} \\
+2 & PRODUCE & 7 & HEARTBEAT \\
+3 & FETCH & 8 & \method{LEAVE_GROUP} \\
+4 & \method{COMMIT_OFFSET} & 9 & \method{GROUP_ASSIGNMENT} \\
+5 & \method{FETCH_OFFSET} & 10 & \method{REPLICA_FETCH} \\
+\bottomrule
+\end{tabular}
+\end{center}
+MessageCodec 使用大端基础字段；字符串为 int32 UTF-8 byte 长度后接 bytes，集合为 int32 数量后逐项，Optional 值用 boolean 再接值，byte[] 用 int32 长度（仅 key 可 -1）。请求/成功响应字段按 provided Messages nested record 声明顺序编码；map 结果按 key 排序。Reply 头部 error=NONE 时 body 是相应成功 record；错误时 body 为 ErrorBody(message)，错误码只在 frame header 出现。字段 schema 由 \pathcode{provided/.../protocol/Messages.java} 固定，学生不需重新定义十组消息格式。
+\subsection{消息 body 字段顺序}
+下面的请求与响应由 MessageCodec 按表内参数声明顺序编码。集合长度和字符串/byte 长度均为大端 int32；列表项无额外 tag，按各 value type 声明顺序内联。GroupToken nullable，用 boolean present 后跟 group、member、generation；Acks 为 int16，LEADER=1、ALL=-1。
+\setlength{\tabcolsep}{3pt}
+\small
+\begin{longtable}{>{\raggedright\arraybackslash}p{.22\textwidth}>{\raggedright\arraybackslash}p{.36\textwidth}>{\raggedright\arraybackslash}p{.36\textwidth}}
+\toprule
+API & 请求记录与字段 & 成功响应记录与字段 \\
+\midrule
+\endhead
+\method{METADATA} & MetadataRequest: topic & MetadataBody: partitions \\
+\method{PRODUCE} & ProduceRequest: tp, epoch, acks, timeoutMillis, records & ProduceBody: result \\
+\method{FETCH} & FetchRequest: tp, epoch, offset, maxRecords, maxBytes, token & FetchBody: records, logStartOffset, logEndOffset, highWatermark, epoch \\
+\method{COMMIT_OFFSET} & CommitOffsetRequest: key, nextOffset, token & EmptyBody \\
+\method{FETCH_OFFSET} & FetchOffsetRequest: key & OffsetBody: nextOffset (OptionalLong) \\
+\method{JOIN_GROUP} & JoinGroupRequest: group, member, topic & GroupBody: assignment \\
+\method{HEARTBEAT} & HeartbeatRequest: token & EmptyBody \\
+\method{LEAVE_GROUP} & LeaveGroupRequest: group, member & GroupBody: assignment \\
+\method{GROUP_ASSIGNMENT} & GroupAssignmentRequest: group, member & GroupBody: assignment \\
+\method{REPLICA_FETCH} & ReplicaFetchRequest: tp, brokerId, epoch, fetchOffset, maxRecords, maxBytes, recoveryRead & ReplicaFetchBody: records, epoch, highWatermark, leaderLogEndOffset \\
+\bottomrule
+\end{longtable}
+\normalsize
+\begin{center}
+\small
+\begin{tabular}{>{\raggedright\arraybackslash}p{.25\textwidth}>{\raggedright\arraybackslash}p{.67\textwidth}}
+\toprule
+Record & Fields in declaration order \\
+\midrule
+\method{TopicPartition} & \method{topic}, \method{partition} \\
+\method{RecordData} & \method{key}, \method{value}, \method{timestamp} \\
+\method{LogRecord} & \method{offset}, \method{data} \\
+\method{AppendResult} & \method{firstOffset}, \method{nextOffset} \\
+\method{OffsetKey} & \method{group}, \method{tp} \\
+\method{Endpoint} & \method{host}, \method{port} \\
+\method{GroupAssignment} & \method{generation}, \method{assignments} \\
+\method{PartitionMetadata} & \method{tp}, \method{leaderId}, \method{epoch}, \method{replicas}, \method{isr}, \method{leader} \\
+\bottomrule
+\end{tabular}
+\end{center}
+\normalsize
+Each byte array is length-prefixed; only key may be null (length -1), while value is always present but may be empty.
+
+OffsetStore entries use \method{MessageCodec.encodeOffsetEntry}, with null key and timestamp 0. The record's physical log offset is independent of committed nextOffset.
+\subsection{标识符与值类型}
+topic、group、member 是非空 UTF-8 标识且最长 255 bytes；topic 只能包含 ASCII 字母数字、点、下划线、连字符，并拒绝 \pathcode{.} 与 \pathcode{..}。TopicPartition 的 partition 非负。RecordData 的 key 可以 null、value 不可 null（允许空数组），timestamp 非负；LogRecord offset 非负。数组所有权移交值对象后由接收方持有，不需要反复复制。所有 offset 表示下一条时都使用 half-open 边界，具体区别见正文各章。
+
+\section{固定错误码}
+\begin{longtable}{rll}
+\toprule
+Wire id & 名称 & 用途 \\
+\midrule
+\endhead
+0 & NONE & 成功。\\
+1 & \method{INVALID_REQUEST} & 参数、长度、版本或请求格式错误。\\
+2 & \method{UNKNOWN_TOPIC_OR_PARTITION} & topic/partition 不存在。\\
+3 & \method{OFFSET_OUT_OF_RANGE} & offset 超过当前日志起点/终点约束。\\
+4 & \method{CORRUPT_RECORD} & 完整记录 CRC、格式或已提交历史冲突。\\
+5 & \method{NOT_LEADER} & 请求者不是当前 leader。\\
+6 & \method{FENCED_EPOCH} & 请求使用旧 leader epoch。\\
+7 & \method{NOT_ENOUGH_REPLICAS} & 当前 ISR 少于 minISR。\\
+8 & \method{REQUEST_TIMEOUT} & 请求 deadline 到期，结果可能未知。\\
+9 & \method{ILLEGAL_GENERATION} & 消费组 generation 已过期。\\
+10 & \method{UNKNOWN_MEMBER} & 消费组 member 未登记。\\
+11 & \method{NOT_ASSIGNED} & 操作涉及未分配 partition。\\
+12 & \method{NO_ELIGIBLE_LEADER} & 无满足干净选举条件的候选。\\
+13 & \method{STORAGE_ERROR} & I/O 失败，底层 cause 保留。\\
+\bottomrule
+\end{longtable}
+未知 ID 不映射为成功；I/O 错误不吞 cause；网络错误 body 不回传服务器堆栈。
+
+\section{二十八步与编辑入口}
+所有路径均相对于仓库根目录，学生修改 \pathcode{exercises/src/main/java/io/simplekafka/} 下指定方法。每步对应的累积命令为 \coursecmd{make test N}；单步定位命令为 \coursecmd{make step-test N}，它不是晋级证明。
+\begin{longtable}{r p{.20\textwidth} p{.68\textwidth}}
+\toprule
+步 & 课程标题 & 编辑方法 \\
+\midrule
+\endhead
+1 & 记录编解码 & storage/RecordCodec: encode, decode \\
+2 & 日志追加 & storage/SegmentLog: append \\
+3 & 按位点读取 & storage/SegmentLog: readFrom \\
+4 & 崩溃恢复 & storage/SegmentLog: recover \\
+5 & 稀疏索引 & storage/SparseIndex: add, floor, rebuild \\
+6 & 分段日志 & storage/PartitionLog: append, read \\
+7 & 日志保留 & storage/PartitionLog: deleteBefore \\
+8 & 尾部截断 & storage/PartitionLog: truncateTo \\
+9 & 分区路由 & client/Partitioner: choose \\
+10 & 主题元数据 & broker/PartitionCatalog: createTopic, metadata \\
+11 & TCP帧协议 & protocol/FrameCodec: write, read \\
+12 & 单机broker & broker/BrokerHandler: handle \\
+13 & 批量生产者 & client/SimpleProducer: send, flush \\
+14 & 拉取消费者 & client/SimpleConsumer: assign, seek, poll \\
+15 & 消费位点持久化 & group/OffsetStore: commit, fetch;\newline client/SimpleConsumer: resume, commitSync;\newline broker/BrokerHandler: \method{COMMIT_OFFSET}, \method{FETCH_OFFSET} \\
+16 & 至少一次处理 & client/ProcessingLoop: runOnce \\
+17 & 分区分配 & group/RoundRobinAssignor: assign \\
+18 & 成员与重平衡 & group/GroupCoordinator: join, leave, assignment;\newline broker/BrokerHandler: \method{JOIN_GROUP}, \method{LEAVE_GROUP};\newline \method{GROUP_ASSIGNMENT} \\
+19 & 心跳与过期 & group/GroupCoordinator: heartbeat, expire;\newline broker/BrokerHandler: \method{HEARTBEAT} \\
+20 & 消费组围栏 & group/GroupCoordinator: validate;\newline client/GroupConsumer: subscribe, poll, commitSync;\newline broker/BrokerHandler: \method{FETCH}/\method{COMMIT_OFFSET} token fencing \\
+21 & 拉取复制 & broker/BrokerHandler: handle(\method{REPLICA_FETCH});\newline replication/FollowerReplicator: pollOnce \\
+22 & ISR与高水位 & replication/ReplicationTracker:\newline report, expireLagging, advanceHighWatermark \\
+23 & 生产确认 & replication/AckPolicy: validateBeforeAppend, await \\
+24 & 并发副本broker & replication/ReplicatedPartition: produce, fetch \\
+25 & 干净选举与epoch & replication/LeaderElection: elect, checkLeader \\
+26 & 分叉日志修复 & replication/ReplicaReconciler: reconcile \\
+27 & 元数据路由刷新 & client/MetadataRouter: refresh, call \\
+28 & 副本重新入ISR & replication/ReplicaAdmission: tryAdd \\
+\bottomrule
+\end{longtable}
+章节按每四步编号；章节末累计通过点依次为 4、8、12、16、20、24、28。若前一步未通过，后一步测试通常也会失败，因为课程采用同一持续演进的系统而非互不相干的演示程序。
+
+\section{课程简化与 Kafka 的差异}
+\begin{enumerate}
+\item \textbf{路由：}key 使用 CRC32C unsigned modulo；Kafka 默认 key partition 算法不同。null key 采用实例级 round-robin，而非 Kafka 的 sticky batching。
+\item \textbf{磁盘：}记录逐条编码并每 batch 显式 \method{force(false)}，不是 Kafka record batch 与默认 page-cache 路径；强制写入不保证媒介级断电安全。
+\item \textbf{索引：}每固定记录数写一个稀疏点，不按 bytes 间隔。
+\item \textbf{消费组：}仅单 topic、即时重分配的简化模型，不是完整 classic barrier、cooperative 重平衡或 KIP-848。token 围栏仅保护课程 broker 内 offset 提交，不原子化外部副作用。
+\item \textbf{offset：}本地 OffsetStore 不是高可用复制压缩的 \pathcode{__consumer_offsets}。
+\item \textbf{复制与控制面：}各 broker 用真实 TCP 拉取并写独立目录；authority/coordinator 却在同 JVM 且单一可信，不是 KRaft，不保证 controller/authority 故障后的集群恢复或任意分区下共识。
+\item \textbf{可见性假设：}本课程保留已提交前缀，要求干净候选 LEO 不低于 authority HW，使受控切换的已知提交边界不回退；这比对真实 Kafka 跨 epoch HW 行为更强，不可推广成 Kafka 永远单调的结论。
+\item \textbf{重试与事务：}producer 不自动重试，timeout 可能已追加；没有压缩、compaction、事务、幂等 producer、fire-and-forget 或 ELR。at-least-once 允许重复，不声称 exactly-once。
+\item \textbf{恢复：}第 26 步全量比较前缀为 O(n) 教学简化；真实系统利用 leader epoch 历史缩小分叉搜索范围。
+\end{enumerate}
+
+\section{官方资料与延伸阅读}
+以下资料用于解释 Kafka 概念与真实系统差异，并非课程自定义 wire/storage 布局的规范。版本标签反映本书所引用页面；不同版本配置和协议细节可能改变，阅读时以所列页面自身版本为准。
+\begin{longtable}{p{.24\textwidth}p{.22\textwidth}p{.47\textwidth}}
+\toprule
+主题 & 官方资料 & 关联章节 \\
+\midrule
+\endhead
+Kafka 设计与持久化模型 & \href{https://kafka.apache.org/42/design/design/}{Kafka 4.2 Design} & 日志、复制、消费者位置的官方概览；本课程简化项见上节。\\
+消费位置与提交 & \href{https://kafka.apache.org/42/javadoc/org/apache/kafka/clients/consumer/KafkaConsumer.html}{KafkaConsumer 4.2 API} & 第 14–16 章：position、seek、commit 与线程约束。\\
+最小 ISR 配置 & \href{https://kafka.apache.org/43/configuration/topic-configs/}{Kafka 4.3 Topic Configs} & 第 22–24 章：min.insync.replicas 与写入确认。\\
+消费组协议差异 & \href{https://kafka.apache.org/43/operations/consumer-rebalance-protocol/}{Kafka 4.3 Rebalance Protocol} & 第 17–20 章：classic 与新协议背景；课程不实现完整协议。\\
+leader epoch 与截断 & \href{https://cwiki.apache.org/confluence/display/KAFKA/KIP-101+-+Alter+Replication+Protocol+to+use+Leader+Epoch+rather+than+High+Watermark+for+Truncation}{KIP-101} & 第 26 章：为何仅靠 HW 不足以定位分叉。\\
+JUnit 测试运行 & \href{https://docs.junit.org/5.11.4/user-guide/}{JUnit 5.11.4 User Guide} & 阅读实际 Step 行为失败与测试报告。\\
+Tectonic 编译选项 & \href{https://tectonic-typesetting.github.io/book/latest/v2cli/compile.html}{Tectonic compile} & 本书采用 XeTeX/CJK 与本地 cache 的构建入口。\\
+\bottomrule
+\end{longtable}
+
+\section{排版与构建说明}
+主文件使用 \pathcode{ctexbook[UTF8,fontset=none,openany]}，通过 fontspec 与 xeCJK 显式设置 Noto Serif CJK SC、Noto Sans CJK SC、Noto Sans Mono CJK SC；若系统缺少中文 serif/sans 字族，采用 TeX bundle 的 Fandol 回退，若只有 mono 字族缺失则以 Noto Sans CJK SC 替换。代码片段使用 listings，只展示 ASCII Java 标识符和短接口；中文解释全部写在正文，不依赖 minted、外部绘图器、shell-escape 或联网网页嵌入。TikZ 图由 TeX 本地绘制。
+
+\coursecmd{make book} 调用 \pathcode{scripts/book.sh}，从 \pathcode{docs/book} 编译主文件，将 PDF 写至 \pathcode{build/book/simpleKafka.pdf}。\pathcode{TECTONIC} 可覆盖默认的仓库便携 Tectonic 路径；\pathcode{TEX_BUNDLE} 指定 bundle path 或 URL；cache 放在仓库 \pathcode{.tools/tectonic-cache}。首次编译需要在线 bundle 包；cache 预热后 \pathcode{BOOK_OFFLINE=1} 使用 Tectonic 的 only-cached 模式。固定 Tectonic 二进制版本不意味着远程 TeX bundle 内容永不改变，也不应因此声称 bit-for-bit reproducible。
