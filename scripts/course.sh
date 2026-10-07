@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+caller_dir=$PWD
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+source "$ROOT/scripts/tools.sh"
+validate_course_lang || exit $?
 cd "$ROOT"
 ACTION=${1:-}
 STEP_VALUE=${2:-}
@@ -15,24 +18,28 @@ JUNIT="$ROOT/.tools/junit-platform-console-standalone-1.11.4.jar"
 
 fail() { printf 'course: %s\n' "$*" >&2; exit 2; }
 check_java() {
-  command -v "$JAVA" >/dev/null 2>&1 || fail "Java not found: $JAVA (select Java 21 with SDKMAN or set JAVA_HOME)"
+  command -v "$JAVA" >/dev/null 2>&1 || fail "Java not found: $JAVA (set JAVA_HOME or install a Java 21+ JDK)"
   command -v "$JAVAC" >/dev/null 2>&1 || fail "javac not found: $JAVAC"
   local version
   version=$("$JAVA" -XshowSettings:properties -version 2>&1 | awk -F'= ' '/java.specification.version/{print $2; exit}')
   [[ "$version" =~ ^[0-9]+$ ]] || fail 'Cannot determine Java version'
-  (( version >= 21 )) || fail "Java 21 or newer required; current specification version is $version. With SDKMAN: sdk use java 21.0.12-amzn"
+  (( version >= 21 )) || fail "Java 21 or newer required; current specification version is $version"
 }
 check_junit() {
   [[ -f "$JUNIT" ]] || fail "JUnit Console is missing; run 'make setup' (expected $JUNIT)"
 }
 check_manifest() {
   [[ -f "$MANIFEST" ]] || fail "missing course manifest: $MANIFEST"
-  local expected=1 step chapter title methods test prereq
-  while IFS=$'\t' read -r step chapter title methods test prereq; do
+  local expected=1 step chapter title_en title_zh methods test prereq header
+  IFS= read -r header < "$MANIFEST" || fail 'course manifest is empty'
+  [[ "$header" == $'step\tchapter\ttitle_en\ttitle_zh\teditable_methods\ttest_class\tprerequisites' ]] || fail 'course manifest must use the seven-column bilingual schema'
+  awk -F '\t' 'NF != 7 { exit 1 } NR > 1 && ($1 == "" || $2 == "" || $3 == "" || $4 == "" || $5 == "" || $6 == "" || $7 == "") { exit 1 }' "$MANIFEST" || fail 'course manifest must contain exactly seven non-empty columns'
+  while IFS=$'\t' read -r step chapter title_en title_zh methods test prereq; do
     [[ "$step" == step ]] && continue
     [[ "$step" =~ ^[0-9]+$ && "$step" -eq "$expected" ]] || fail "manifest step sequence broken at $step; expected $expected"
     [[ "$chapter" == "$(( (step - 1) / 4 + 1 ))" ]] || fail "manifest chapter mismatch for step $step"
     [[ "$test" == "Step$(printf '%02d' "$step")Test" ]] || fail "manifest test class mismatch for step $step"
+    [[ -n "$title_en" && -n "$title_zh" ]] || fail "manifest titles are required for step $step"
     ((expected+=1))
   done < "$MANIFEST"
   (( expected == 29 )) || fail "manifest must contain 28 steps, found $((expected-1))"
@@ -42,7 +49,7 @@ parse_goals() {
   read -r -a goals <<< "$GOALS"
   for goal in "${goals[@]}"; do
     case "$goal" in
-      setup|doctor|compile|test|step-test|reference-test|list|demo|reference-demo|book) actions+=("$goal") ;;
+      setup|setup-book|doctor|compile|test|step-test|reference-test|list|demo|reference-demo|book) actions+=("$goal") ;;
       0[1-9]|[1-9]|1[0-9]|2[0-8]) numbers+=("$goal") ;;
       '') ;;
       *) unknown+=("$goal") ;;
@@ -77,10 +84,10 @@ compile_mode() {
   mkdir -p "$main" "$tests"
   local source
   local -a main_sources=() test_sources=()
-  while IFS= read -r -d '' source; do main_sources+=("$source"); done < <(find "$ROOT/provided/src/main/java" "$source_root" -type f -name '*.java' -print0 | sort -z)
+  while IFS= read -r -d '' source; do main_sources+=("$source"); done < <(find "$ROOT/provided/src/main/java" "$source_root" -type f -name '*.java' -print0)
   ((${#main_sources[@]})) || fail "no $mode Java main sources found"
   "$JAVAC" --release 21 -encoding UTF-8 -d "$main" "${main_sources[@]}"
-  while IFS= read -r -d '' source; do test_sources+=("$source"); done < <(find "$ROOT/tests/src/test/java" -type f -name '*.java' -print0 | sort -z)
+  while IFS= read -r -d '' source; do test_sources+=("$source"); done < <(find "$ROOT/tests/src/test/java" -type f -name '*.java' -print0)
   ((${#test_sources[@]})) || fail 'no course tests found'
   "$JAVAC" --release 21 -encoding UTF-8 -cp "$main:$JUNIT" -d "$tests" "${test_sources[@]}"
 }
@@ -91,8 +98,8 @@ run_tests() {
   rm -rf -- "$reports"
   mkdir -p "$reports"
   local -a selectors=() manifest_tests=()
-  local step chapter title methods test prereq number completed
-  while IFS=$'\t' read -r step chapter title methods test prereq; do
+  local step chapter title_en title_zh methods test prereq number completed
+  while IFS=$'\t' read -r step chapter title_en title_zh methods test prereq; do
     [[ "$step" == step ]] && continue
     manifest_tests[$step]=$test
   done < "$MANIFEST"
@@ -135,21 +142,32 @@ case "$ACTION" in
     printf 'Java: '; "$JAVA" -version 2>&1 | awk 'NR==1{print}'
     printf 'javac: '; "$JAVAC" -version
     printf 'Make: '; make --version | awk 'NR==1{print}'
-    for tool in curl tar sha256sum; do command -v "$tool" >/dev/null 2>&1 && printf '%s: available\n' "$tool" || printf '%s: missing\n' "$tool"; done
-    for font in 'Noto Serif CJK SC' 'Noto Sans CJK SC' 'Noto Sans Mono CJK SC'; do
-      if command -v fc-match >/dev/null 2>&1; then printf '%s: ' "$font"; fc-match -f '%{family}\n' "$font"; else printf 'fontconfig unavailable; cannot check %s\n' "$font"; fi
-    done
-    for tool in xelatex latexmk; do
-      if command -v "$tool" >/dev/null 2>&1; then printf '%s: %s\n' "$tool" "$(command -v "$tool")"; else printf '%s: not on PATH\n' "$tool"; fi
-    done
-    if [[ -n "${TECTONIC:-}" ]] && command -v "$TECTONIC" >/dev/null 2>&1; then
-      printf 'tectonic: '; "$TECTONIC" --version
-    elif [[ -x "$ROOT/.tools/tectonic-0.17.0/tectonic" ]]; then
-      printf 'tectonic: '; "$ROOT/.tools/tectonic-0.17.0/tectonic" --version
+    for tool in find awk curl tar install; do command -v "$tool" >/dev/null 2>&1 && printf '%s: available\n' "$tool" || printf '%s: missing\n' "$tool"; done
+    if command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1; then
+      printf 'SHA-256 tool: available\n'
     else
-      printf 'tectonic: not prepared (run make setup)\n'
+      printf 'SHA-256 tool: missing (sha256sum or shasum required for setup)\n'
     fi
-    if [[ -f "$JUNIT" ]]; then printf 'JUnit Console: '; "$JAVA" -jar "$JUNIT" --version | awk 'NR==1{print}'; else printf 'JUnit Console: not prepared (run make setup)\n'; fi
+    if tectonic_bin=$(resolve_tectonic "$ROOT" "$caller_dir"); then
+      printf 'Tectonic: '
+      "$tectonic_bin" --version
+    else
+      resolve_status=$?
+      if [[ ${TECTONIC+x} ]]; then
+        fail 'the TECTONIC override is unavailable or unsupported'
+      elif (( resolve_status == 127 )); then
+        printf 'Tectonic: not prepared (PDF-only; run make setup-book)\n'
+      else
+        fail 'cannot resolve Tectonic for this platform'
+      fi
+    fi
+    if [[ -f "$JUNIT" ]]; then
+      printf 'JUnit Console: '
+      "$JAVA" -jar "$JUNIT" --version | awk 'NR==1{print}'
+    else
+      printf 'JUnit Console: not prepared (run make setup)\n'
+    fi
+    printf 'PDF fonts come from the Tectonic bundle; the first book build needs network access. Warm both languages before BOOK_OFFLINE=1.\n'
     ;;
   compile)
     compile_mode student
@@ -157,8 +175,17 @@ case "$ACTION" in
     ;;
   list)
     check_manifest
-    printf 'Step  Chapter  Lesson\tEditable methods\tPrerequisites\n'
-    while IFS=$'\t' read -r step chapter title methods test prereq; do [[ "$step" == step ]] && continue; printf '%02d\t%s\t%s\t%s\t%s\n' "$step" "$chapter" "$title" "$methods" "$prereq"; done < "$MANIFEST"
+    if [[ "$COURSE_LANG" == en ]]; then
+      printf 'Step  Chapter  Lesson\tEditable methods\tPrerequisites\n'
+    else
+      printf '步骤  章节  课程\t编辑方法\t前置步骤\n'
+    fi
+    while IFS=$'\t' read -r step chapter title_en title_zh methods test prereq; do
+      [[ "$step" == step ]] && continue
+      title=$title_en
+      [[ "$COURSE_LANG" == zh ]] && title=$title_zh
+      printf '%02d\t%s\t%s\t%s\t%s\n' "$step" "$chapter" "$title" "$methods" "$prereq"
+    done < "$MANIFEST"
     ;;
   test)
     parse_goals

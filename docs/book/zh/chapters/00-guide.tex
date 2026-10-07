@@ -8,9 +8,11 @@
 项目并非生产级 Kafka：没有 Kafka 线协议兼容、事务、压缩、compaction、幂等生产者、完整控制器共识或 controller HA。其 authority 是单 JVM 内的可信教学控制面；三台 broker 虽各有 TCP server、线程和磁盘目录，副本仍共享这个 authority。它可展示有控制的故障切换，不可用来声称任意网络分区下具备共识或生产级可用性。具体差异在附录和相关步骤反复标出。
 
 \section{准备 Java 21 与课程命令}
-课程使用 \pathcode{javac --release 21}，不需要 Maven、Gradle、Docker 或已启动的 Kafka。GNU Make 驱动练习，独立 JUnit Console 执行行为测试。先检查 \coursecmd{java -version}、\coursecmd{javac -version} 和 \coursecmd{make --version}，确认 Java 21。计划中的环境使用 SDKMAN 当前 Java 21.0.12；如果你的 shell 由 SDKMAN 管理 JDK，可通过 \coursecmd{sdk use java 21.0.12-amzn} 选择已经安装的同版本，或安装一个符合课程要求的 Java 21 发行版。课程不会静默替你更改 SDKMAN、系统包或 shell 配置。也可通过 \pathcode{JAVA_HOME} 显式指定 JDK。
+课程使用任意 Java 21 或更高版本的 JDK，并以 \pathcode{javac --release 21} 编译；不需要 Maven、Gradle、Docker 或已启动的 Kafka。GNU Make、Bash 3.2+、\pathcode{find}、\pathcode{awk}、\pathcode{curl} 与 \pathcode{sha256sum} 或 \pathcode{shasum} 提供课程命令和经过校验的依赖下载；\pathcode{tar} 与 \pathcode{install} 仅用于 \coursecmd{make setup-book}。SDKMAN 是可选的 JDK 管理器；项目不会读取作者本机路径、切换 SDKMAN Java 或修改 shell 配置。可以通过 \pathcode{JAVA_HOME} 指定任意符合要求的 JDK，或把 \pathcode{java} 与 \pathcode{javac} 放入 \pathcode{PATH}。
 
-首次执行 \coursecmd{make setup} 会在仓库自己的 \pathcode{.tools/} 下准备固定版本的 JUnit 和便携 Tectonic；不需要 sudo，也不把依赖安装到系统。\coursecmd{make doctor} 检查工具与字体。\coursecmd{make compile} 编译学生骨架和测试，骨架编译成功不表示练习已经实现。PDF 的 \coursecmd{make book} 和 Java 测试分离；离线编译可使用已经预热的 TeX bundle cache，执行 \coursecmd{make book BOOK_OFFLINE=1}。
+\coursecmd{make setup} 只准备固定版本的 JUnit；\coursecmd{make setup-book} 单独准备平台对应的 Tectonic PDF 引擎，不要求先有 Java。两者都把工具放在仓库忽略的 \pathcode{.tools/}，不安装系统软件。\coursecmd{make doctor} 检查 JDK、JUnit 与可选 PDF 工具。骨架与测试可用 \coursecmd{make compile} 编译，编译成功不表示练习已经实现。课程清单与教材的默认语言为英文；\coursecmd{make list COURSE_LANG=zh} 显示中文步骤标题。
+
+\coursecmd{make book} 编译英文版到 \pathcode{build/book/en/simpleKafka.pdf}；\coursecmd{make book COURSE_LANG=zh} 编译中文版到 \pathcode{build/book/zh/simpleKafka-zh.pdf}。字体来自 Tectonic TeX bundle，不扫描系统 Noto 字体。首次构建需要网络下载 LaTeX bundle 和字体；两种语言都预热后，可分别用 \coursecmd{make book BOOK_OFFLINE=1} 与 \coursecmd{make book COURSE_LANG=zh BOOK_OFFLINE=1} 离线构建。
 
 \section{读懂二进制与文件 I/O}
 \method{ByteBuffer} 是一块带 position/limit 的字节视图。读取前通常要把写入完成的 buffer \method{flip()}；写出后是否清理取决于是否继续复用。协议和磁盘布局规定大端序，因此编码端与解码端都必须遵守相同字节次序。逻辑 offset 表示第几条记录；position 表示文件中的第几个字节，两者数值碰巧相同也毫无含义。

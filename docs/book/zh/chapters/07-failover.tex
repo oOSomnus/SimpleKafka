@@ -17,7 +17,7 @@
 \end{figure}
 
 \lessonsection{25}{干净选举与epoch}
-\goals{在旧 leader 离线时选择有已提交前缀的候选，并让旧 epoch 请求失效。需要理解 ISR 候选集、HW 下界与 epoch 的角色围栏。}
+\goals{在旧 leader 离线时选择有已提交前缀的候选，并让旧 epoch 请求失效。}{理解 ISR 候选集、HW 下界与 epoch 的角色围栏。}
 \background{选举是角色决策而不是简单选择在线节点。当前 leader 仍在线时返回当前 metadata，不增加 epoch。否则候选只从旧 ISR 中选择 online 且 LEO>=authority.HW 的 broker，以最小 broker id 决定；低于已知提交边界的副本不可当干净候选。没有候选报 \method{NO_ELIGIBLE_LEADER}，不改 epoch/HW，也不进行 unclean election。成功角色变化使 epoch 加一，旧 leader 被 fence，新 leader 作为初始唯一 ISR，其他成员处于 recovering 状态；它们必须经过修复与 admission 才能重新参与确认。旧 epoch 的等待生产请求要被唤醒并失败。}
 \providededit{authority 持有可信 broker 在线状态、每分区锁、LEO/HW 与角色发布能力；三个 broker 的传输和日志不需重写。}{\pathcode{exercises/src/main/java/io/simplekafka/replication/LeaderElection.java}：\method{elect(TopicPartition)}、\method{checkLeader(int,TopicPartition,int)}。}
 \lessoncontract{当前 leader 在线时 metadata 和 epoch 原样返回。切换只从旧 ISR 选 online 且 LEO>=HW 的最小 broker id；成功 epoch 恰加一、HW 不回退、新 ISR 初始只含 leader。无候选失败不变更状态。请求 epoch 旧报 \method{FENCED_EPOCH}；epoch 正确但 broker 非 leader 报 \method{NOT_LEADER}。}
@@ -28,7 +28,7 @@
 \lessonquestions{候选 LEO>=HW 保证了什么最小安全条件？}{为什么 epoch 正确的非 leader 仍然不能接受 produce？}
 
 \lessonsection{26}{分叉日志修复}
-\goals{让旧副本与新 leader 找共同前缀、截断未提交分歧并追上 leader。需要理解 HW 保护、恢复读取、epoch 变化和证明的作用范围。}
+\goals{让旧副本与新 leader 找共同前缀、截断未提交分歧并追上 leader。}{理解 HW 保护、恢复读取、epoch 变化和证明的作用范围。}
     \background{课程修复采用全前缀扫描这一教学简化：从 offset 0 到捕获的 leader LEO 分批使用\newline \texttt{\detokenize{recoveryRead=true}} 标志的 \pathcode{REPLICA_FETCH}，比较每个本地已有记录与 leader 对应记录。恢复读取能看到 HW 之上的 leader 尾部，但不报告复制进度、不修改 ISR/HW。本地已有且 offset<captured HW 的记录若不同，报 \method{CORRUPT_RECORD} 且不改文件；本地只是缺记录则可补齐。扫描前捕获当前 PartitionLog 对象的 mutationVersion，读取完整本地前缀后，在 authority 锁内重核 epoch、start、LEO 与 version，并在同一锁序下持有本地日志 monitor 直至修复及 proof 发布；若扫描期间经日志 API 发生任何修改（包括截断后重新追加到同一 LEO），报 \method{REQUEST_TIMEOUT}，不得用变化后的日志做判断/截断或发布 proof。只有检查稳定后才允许从 HW 起修复分歧并追加 leader 内容；全程网络读取在 authority 锁外。成功 proof 绑定 PartitionLog 对象身份及最终 mutationVersion，以免 close/reopen 后版本重置误用旧证据；该版本仅是单个打开对象的内存代数，不是持久校验，也不识别绕过 API 的直接磁盘篡改。全扫描开销 O(n)，仅用于显式恢复。}
 \providededit{PartitionLog 的 truncateTo/append、RpcClient 的 replica fetch、authority 的 epoch/HW 快照和分区锁已提供；没有自动把旧副本当作 ISR。}{\pathcode{exercises/src/main/java/io/simplekafka/replication/ReplicaReconciler.java}：\method{reconcile(int expectedEpoch)}。}
     \lessoncontract{预期 epoch 已非当前时以 \method{FENCED_EPOCH} 退出。本地已有且 offset 小于 captured HW 的记录若与 leader 不同，报损坏且不改文件；缺失提交前缀可以修复。扫描期间本地 mutationVersion 改变时以 \method{REQUEST_TIMEOUT} 退出且不修日志。最终重核、修复与 proof 发布须在 authority 分区锁及本地日志 monitor 的既定锁序下原子进行；任何截断点不得小于 HW。结束时返回 LEO，并生成同时绑定捕获 epoch、leader LEO、本地日志对象身份与最终 version 的 proof；admission 必须重新核验 proof。恢复期间不报告 ISR progress。}
@@ -39,7 +39,7 @@
 \lessonquestions{为何“已提交记录不同”和“本地缺少已提交记录”应采用不同处理？}{leader 在捕获快照后又写入，旧 proof 为何不能直接用于 admission？}
 
 \lessonsection{27}{元数据路由刷新}
-\goals{让客户端缓存 metadata 并按分区 leader 路由，同时避免错误后自动重发业务请求。需要理解控制面查询、数据面路由和不确定确认。}
+\goals{让客户端缓存 metadata 并按分区 leader 路由，同时避免错误后自动重发业务请求。}{理解控制面查询、数据面路由和不确定确认。}
 \background{bootstrap endpoint 只是发现入口，不必永久承载数据。refresh 按 bootstrap 顺序查 metadata，某个连接失败可继续下一个可用节点。call 按缓存 leader/epoch 发送一次业务请求。收到 \method{NOT_LEADER} 或 \method{FENCED_EPOCH} 时可刷新缓存以便下一次请求使用新角色，但必须把原请求的原始错误传播给调用者，不能使用新 metadata 自动重放业务请求：旧请求的错误也可能发生在等待确认期间，数据可能已追加。I/O、timeout、storage 错误同样不自动重发。producer、consumer、group consumer 可增加 Router 构造入口；原 RpcClient 构造器继续支撑单机模式，不作为待废弃 shim。group/offset 控制面使用可用 bootstrap control client，partition fetch/produce 走 leader。}
 \providededit{RpcClientFactory 能按 Endpoint 建连接；MessageCodec 与原客户端逻辑已完成；broker metadata 返回真实 leader endpoint/epoch。}{\pathcode{exercises/src/main/java/io/simplekafka/client/MetadataRouter.java}：\method{refresh(String)}、\method{call(TopicPartition,Request)}；接入 \method{SimpleProducer}、\method{SimpleConsumer}、\method{GroupConsumer} 的 Router 构造路径。}
 \lessoncontract{refresh 只读 metadata 并按 bootstrap 顺序容错；call 使用缓存 endpoint 和 epoch。\method{NOT_LEADER}/\method{FENCED_EPOCH} 可触发 refresh，但必须传播最初响应，不得重发 produce/fetch/commit。其他网络与存储错误不自动重试。后续新的独立请求才使用新缓存。}
@@ -50,7 +50,7 @@
 \lessonquestions{为什么刷新 metadata 与重放业务请求是两个不同的动作？}{客户端看到错误时，为什么不能断定服务端没有产生副作用？}
 
 \lessonsection{28}{副本重新入ISR}
-\goals{把已修复副本经过严格证明后重新纳入 ISR，并验证综合故障切换。需要理解副本的分配、在线状态、follower 角色、epoch 与 proof 的有效期。}
+\goals{把已修复副本经过严格证明后重新纳入 ISR，并验证综合故障切换。}{理解副本的分配、在线状态、follower 角色、epoch 与 proof 的有效期。}
     \background{副本恢复完成不自动等于同步。日志修复生成的前缀 proof 才能申请重新入 ISR，并绑定捕获 epoch、leader LEO、本地 PartitionLog 对象身份与 mutationVersion。authority 分区锁下检查目标 broker 已分配且在线、处于当前 follower 角色、expected epoch 与当前一致；持有目标 PartitionLog 的 monitor 直到 ISR 转换发布，append/delete/truncate/close 也使用同一 monitor，因此证明核验与入 ISR 之间没有本地日志变更窗口。proof 仍须绑定当前 leader epoch/LEO 和当前传入的同一个日志对象/version，日志 start 必须为 0，当前 LEO 必须精确等于 leader LEO。任何经 PartitionLog API 的 append/delete/truncate 都使旧 proof 失效，即使 truncate 后追加恢复相同 LEO；需要重新 reconciliation。这个内存版本不能发现绕过 API 的外部文件修改。成功入 ISR 时初始化 reportedLEO/lastCaughtUp 并重算 HW；重复添加已在 ISR 的成员返回 true 但不改变 HW。}
 \providededit{authority 的角色/ISR 管理、复制进度、proof 类型与 broker 生命周期已由课程基础层提供。}{\pathcode{exercises/src/main/java/io/simplekafka/replication/ReplicaAdmission.java}\newline：\method{tryAdd(int,TopicPartition,int)}。}
     \lessoncontract{目标副本已分配、在线、是当前 epoch 的 follower，且 proof 的 leader 与本地日志对象身份/version 正确；日志 start=0、本地 LEO=当前 leader LEO，才返回 true。proof 核验期间本地 PartitionLog API 写操作不能穿插，leader 追加或任何本地 PartitionLog 变更后旧 proof 返回 false；unassigned 报 \method{INVALID_REQUEST}，offline 或 proof 不新鲜返回 false。已在 ISR 重复调用 true，不改变高水位。成功后重算 HW 并唤醒确认等待者。}

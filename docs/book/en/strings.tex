@@ -1,0 +1,20 @@
+% English labels and lesson macros.
+\renewcommand{\contentsname}{Contents}
+\renewcommand{\figurename}{Figure}
+\renewcommand{\tablename}{Table}
+\renewcommand{\chaptername}{Chapter}
+\renewcommand{\appendixname}{Appendix}
+\hypersetup{pdftitle={Understanding simpleKafka from Scratch},pdfauthor={simpleKafka teaching project}}
+
+\newenvironment{contract}{\begin{quote}\small\noindent\textbf{Behavioral contract and invariants.}\ }{\end{quote}}
+\newcommand{\lessoncommand}[1]{\par\noindent\textbf{Commands and progression.} Use \coursecmd{make step-test #1} to diagnose this step; \coursecmd{make test #1} runs cumulatively from Step 1 through this step. A chapter is complete only when the cumulative tests through its final step (4, 8, 12, 16, 20, 24, or 28) all pass.}
+\newcommand{\lessonquestions}[2]{\subsubsection*{Check your understanding}\begin{enumerate}\item #1\item #2\end{enumerate}}
+\newcommand{\lessonhints}[3]{\subsubsection*{Tiered hints (not the answer)}\begin{hintlevels}\item[Level 1] #1\item[Level 2] #2\item[Level 3] #3\end{hintlevels}}
+\newcommand{\lessonsection}[2]{\section{Step #1: #2}\label{step:#1}}
+\newcommand{\stepref}[2]{\hyperref[step:#1]{Step #1 (#2)}}
+\newcommand{\expected}[1]{\begin{quote}\small\textbf{Observable examples and test points.} #1\end{quote}}
+\newcommand{\providededit}[2]{\begin{quote}\small\textbf{Starting point and edit location.}\par Already provided: #1\par Implement in: #2\end{quote}}
+\newcommand{\pitfalls}[1]{\subsubsection*{Common pitfalls and differences from real Kafka}#1}
+\newcommand{\goals}[2]{\subsubsection*{Goals and prerequisites}Goal: #1\par Before you begin, be able to explain: #2}
+\newcommand{\background}[1]{\subsubsection*{Background and reasoning}#1}
+\newcommand{\lessoncontract}[1]{\begin{contract}#1\end{contract}}

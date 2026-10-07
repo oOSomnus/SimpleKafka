@@ -2,7 +2,7 @@
 本章把直接调用 broker 的教学程序变成可理解的客户端行为。producer 将消息按分区缓冲，consumer 按显式分配拉取，OffsetStore 把已处理进度写入本地日志。关键区分是三个位置：broker 的 LEO、复制模式中的 HW，以及某个 group 的 committed offset。一次拉取推进客户端内存 position，不等于 commit；commit 也不等于 broker 日志数据已经删除。客户端接管直接传入的 RpcClient，并在 close 时关闭它；传入的 MetadataRouter 是借用的共享依赖，应由创建者在使用它的客户端全部关闭后统一关闭。
 
 \lessonsection{13}{批量生产者}
-\goals{实现按分区有序的批量缓冲、阈值发送和显式 flush。需要理解 metadata 路由、batch 的边界、返回 receipt 与请求结果不确定性。}
+\goals{实现按分区有序的批量缓冲、阈值发送和显式 flush。}{理解 metadata 路由、batch 的边界、返回 receipt 与请求结果不确定性。}
 \background{每个分区的 batch 必须维持调用顺序，但不同分区可以分别积攒。send 根据 metadata 得到 partition，并在达到 batchRecords 时同步发送该分区 batch；flush 按稳定顺序发送所有非空 batch 并汇总 ProduceReceipt。自动发送返回的 receipt 不能丢失，须留到下一次 flush 交给调用者。默认 ACK 为 LEADER，不使用后台定时器。网络 timeout 只说明客户端不知道结果：broker 可能已追加，也可能未追加。自动重试会让未知结果批次产生重复，因此本课程进入“结果未知”状态，后续 send/flush 失败直到关闭，不猜测并重放。}
 \providededit{RpcClient 管理 socket、timeout、correlation id 和请求/响应；metadata、Partitioner 和批次记录结构已提供。}{\pathcode{exercises/src/main/java/io/simplekafka/client/SimpleProducer.java}：\method{send(String,byte[],byte[],long)}、\method{flush()}。}
 \lessoncontract{相同 partition 保持 send 顺序，分区间 batch 可独立；batch 满时同步发送该分区。receipt 保存 topic-partition 与 [firstOffset,nextOffset)；显式 flush 返回自动发送和本次发送的 receipt。timeout 后禁止自动重发并保留 \method{REQUEST_TIMEOUT} 语义。producer 和 consumer 按单线程使用，不声称 KafkaProducer 的线程安全属性。}
@@ -13,7 +13,7 @@
 \lessonquestions{为何 timeout 不足以证明 broker 没有追加？}{如果同一个 batch 的错误回复被重试，调用方如何识别重复？本课程为何不做这个机制？}
 
 \lessonsection{14}{拉取消费者}
-\goals{构建单线程、单轮 pull consumer，明确管理 assigned partitions 与本地 position。需要理解 seek、空 fetch 与总预算。}
+\goals{构建单线程、单轮 pull consumer，明确管理 assigned partitions 与本地 position。}{理解 seek、空 fetch 与总预算。}
     \background{consumer 的 position 指下一条要处理/拉取的 offset。手动 assign 对分区去重并排序，用新 map 替换旧 assignment：仍保留的分区继续使用原 position，撤销分区被删除，新分区初始 position=0；它不读取 OffsetStore。seek 可重放或跳转但不提交。poll 是一次有限请求，不是持续长轮询；跨分区共享 maxRecords/maxBytes 总预算。成功返回记录后，仅相应分区 position 移到最后一条 offset+1；某分区 fetch 失败不能提前推进它的 position。空结果意味着当前位置暂时没有可读数据，不代表应该向前跳。consumer 按单线程使用，避免并发 poll 对 position 产生竞争。}
 \providededit{RpcClient 已提供 FETCH；\method{SimpleConsumer} 持有 group 名和分区 position，并提供只读 \method{position(tp)}。第 14 步不调用 OffsetStore。}{\pathcode{exercises/src/main/java/io/simplekafka/client/SimpleConsumer.java}：\method{assign(Collection)}、\method{seek(TopicPartition,long)}、\method{poll(int,int)}。}
     \lessoncontract{assign 去重并稳定排序；仍保留的分区 position 不变，新分区从 0 初始化，撤销项移除，不读取 committed offset；seek 目标分区必须已分配，否则 \method{NOT_ASSIGNED}。poll 成功后只推进返回记录所在分区；空 fetch 不变；失败分区不前移。读不自动 commit。总 records/bytes 不超过请求限额；返回映射按可预期分区顺序组织。}
@@ -24,7 +24,7 @@
 \lessonquestions{为什么读取成功后推进 position 仍不代表重启后从新位置开始？}{某分区请求失败时，为何不能把所有分区 position 一起推进？}
 
 \lessonsection{15}{消费位点持久化}
-\goals{持久化下一条要处理的 offset，并在新 consumer 中恢复。需要区分物理日志 offset、group/tp 键与消息协议。}
+\goals{持久化下一条要处理的 offset，并在新 consumer 中恢复。}{区分物理日志 offset、group/tp 键与消息协议。}
 \background{OffsetStore 是一个追加日志：每次 commit 将 (group,TopicPartition,nextOffset) 编码进一条 LogRecord，物理日志自身分配递增 offset，记录 payload 中保存的 nextOffset 才是消费进度。key=null、timestamp=0；provided MessageCodec 负责编码 OffsetKey/value，重启扫描同 key 最新值。底层使用第一章记录格式与 force，损坏尾部遵循相同恢复规则。consumer.resume 先做 assign，再分别查 committed value；没有已提交值时从 0 开始。消费位点是下一条 offset，因此提交 3 后恢复从 3 拉取。\method{COMMIT_OFFSET}/\method{FETCH_OFFSET} 请求也由 broker handler 统一路由。}
 \providededit{MessageCodec 的 offset entry 编码、RpcClient、consumer 分配和日志记录工具已提供。}{\pathcode{exercises/src/main/java/io/simplekafka/group/OffsetStore.java}：\method{commit(OffsetKey,long)}、\method{fetch(OffsetKey)}；\pathcode{exercises/src/main/java/io/simplekafka/client/SimpleConsumer.java}：\method{resume(Collection)}、\method{commitSync()}；并增补 BrokerHandler 的 \method{COMMIT_OFFSET/FETCH_OFFSET}。}
 \lessoncontract{offset 是下一条记录编号，可显式回退；不同 group 与 TopicPartition 独立。commit 后重开 store 仍得到最新值；缺少值是空 OptionalLong。resume 在未提交时 position=0，成功 fetch 后可 commitSync 所有 assigned position。组 token 到第 20 步才用于提交围栏，手动消费传 null。}
@@ -35,7 +35,7 @@
 \lessonquestions{为什么消费位点约定为 next offset 比 last processed offset 更便于表达？}{HW 与 group committed offset 分别控制什么？}
 
 \lessonsection{16}{至少一次处理}
-\goals{建立处理副作用与 offset 提交的安全先后顺序，并能解释重投。需要理解失败重启、批次位置和提交原子性边界。}
+\goals{建立处理副作用与 offset 提交的安全先后顺序，并能解释重投。}{理解失败重启、批次位置和提交原子性边界。}
 \background{本课程的 ProcessingLoop 单轮 poll 后按 TopicPartition 排序、同分区 offset 顺序执行 processor。只有这一轮所有被返回记录都处理成功，才统一 commitSync；processor 抛异常就传播原异常，不提交任何分区。consumer 的内存 position 已经随 poll 推进，所以失败实例不能继续使用，否则会跳过尚未 commit 的记录；应关闭并重建，从已持久化位置恢复。副作用与 offset commit 并非一个原子事务：若副作用已发生但 commit 尚未成功，重启后记录会再次处理。于是至少一次容许重复，但不应静默丢失未成功处理的记录。}
 \providededit{\method{RecordProcessor} 回调接口、单轮 poll、commitSync 与重建所需的 consumer 生命周期已提供。}{\pathcode{exercises/src/main/java/io/simplekafka/client/ProcessingLoop.java}：\method{runOnce(int,int)}。}
 \lessoncontract{返回成功处理的记录数。记录处理按稳定分区顺序与 offset 顺序调用；全部成功后才提交。任一 processor 异常原样传播且本轮不提交任何分区。失败后调用者应关闭这个 consumer 并从 store 重建，禁止将 poll 已推进 position 当作已持久进度。}

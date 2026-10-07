@@ -1,46 +1,20 @@
-\documentclass[UTF8,fontset=none,openany,oneside,11pt]{ctexbook}
+\documentclass[openany,oneside,11pt]{book}
 \input{preamble.tex}
+\input{en/strings.tex}
 \begin{document}
 \frontmatter
-\title{从零理解 simpleKafka\\\large 一门面向源码的中文渐进式课程}
-\author{simpleKafka 教学项目}
-\date{课程版本：Java 21 · 28 个可运行步骤}
-\hypersetup{pageanchor=false}
-\maketitle
-\hypersetup{pageanchor=true}
-\chapter*{写在开始之前}
-本书用一章课程地图和七个实现章节，展开二十八步。读者会亲自完成记录格式、日志、网络请求、消费位点、消费组和受控副本切换；不是通过连接真实 Kafka 来“假装实现”，也不是把生产级 Kafka 缩成几个空洞名词。每一步都对应一个明确的 Java 方法、行为测试、失败边界和可重复命令。请从第一步开始按序推进；本书正文、课程清单与测试类共用相同编号。
-
-课程代码刻意分成 \pathcode{provided/}、\pathcode{exercises/}、\pathcode{reference/} 三个源根。学生入口编译前两者，参考入口编译第一和第三者；两套实现具有相同全限定类名，绝不可把两个答案源根放进同一次编译。参考实现用于在尝试后对照契约，并非学生测试 classpath 的后门。详细的开发环境、测试读取方法和晋级规则见本书第一章。
-\tableofcontents
+\input{en/frontmatter.tex}
 \mainmatter
-\input{chapters/00-guide.tex}
-\input{chapters/01-record-log.tex}
-\input{chapters/02-segments-index.tex}
-\input{chapters/03-partition-network.tex}
-\input{chapters/04-client-offset.tex}
-\input{chapters/05-consumer-groups.tex}
-\input{chapters/06-replication.tex}
-\input{chapters/07-failover.tex}
+\input{en/chapters/00-guide.tex}
+\input{en/chapters/01-record-log.tex}
+\input{en/chapters/02-segments-index.tex}
+\input{en/chapters/03-partition-network.tex}
+\input{en/chapters/04-client-offset.tex}
+\input{en/chapters/05-consumer-groups.tex}
+\input{en/chapters/06-replication.tex}
+\input{en/chapters/07-failover.tex}
 \appendix
-\input{appendices/contracts.tex}
+\input{en/appendices/contracts.tex}
 \backmatter
-\chapter*{术语索引}
-\addcontentsline{toc}{chapter}{术语索引}
-\begin{longtable}{p{.21\textwidth}p{.72\textwidth}}
-\toprule
-术语 & 本书中的含义与位置 \\
-\midrule
-\endhead
-追加（append） & 在日志尾部按连续 offset 写入记录；第 1、2、6 章。\\
-位点（offset） & 分区日志中的逻辑记录编号，不是文件字节位置；第 1 章。\\
-字节位置（position） & 记录在一个 segment 文件内的物理起始位置；第 1、2 章。\\
-LEO & Log End Offset，下一条可写记录的 offset；第 1、6 章。\\
-HW & High Watermark，普通消费者可见的提交边界；第 6、7 章。\\
-ISR & In-Sync Replicas，与当前 leader 保持在课程界定同步条件内的副本集合；第 6、7 章。\\
-generation & 消费组成员分配的版本号，用于拒绝旧成员提交；第 5 章。\\
-leader epoch & 分区 leader 角色版本；切换后旧角色请求被围栏；第 7 章。\\
-至少一次 & 处理可能重放，但在提交之前不会悄悄越过未成功处理的记录；第 4 章。\\
-\bottomrule
-\end{longtable}
+\input{en/glossary.tex}
 \end{document}

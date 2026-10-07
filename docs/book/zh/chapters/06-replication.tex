@@ -17,7 +17,7 @@
 \end{figure}
 
 \lessonsection{21}{拉取复制}
-\goals{让 follower 通过 \pathcode{REPLICA_FETCH} 请求把 leader 的记录持久化到本地。需要理解 leader LEO、follower LEO 和读请求为何不同于消费者 fetch。}
+\goals{让 follower 通过 \pathcode{REPLICA_FETCH} 请求把 leader 的记录持久化到本地。}{理解 leader LEO、follower LEO 和读请求为何不同于消费者 fetch。}
     \background{FollowerReplicator 在第一次 state monitor 临界区验证 online/follower 并捕获 epoch，随后完全在锁外执行 \pathcode{REPLICA_FETCH}。leader 返回 records、epoch、HW、leader LEO；复制可读到当前 leader LEO，不受普通消费者 HW 限制。follower 检查响应 epoch、首 offset、连续性与 append offset 对齐，再进入第二次短临界区，先复核 epoch，再复核 online/follower，并在同一临界区完成空 poll 或日志 append。provided ReplicaState.update 同步发布角色，避免末次检查与 append 间切换角色；网络调用不持 state monitor。只有本地 append 持久化成功后，下一轮 poll 才能报告进度。第 21 步网络只读写日志，不调用尚未实现的 report。}
 \providededit{三节点 TCP harness、\pathcode{REPLICA_FETCH} 消息类型、ReplicaState 与 PartitionLog 生命周期已提供；fixture seed 会把 leader 实际 LEO 放入初始进度。}{\pathcode{exercises/src/main/java/io/simplekafka/replication/FollowerReplicator.java}：\method{pollOnce(int,int)}；同时增补 BrokerHandler 的 \pathcode{REPLICA_FETCH} 分支。}
     \lessoncontract{仅当前 online follower 可复制正确分区；发送请求前捕获 epoch，返回后必须在网络锁外确认响应格式，再在本地 state monitor 内复核当前 epoch 与角色。期间 epoch 改变报 \method{FENCED_EPOCH}，角色变为 leader/offline 报 \method{NOT_LEADER}；这些失败不能追加。重复空 poll 不重写。第 21 步只验证副本数据一致，不报告进度或推进 HW。}
@@ -28,7 +28,7 @@
 \lessonquestions{为何 follower 复制可以读取超过普通消费者可见边界的记录？}{为什么本地 append 完成前不能报告 follower 新 LEO？}
 
 \lessonsection{22}{ISR与高水位}
-\goals{用副本进度报告维护 ISR 和 HW，并用受控时间剔除长期落后的副本。需要理解 minISR、LEO 单调性与高水位公式。}
+\goals{用副本进度报告维护 ISR 和 HW，并用受控时间剔除长期落后的副本。}{理解 minISR、LEO 单调性与高水位公式。}
 \background{每份副本进度按 partition 锁保护。当前 epoch 合法的 assigned/online 副本才能 report 非负 LEO。leader 自身报告推进 leaderLEO；follower 报告不得超过 leader 当前 LEO，也不得在同 epoch 倒退。follower 只有追到当时 leader LEO 才刷新 caught-up 时间；仅连接在线不足以证明同步。超时副本从 ISR 移除但不移 leader。ISR 包含 leader 且大小至少 minISR 时，候选 HW 为 ISR 最近成功报告 LEO 的最小值；HW 只能单调推进，达到 minISR 条件不满足时冻结。真实复制 poll 在第 22 步后接入 report 与 HW 推进。}
 \providededit{ClusterAuthority 提供稳定的 per-TopicPartition lock/Condition、在线状态与进度容器；TimeSource 可控。}{\pathcode{exercises/src/main/java/io/simplekafka/replication/ReplicationTracker.java}：\method{report(int,int,long)}、\method{expireLagging()}、\method{advanceHighWatermark()}。}
 \lessoncontract{只接受 assigned/online/当前 epoch 且 LEO 非负的报告；非法报告不修改状态。follower LEO<=leaderLEO 且同 epoch 不倒退。minISR 不足时 HW 冻结；满足时 HW=max(旧HW,min(ISR progress))。report、expire 引起可见条件变化时唤醒等待者。时间边界由注入 clock 定义，过期副本不包括 leader。}
@@ -39,7 +39,7 @@
 \lessonquestions{为什么 minISR 不足时已追加数据也不能推进 HW？}{follower 只是在线但未追到 leaderLEO，为何不能刷新 caught-up 时间？}
 
 \lessonsection{23}{生产确认}
-\goals{把生产者的确认语义与复制状态、deadline 连接起来，区分“leader 已写”和“副本已提交”。需要理解 Condition 等待、epoch 围栏和不可回滚 timeout。}
+\goals{把生产者的确认语义与复制状态、deadline 连接起来，区分“leader 已写”和“副本已提交”。}{理解 Condition 等待、epoch 围栏和不可回滚 timeout。}
 \background{ACKS 只有 LEADER=1 和 ALL=-1。LEADER 在 leader 日志追加完成后可返回，但切换时尾数据可能丢失。ALL 必须先验证 ISR>=minISR，再追加并等待 HW 到达 batch.nextOffset；等待期间可能发生 minISR 下降或 leader epoch 变化。Condition 属于 authority partition lock，awaitNanos 会释放锁，让复制报告能进入；醒来后重新检查 epoch、ISR、HW 与 deadline。deadline 使用 System.nanoTime 的单调时钟，timeout 不代表追加回滚。所有 socket 网络调用都在 partition lock 之外。}
 \providededit{ReplicationTracker 绑定 authority condition 并提供 snapshot/锁；RecordData、AppendResult、Acks、TimeSource 已提供。}{\pathcode{exercises/src/main/java/io/simplekafka/replication/AckPolicy.java}：\method{validateBeforeAppend(Acks)}、\method{await(AppendResult,Acks,int,long)}。}
 \lessoncontract{LEADER 追加完成即可返回。ALL 在追加前若 ISR 不足报 \method{NOT_ENOUGH_REPLICAS}；追加后等待 HW>=nextOffset。等待中 epoch 变化报 \method{FENCED_EPOCH}，ISR 跌破 minISR 报 \method{NOT_ENOUGH_REPLICAS}，超 deadline 报 \method{REQUEST_TIMEOUT}。timeout 不回滚已写日志，deadline duration 非负。}
@@ -50,7 +50,7 @@
 \lessonquestions{awaitNanos 释放锁后为什么必须重查 epoch 和 ISR？}{ALL timeout 后，LEO、HW 与调用方是否知晓追加之间是什么关系？}
 
 \lessonsection{24}{并发副本broker}
-\goals{在可并行服务请求的 broker 中组合角色检查、追加、复制确认与 HW 截断 fetch。需要理解锁顺序、跨 socket 等待和关闭时唤醒。}
+\goals{在可并行服务请求的 broker 中组合角色检查、追加、复制确认与 HW 截断 fetch。}{理解锁顺序、跨 socket 等待和关闭时唤醒。}
 \background{ReplicatedPartition 把 authority 状态和本地日志连接成业务操作。produce 在 authority partition lock 下核验 leader/epoch、追加、更新自身 progress 并推进 HW；ALL 等待时释放 partition lock，让另一 TCP worker 报告 follower 进度。fetch 只能读 HW 以下的完整前缀：合法范围中的 offset>=HW 返回空，超过 LEO 才是位点越界。网络 fetch replication 也必须在锁外执行，不能拿着 authority 锁等待另一 broker socket。锁顺序固定 authority lock→local log lock，不反向取锁、不嵌套不同 partition 锁。关闭 socket/调度器需唤醒 ACK waiter 并让它们以错误完成。}
 \providededit{复制 broker 的独立 endpoint、broker worker、ReplicaState、ReplicationTracker、AckPolicy 与 PartitionLog 均已提供；单机 handler 继续复用。}{\pathcode{exercises/src/main/java/io/simplekafka/replication/ReplicatedPartition.java}：\method{produce(List<RecordData>,Acks,int,long)}、\method{fetch(long,int,int,int)}；BrokerHandler 显式路由 replicated backend。}
 \lessoncontract{produce 按“角色与 epoch 验证→追加前 ACK 检查→日志追加→leader report/HW 更新→确认等待”维持线性化；不能持有 partition lock 等网络。fetch 返回 offset<HW 的记录并裁剪总预算；offset 位于 [logStart,LEO] 且 >=HW 返回空，offset>LEO 越界。epoch 不匹配 fenced。单机与 replicated backend 显式选择，不靠捕获异常回退。}

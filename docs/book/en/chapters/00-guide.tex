@@ -1,0 +1,42 @@
+\chapter{Course Map, Tools, and How to Learn}
+
+\section{Scope of the Course Deliverable}
+This project builds the main path through a messaging system as a small, runnable system: partition logs on disk, TCP requests, producing and consuming, consumer offsets, a single-topic consumer group, and pull-based replication with controlled failover among multiple local brokers. The subject is not the implementation of the official Kafka clients, nor the Kafka wire protocol. The binary protocol provided here serves this course only; do not point the official KafkaProducer or KafkaConsumer at this program.
+
+The three Java source roots are part of the course design. \pathcode{provided/} contains data types, I/O, transport, serialization scaffolding, lifecycle management, and test fixtures; it keeps the focus on algorithms rather than rebuilding boilerplate. \pathcode{exercises/} is the only workspace students need to complete step by step. The types and public signatures for all steps are visible in advance, while methods not yet reached throw \method{ExerciseNotImplementedException} with the step number. \pathcode{reference/} contains the isolated complete solution for comparison and course verification. Its class names match those in the exercise sources, so student and reference source roots must never be compiled together. Tests reuse the same black-box contracts in both modes; the student runtime classpath does not contain reference classes.
+
+This is not production-grade Kafka: it has no Kafka wire-protocol compatibility, transactions, compression, compaction, idempotent producer, complete controller consensus, or controller HA. Its authority is a trusted teaching control plane within one JVM; although three brokers each have a TCP server, threads, and a disk directory, their replicas still share this authority. It can demonstrate controlled failover, but cannot be used to claim consensus under arbitrary network partitions or production-grade availability. The appendices and relevant steps repeatedly call out the specific differences.
+
+\section{Preparing Java 21+ and Course Commands}
+The course uses \pathcode{javac --release 21}; it does not require Maven, Gradle, Docker, or a running Kafka. GNU Make drives the exercises, and the standalone JUnit Console runs behavioral tests. The scripts require Bash 3.2+, \pathcode{find}, \pathcode{awk}, \pathcode{curl}, and either \pathcode{sha256sum} or \pathcode{shasum}; \pathcode{tar} and \pathcode{install} are needed only for \coursecmd{make setup-book}. First check \coursecmd{java -version}, \coursecmd{javac -version}, and \coursecmd{make --version}, and confirm that the JDK is Java 21 or newer. You may use any suitable JDK through \pathcode{JAVA_HOME} or \pathcode{PATH}; SDKMAN is an optional JDK manager, not a course requirement. The course does not silently change SDKMAN, system packages, or shell configuration.
+
+The first \coursecmd{make setup} prepares only the pinned JUnit Console under the repository's own \pathcode{.tools/}; \coursecmd{make setup-book} separately prepares the pinned Tectonic PDF engine. Neither requires sudo or installs dependencies system-wide. \coursecmd{make doctor} checks Java, JUnit, and PDF-engine availability. The book's fonts come from the declared TeX bundle, not from system fonts. \coursecmd{make compile} compiles the student skeleton and tests; successful skeleton compilation does not mean that the exercises are implemented. PDF building with \coursecmd{make book} is separate from Java testing: English is the default and is written to \pathcode{build/book/en/simpleKafka.pdf}; \coursecmd{make book COURSE_LANG=zh} builds the Chinese edition at \pathcode{build/book/zh/simpleKafka-zh.pdf}. The first book build needs a network connection to obtain TeX bundle resources. After warming the bundle cache, offline builds can use \coursecmd{make book BOOK_OFFLINE=1} and \coursecmd{make book COURSE_LANG=zh BOOK_OFFLINE=1}.
+
+\section{Understanding Binary Data and File I/O}
+A \method{ByteBuffer} is a byte view with a position and limit. Before reading, a buffer whose writing is complete usually needs \method{flip()}; whether to clear it after writing depends on whether it will be reused. The protocol and on-disk layout specify big-endian order, so both encoders and decoders must use the same byte order. A logical offset identifies a record; a position identifies a byte in a file. Even if their numeric values happen to match, they have no semantic relationship.
+
+\method{FileChannel} can read and write at a specified file offset, and can request that written data be forced to storage. The course provides \method{ChannelIO.readFully/writeFully} for handling partial reads and writes: one \method{channel.read} is not guaranteed to fill a buffer, and one \method{write} is not guaranteed to write everything. Step 2 chooses \method{force(false)} after each batch append. This is a simplified request to persist file data, not a mathematical guarantee against power loss, device caches, media damage, or filesystem semantics. CRC32C detects accidental changes to record bytes; it does not repair errors or prove that data came from a trusted source.
+
+\section{How to Read Test Failures}
+First read the failed Step test name and assertion, then return to the contract in this chapter. The first exception in a test report is usually more useful than the last part of the stack trace: an unimplemented method identifies its step and method; course errors should preserve \method{ErrorCode}; an unexpected IOException may be wrapped as \method{STORAGE_ERROR} with its cause preserved. Do not map errors to an empty list or a successful default value just to make tests green. A single-step diagnostic command runs only that step and does not mean its cumulative dependencies are satisfied; the cumulative command reevaluates every earlier step.
+
+\begin{center}
+\begin{tabular}{p{.23\textwidth}p{.68\textwidth}}
+\toprule
+Command & Meaning \\
+\midrule
+\coursecmd{make list} & Show all 28 steps, their editable methods, and prerequisites.\\
+\coursecmd{make step-test 12} & Diagnose Step 12 only; useful for locating the current problem when it fails.\\
+\coursecmd{make test 12} & Run the cumulative tests from Step01Test through Step12Test.\\
+\coursecmd{make test STEP=12} & Equivalent to the positional-argument form.\\
+\coursecmd{make reference-test 28} & Run the complete 28-step contract against the isolated reference implementation.\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Step numbers accept either a single digit or a zero-padded form (for example, 1 or 01); you can also use \pathcode{STEP=}. Chapter boundaries are Steps 4, 8, 12, 16, 20, 24, and 28: a chapter is complete only when the cumulative tests through that boundary all pass. Passing \coursecmd{make test 8} means that Steps 1–8 all pass; passing \coursecmd{make step-test 8} means only that the Step 8 test passed on this run and does not authorize progression. Full-course tests must not put reference sources on the student classpath, and reference mode cannot substitute for your own exercise progress.
+
+\section{Start with System Invariants}
+Keep four boundaries in mind as you read the following chapters: first, offsets are continuous within the retained log range, LEO is the next write position, and fetch uses a half-open interval; second, the range visible to an ordinary consumer cannot pass HW, while a group's committed offset is a separate state variable; third, locks are acquired in the order authority partition lock then local log lock, and network I/O never waits while holding that lock; fourth, errors must be meaningful, especially when an epoch or generation becomes stale—silent retries must not fabricate exactly-once behavior. Each chapter explains which new invariant it introduces and who verifies it.
+
+These invariants take concrete form in later steps: the on-disk format is in \stepref{1}{Record encoding and decoding}, log-tail boundaries in \stepref{4}{Crash recovery}, consumer positions in \stepref{14}{Pull-based consumer}, replication visibility in \stepref{22}{ISR and high watermark}, and role fencing in \stepref{25}{Clean election and leader epochs}.

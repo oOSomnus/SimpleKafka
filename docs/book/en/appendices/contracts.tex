@@ -1,0 +1,188 @@
+\chapter{Formats, Error Codes, and Interface Index}
+This appendix gathers stable conventions used repeatedly across chapters for convenient reference. If anything here differs from a public signature in an exercise, follow the course manifest and Java types. Layouts and error codes defined by this course belong only to the simpleKafka teaching interface; unless an official source is explicitly cited, do not describe them as Kafka wire formats, storage formats, or configuration defaults.
+
+\section{Disk and Network Formats}
+\subsection{Records and Indexes}
+Records use big-endian encoding:
+\begin{center}
+\begin{tabular}{p{.22\textwidth}p{.17\textwidth}p{.53\textwidth}}
+\toprule
+Field & Width & Semantics \\
+\midrule
+length & int32 & Record length excluding itself and including CRC; 28 to 1,048,576.\\
+crc32c & int32 & Checks offset through the end of value, excluding the length/CRC fields themselves.\\
+offset & int64 & Nonnegative logical offset.\\
+timestamp & int64 & Nonnegative timestamp.\\
+keyLength & int32 & -1 means null, 0 means a present empty key, otherwise the number of bytes.\\
+valueLength & int32 & Nonnegative number of bytes; value is not null.\\
+key/value & variable & Variable-length fields follow in the order described above.\\
+\bottomrule
+\end{tabular}
+\end{center}
+The fixed-length part of each record (excluding the length prefix) contains the CRC, offset, timestamp, and two lengths, for a total of 28 bytes; the length prefix makes the minimum total size 32 bytes. The lower bound for the length field remains 28 because its count starts at the CRC. Each segment's sparse-index entry is \pathcode{offset:int64,position:int64}, totaling 16 bytes; one index point is written for every intervalRecords records, and the first record always has a point. The index may be discarded and rebuilt from the log.
+
+The directory convention is \pathcode{<root>/<topic>/<partition>/<baseOffset:020d>.log}, with the paired index suffix \pathcode{.index}. The retained range is [logStartOffset,LEO), and fetch is left-closed/right-open. LEO is the next writable offset; HW is the highest committed boundary visible to ordinary consumers (only offsets < HW are visible). A group committed offset is also a next offset, but is not the same as HW.
+
+\subsection{TCP Frames and Request Bodies}
+The teaching frame is \pathcode{length:int32 | version:int16(1) | api:int16 | correlationId:int32 | error:int16 | payload}; length excludes itself and is in the range [10,8,388,608]. EOF before the first byte of a new frame returns null; EOF within a frame reports \method{INVALID_REQUEST}. The request error field must be 0. Unknown versions/APIs, oversized frames, and trailing body bytes are all rejected. The maximum size of an individual disk record remains 1 MiB and is not changed by the frame limit.
+
+API ids are fixed as follows:
+\begin{center}
+\begin{tabular}{rl|rl}
+\toprule
+ID & API & ID & API \\
+\midrule
+1 & METADATA & 6 & \method{JOIN_GROUP} \\
+2 & PRODUCE & 7 & HEARTBEAT \\
+3 & FETCH & 8 & \method{LEAVE_GROUP} \\
+4 & \method{COMMIT_OFFSET} & 9 & \method{GROUP_ASSIGNMENT} \\
+5 & \method{FETCH_OFFSET} & 10 & \method{REPLICA_FETCH} \\
+\bottomrule
+\end{tabular}
+\end{center}
+MessageCodec uses big-endian primitive fields; strings are an int32 UTF-8 byte length followed by bytes, collections are an int32 count followed by each item, Optional values use a boolean followed by the value, and byte[] uses an int32 length (only key may be -1). Request and successful-response fields are encoded in the declaration order of the provided Messages nested records; map results are sorted by key. When the reply header has error=NONE, the body is the corresponding success record; on error, the body is ErrorBody(message), and the error code appears only in the frame header. Field schemas are fixed by \pathcode{provided/.../protocol/Messages.java}; students do not need to redefine the ten message formats.
+
+\subsection{Message Body Field Order}
+The requests and responses below are encoded by MessageCodec in the order of the declared parameters in each record. Collection lengths and string/byte lengths are all big-endian int32; list items have no extra tag and are inlined in the declared order for each value type. GroupToken is nullable, encoded as a boolean present followed by group, member, and generation; Acks is int16, with LEADER=1 and ALL=-1.
+\setlength{\tabcolsep}{3pt}
+\small
+\begin{longtable}{>{\raggedright\arraybackslash}p{.22\textwidth}>{\raggedright\arraybackslash}p{.36\textwidth}>{\raggedright\arraybackslash}p{.36\textwidth}}
+\toprule
+API & Request record and fields & Successful-response record and fields \\
+\midrule
+\endhead
+\method{METADATA} & MetadataRequest: topic & MetadataBody: partitions \\
+\method{PRODUCE} & ProduceRequest: tp, epoch, acks, timeoutMillis, records & ProduceBody: result \\
+\method{FETCH} & FetchRequest: tp, epoch, offset, maxRecords, maxBytes, token & FetchBody: records, logStartOffset, logEndOffset, highWatermark, epoch \\
+\method{COMMIT_OFFSET} & CommitOffsetRequest: key, nextOffset, token & EmptyBody \\
+\method{FETCH_OFFSET} & FetchOffsetRequest: key & OffsetBody: nextOffset (OptionalLong) \\
+\method{JOIN_GROUP} & JoinGroupRequest: group, member, topic & GroupBody: assignment \\
+\method{HEARTBEAT} & HeartbeatRequest: token & EmptyBody \\
+\method{LEAVE_GROUP} & LeaveGroupRequest: group, member & GroupBody: assignment \\
+\method{GROUP_ASSIGNMENT} & GroupAssignmentRequest: group, member & GroupBody: assignment \\
+\method{REPLICA_FETCH} & ReplicaFetchRequest: tp, brokerId, epoch, fetchOffset, maxRecords, maxBytes, recoveryRead & ReplicaFetchBody: records, epoch, highWatermark, leaderLogEndOffset \\
+\bottomrule
+\end{longtable}
+\normalsize
+\begin{center}
+\small
+\begin{tabular}{>{\raggedright\arraybackslash}p{.25\textwidth}>{\raggedright\arraybackslash}p{.67\textwidth}}
+\toprule
+Record & Fields in declaration order \\
+\midrule
+\method{TopicPartition} & \method{topic}, \method{partition} \\
+\method{RecordData} & \method{key}, \method{value}, \method{timestamp} \\
+\method{LogRecord} & \method{offset}, \method{data} \\
+\method{AppendResult} & \method{firstOffset}, \method{nextOffset} \\
+\method{OffsetKey} & \method{group}, \method{tp} \\
+\method{Endpoint} & \method{host}, \method{port} \\
+\method{GroupAssignment} & \method{generation}, \method{assignments} \\
+\method{PartitionMetadata} & \method{tp}, \method{leaderId}, \method{epoch}, \method{replicas}, \method{isr}, \method{leader} \\
+\bottomrule
+\end{tabular}
+\end{center}
+\normalsize
+Each byte array is length-prefixed; only key may be null (length -1), while value is always present but may be empty.
+
+OffsetStore entries use \method{MessageCodec.encodeOffsetEntry}, with null key and timestamp 0. The record's physical log offset is independent of committed nextOffset.
+\subsection{Identifiers and Value Types}
+topic, group, and member are non-empty UTF-8 identifiers with a maximum length of 255 bytes; topic may contain only ASCII letters, digits, periods, underscores, and hyphens, and \pathcode{.} and \pathcode{..} are rejected. TopicPartition's partition is nonnegative. RecordData's key may be null, value may not be null (but may be an empty array), and timestamp is nonnegative; LogRecord offset is nonnegative. Once array ownership is transferred to a value object, the receiver owns it, so it need not be copied repeatedly. All offsets that denote the next item use half-open boundaries; see the relevant chapters for the details.
+
+\section{Fixed Error Codes}
+\begin{longtable}{r p{.27\textwidth} p{.55\textwidth}}
+\toprule
+Wire ID & Name & Purpose \\
+\midrule
+\endhead
+0 & NONE & Success.\\
+1 & \method{INVALID_REQUEST} & Invalid parameter, length, version, or request format.\\
+2 & \method{UNKNOWN_TOPIC_OR_PARTITION} & Topic/partition does not exist.\\
+3 & \method{OFFSET_OUT_OF_RANGE} & Offset violates the current log start/end constraints.\\
+4 & \method{CORRUPT_RECORD} & Complete-record CRC/format error or conflict with committed history.\\
+5 & \method{NOT_LEADER} & The requester is not the current leader.\\
+6 & \method{FENCED_EPOCH} & The request uses an old leader epoch.\\
+7 & \method{NOT_ENOUGH_REPLICAS} & The current ISR has fewer than minISR members.\\
+8 & \method{REQUEST_TIMEOUT} & The request deadline expired; the outcome may be unknown.\\
+9 & \method{ILLEGAL_GENERATION} & The consumer-group generation has expired.\\
+10 & \method{UNKNOWN_MEMBER} & The consumer-group member is not registered.\\
+11 & \method{NOT_ASSIGNED} & The operation involves an unassigned partition.\\
+12 & \method{NO_ELIGIBLE_LEADER} & No candidate satisfies the clean-election conditions.\\
+13 & \method{STORAGE_ERROR} & I/O failure; the underlying cause is retained.\\
+\bottomrule
+\end{longtable}
+An unknown ID is not mapped to success; I/O errors do not swallow the cause; network-error bodies do not return the server stack trace.
+
+\section{The 28 Steps and Edit Entry Points}
+All paths are relative to the repository root. Students modify the specified methods under \pathcode{exercises/src/main/java/io/simplekafka/}. The cumulative command for each step is \coursecmd{make test N}; the command to target one step is \coursecmd{make step-test N}, which is not proof of progression.
+\begin{longtable}{r p{.20\textwidth} p{.68\textwidth}}
+\toprule
+Step & Course title & Edit methods \\
+\midrule
+\endhead
+1 & Record encoding and decoding & storage/RecordCodec: encode, decode \\
+2 & Log append & storage/SegmentLog: append \\
+3 & Offset-based reads & storage/SegmentLog: readFrom \\
+4 & Crash recovery & storage/SegmentLog: recover \\
+5 & Sparse index & storage/SparseIndex: add, floor, rebuild \\
+6 & Segmented log & storage/PartitionLog: append, read \\
+7 & Log retention & storage/PartitionLog: deleteBefore \\
+8 & Tail truncation & storage/PartitionLog: truncateTo \\
+9 & Partition routing & client/Partitioner: choose \\
+10 & Topic metadata & broker/PartitionCatalog: createTopic, metadata \\
+11 & TCP framing & protocol/FrameCodec: write, read \\
+12 & Single-broker requests & broker/BrokerHandler: handle \\
+13 & Batched producer & client/SimpleProducer: send, flush \\
+14 & Pull-based consumer & client/SimpleConsumer: assign, seek, poll \\
+15 & Consumer offset persistence & group/OffsetStore: commit, fetch;\newline client/SimpleConsumer: resume, commitSync;\newline broker/BrokerHandler: \method{COMMIT_OFFSET}, \method{FETCH_OFFSET} \\
+16 & At-least-once processing & client/ProcessingLoop: runOnce \\
+17 & Partition assignment & group/RoundRobinAssignor: assign \\
+18 & Membership and rebalancing & group/GroupCoordinator: join, leave, assignment;\newline broker/BrokerHandler: \method{JOIN_GROUP}, \method{LEAVE_GROUP};\newline \method{GROUP_ASSIGNMENT} \\
+19 & Heartbeats and expiration & group/GroupCoordinator: heartbeat, expire;\newline broker/BrokerHandler: \method{HEARTBEAT} \\
+20 & Consumer group fencing & group/GroupCoordinator: validate;\newline client/GroupConsumer: subscribe, poll, commitSync;\newline broker/BrokerHandler: \method{FETCH}/\method{COMMIT_OFFSET} token fencing \\
+21 & Fetch-based replication & broker/BrokerHandler: handle(\method{REPLICA_FETCH});\newline replication/FollowerReplicator: pollOnce \\
+22 & ISR and high watermark & replication/ReplicationTracker:\newline report, expireLagging, advanceHighWatermark \\
+23 & Produce acknowledgments & replication/AckPolicy: validateBeforeAppend, await \\
+24 & Concurrent replicated broker & replication/ReplicatedPartition: produce, fetch \\
+25 & Clean election and leader epochs & replication/LeaderElection: elect, checkLeader \\
+26 & Divergent log reconciliation & replication/ReplicaReconciler: reconcile \\
+27 & Metadata routing refresh & client/MetadataRouter: refresh, call \\
+28 & Replica readmission to ISR & replication/ReplicaAdmission: tryAdd \\
+\bottomrule
+\end{longtable}
+Chapters are numbered by groups of four steps; the cumulative pass points at chapter ends are 4, 8, 12, 16, 20, 24, and 28. If an earlier step has not passed, a later test will usually fail as well, because the course develops one evolving system rather than unrelated demo programs.
+
+\section{Course Simplifications and Differences from Kafka}
+\begin{enumerate}
+\item \textbf{Routing:} keys use CRC32C unsigned modulo; Kafka's default key partitioning algorithm is different. null keys use per-instance round robin rather than Kafka's sticky batching.
+\item \textbf{Disk:} records are encoded individually and each batch explicitly calls \method{force(false)}; this is not Kafka record batches or its default page-cache path. Forcing a write does not guarantee media-level power-loss safety.
+\item \textbf{Index:} write one sparse point per fixed number of records, not at byte intervals.
+\item \textbf{Consumer groups:} a simplified model with one topic and immediate rebalancing, not the full classic barrier, cooperative rebalancing, or KIP-848. Token fencing protects offset commits inside the course broker only; it does not make external side effects atomic.
+\item \textbf{Offsets:} the local OffsetStore is not the highly available, replicated/compacted \pathcode{__consumer_offsets}.
+\item \textbf{Replication and control plane:} each broker fetches over real TCP and writes to an independent directory, but the authority/coordinator is single and trusted in the same JVM. This is not KRaft and does not guarantee cluster recovery after controller/authority failure or consensus under arbitrary partitions.
+\item \textbf{Visibility assumption:} the course retains the committed prefix and requires a clean candidate's LEO to be no lower than the authority HW, so the known commit boundary does not move backward during a controlled failover. This is stronger than real Kafka's HW behavior across epochs and must not be generalized into a claim that Kafka is always monotonic.
+\item \textbf{Retries and transactions:} the producer does not retry automatically, and a timeout may follow an append. There is no compaction, transaction, idempotent producer, fire-and-forget, or ELR. At-least-once allows duplicates and does not claim exactly-once.
+\item \textbf{Recovery:} Step 26's full-prefix comparison is an O(n) teaching simplification; real systems use leader-epoch history to narrow the divergent-log search range.
+\end{enumerate}
+
+\section{Official References and Further Reading}
+The references below explain Kafka concepts and differences in real systems; they are not specifications for the course's custom wire/storage layouts. Version labels reflect the pages cited by this book; configuration and protocol details can change between versions, so consult each page at its listed version.
+\begin{longtable}{p{.24\textwidth}p{.22\textwidth}p{.47\textwidth}}
+\toprule
+Topic & Official reference & Related chapters \\
+\midrule
+\endhead
+Kafka design and persistence model & \href{https://kafka.apache.org/42/design/design/}{Kafka 4.2 Design} & Official overview of logs, replication, and consumer positions; see the simplifications above for this course's differences.\\
+Consumer positions and commits & \href{https://kafka.apache.org/42/javadoc/org/apache/kafka/clients/consumer/KafkaConsumer.html}{KafkaConsumer 4.2 API} & Chapters 14–16: position, seek, commit, and thread constraints.\\
+Minimum ISR configuration & \href{https://kafka.apache.org/43/configuration/topic-configs/}{Kafka 4.3 Topic Configs} & Chapters 22–24: min.insync.replicas and write acknowledgments.\\
+Consumer-group protocol differences & \href{https://kafka.apache.org/43/operations/consumer-rebalance-protocol/}{Kafka 4.3 Rebalance Protocol} & Chapters 17–20: context for the classic and newer protocols; the course does not implement the full protocol.\\
+Leader epochs and truncation & \href{https://cwiki.apache.org/confluence/display/KAFKA/KIP-101+-+Alter+Replication+Protocol+to+use+Leader+Epoch+rather+than+High+Watermark+for+Truncation}{KIP-101} & Chapter 26: why HW alone is insufficient to locate a divergent log.\\
+JUnit test execution & \href{https://docs.junit.org/5.11.4/user-guide/}{JUnit 5.11.4 User Guide} & Read actual Step behavior failures and test reports.\\
+Tectonic compile options & \href{https://tectonic-typesetting.github.io/book/latest/v2cli/compile.html}{Tectonic compile} & The book uses XeTeX/CJK with the declared bundle and local cache; see the build notes below.\\
+\bottomrule
+\end{longtable}
+
+\section{Typesetting and Build Instructions}
+The English entry point uses \pathcode{book[openany,oneside,11pt]}; the Chinese entry point uses \pathcode{ctexbook[UTF8,fontset=none,openany,oneside,11pt]}. Both use the shared preamble and then load their language-specific strings. fontspec and xeCJK select fonts by file from the TeX bundle rather than scanning system fonts. Latin Modern roman uses \pathcode{lmroman10-regular.otf} and its matching bold/italic/bolditalic files; sans uses \pathcode{lmsans10-regular.otf} and its bold/oblique/boldoblique files; mono uses \pathcode{lmmono10-regular.otf} and \pathcode{lmmono10-italic.otf}, with bold using the regular file and bolditalic using the italic file. CJK serif uses \pathcode{FandolSong-Regular.otf} with \pathcode{FandolSong-Bold.otf}, and \pathcode{FandolKai-Regular.otf} for italic and bold italic; CJK sans uses \pathcode{FandolHei-Regular.otf} and \pathcode{FandolHei-Bold.otf}; CJK mono uses \pathcode{FandolFang-Regular.otf} for every shape. The build does not depend on Noto, fontconfig, xelatex, or latexmk. Code snippets use listings and show only ASCII Java identifiers and short interfaces; Chinese explanations are written in the text. The book does not depend on minted, an external drawing tool, shell escape, or embedded web pages. TikZ diagrams are drawn locally by TeX.
+
+\coursecmd{make setup} prepares the course's JUnit tool, and \coursecmd{make setup-book} prepares Tectonic for PDF builds; the course setup does not require the PDF tool, and the book setup does not require Java/JUnit. \coursecmd{make book} builds the English edition by default with \pathcode{COURSE_LANG=en}; \coursecmd{make book COURSE_LANG=zh} builds the Chinese edition. The English PDF is written to \pathcode{build/book/en/simpleKafka.pdf}, and the Chinese PDF to \pathcode{build/book/zh/simpleKafka-zh.pdf}. \pathcode{TECTONIC} can override the default repository tool, and \pathcode{TEX_BUNDLE} can specify a bundle URL or local directory/zip/ttb; the cache is stored in the repository at \pathcode{.tools/tectonic-cache}. The first build needs the online bundle, which supplies the TeX packages and fonts. Build both language editions online first to warm the resources for both; afterward, \pathcode{BOOK_OFFLINE=1} uses Tectonic's only-cached mode for offline builds. Pinning the Tectonic binary version does not mean that remote TeX bundle contents never change, and should not be presented as a guarantee of bit-for-bit reproducible output.
+The repository-pinned Tectonic engine is version 0.17.0.

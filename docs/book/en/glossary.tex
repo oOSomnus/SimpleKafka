@@ -1,0 +1,18 @@
+\chapter*{Glossary}
+\addcontentsline{toc}{chapter}{Glossary}
+\begin{longtable}{p{.21\textwidth}p{.72\textwidth}}
+\toprule
+Term & Meaning and location in this book \\
+\midrule
+\endhead
+Append & Write records at the log tail using consecutive offsets; Chapters 1, 2, and 6.\\
+Offset & A logical record number in a partition log, not a file byte position; Chapter 1.\\
+Byte position & The physical starting position of a record in one segment file; Chapters 1 and 2.\\
+LEO & Log End Offset, the offset of the next record that can be written; Chapters 1 and 6.\\
+HW & High Watermark, the committed boundary visible to ordinary consumers; Chapters 6 and 7.\\
+ISR & In-Sync Replicas, the set of replicas that satisfy this course’s synchronization conditions with the current leader; Chapters 6 and 7.\\
+Generation & A version assigned to consumer-group membership, used to reject commits from stale members; Chapter 5.\\
+Leader epoch & A version of the partition leader role; requests from the previous role are fenced after a transition; Chapter 7.\\
+At-least-once & Processing may be repeated, but records that were not successfully processed are not silently skipped before commit; Chapter 4.\\
+\bottomrule
+\end{longtable}

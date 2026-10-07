@@ -4,50 +4,59 @@ set -Eeuo pipefail
 caller_dir=$PWD
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
-book_dir="$repo_root/docs/book"
-out_dir="$repo_root/build/book"
-cache_dir="$repo_root/.tools/tectonic-cache"
-pdf="$out_dir/simpleKafka.pdf"
+source "$repo_root/scripts/tools.sh"
+validate_course_lang || exit $?
 
-offline=${BOOK_OFFLINE:-0}
+book_dir="$repo_root/docs/book"
+cache_dir="$repo_root/.tools/tectonic-cache"
+offline=${BOOK_OFFLINE-0}
 case "$offline" in
   0|"") ;;
   1) ;;
   *) printf 'BOOK_OFFLINE must be 0 or 1 (got %s)\n' "$offline" >&2; exit 2 ;;
 esac
-if [[ -d "$out_dir" ]]; then
-  rm -f -- "$pdf"
+
+if [[ "$COURSE_LANG" == en ]]; then
+  source_file=simpleKafka.tex
+  out_dir="$repo_root/build/book/en"
+  pdf="$out_dir/simpleKafka.pdf"
+else
+  source_file=simpleKafka-zh.tex
+  out_dir="$repo_root/build/book/zh"
+  pdf="$out_dir/simpleKafka-zh.pdf"
+fi
+if [[ ! -f "$book_dir/$source_file" ]]; then
+  printf 'Textbook source is missing: %s\n' "$book_dir/$source_file" >&2
+  exit 2
 fi
 
-tectonic=${TECTONIC:-$repo_root/.tools/tectonic-0.17.0/tectonic}
-if [[ "$tectonic" == */* ]]; then
-  if [[ "$tectonic" != /* ]]; then
-    tectonic="$caller_dir/$tectonic"
+tectonic_bin=$(resolve_tectonic "$repo_root" "$caller_dir") || exit $?
+bundle='https://relay.fullyjustified.net/default_bundle_v33.tar'
+if [[ ${TEX_BUNDLE+x} ]]; then
+  if [[ -z "$TEX_BUNDLE" ]]; then
+    printf 'TEX_BUNDLE is set but empty; use a bundle URL, directory, .zip, or .ttb file.\n' >&2
+    exit 2
   fi
-  if [[ ! -x "$tectonic" ]]; then
-    printf 'Tectonic executable is unavailable: %s\nSet TECTONIC to an executable path.\n' "$tectonic" >&2
-    exit 127
-  fi
-  tectonic_bin=$tectonic
-else
-  if ! tectonic_bin=$(command -v -- "$tectonic"); then
-    printf 'Tectonic executable is unavailable: %s\nSet TECTONIC to an executable path.\n' "$tectonic" >&2
-    exit 127
+  bundle=$TEX_BUNDLE
+  if [[ "$bundle" != *://* ]]; then
+    [[ "$bundle" == /* ]] || bundle="$caller_dir/$bundle"
+    if [[ ! -d "$bundle" ]]; then
+      case "$bundle" in
+        *.zip|*.ttb)
+          [[ -f "$bundle" ]] || { printf 'TEX_BUNDLE does not exist: %s\n' "$bundle" >&2; exit 2; } ;;
+        *)
+          printf 'TEX_BUNDLE must be a directory, .zip, .ttb, or URL (plain tar archives are not supported): %s\n' "$bundle" >&2
+          exit 2 ;;
+      esac
+    fi
   fi
 fi
 
 mkdir -p -- "$out_dir" "$cache_dir"
-
-args=(-X compile simpleKafka.tex --outdir "$out_dir" --keep-logs --untrusted)
+rm -f -- "$pdf"
+args=(-X compile "$source_file" --outdir "$out_dir" --keep-logs --untrusted --bundle "$bundle")
 if [[ "$offline" == 1 ]]; then
   args+=(--only-cached)
-fi
-if [[ -n ${TEX_BUNDLE:-} ]]; then
-  bundle=$TEX_BUNDLE
-  if [[ "$bundle" != *://* && "$bundle" != /* ]]; then
-    bundle="$caller_dir/$bundle"
-  fi
-  args+=(--bundle "$bundle")
 fi
 
 if (

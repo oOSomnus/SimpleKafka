@@ -1,0 +1,18 @@
+\chapter*{术语索引}
+\addcontentsline{toc}{chapter}{术语索引}
+\begin{longtable}{p{.21\textwidth}p{.72\textwidth}}
+\toprule
+术语 & 本书中的含义与位置 \\
+\midrule
+\endhead
+追加（append） & 在日志尾部按连续 offset 写入记录；第 1、2、6 章。\\
+位点（offset） & 分区日志中的逻辑记录编号，不是文件字节位置；第 1 章。\\
+字节位置（position） & 记录在一个 segment 文件内的物理起始位置；第 1、2 章。\\
+LEO & Log End Offset，下一条可写记录的 offset；第 1、6 章。\\
+HW & High Watermark，普通消费者可见的提交边界；第 6、7 章。\\
+ISR & In-Sync Replicas，与当前 leader 保持在课程界定同步条件内的副本集合；第 6、7 章。\\
+generation & 消费组成员分配的版本号，用于拒绝旧成员提交；第 5 章。\\
+leader epoch & 分区 leader 角色版本；切换后旧角色请求被围栏；第 7 章。\\
+至少一次 & 处理可能重放，但在提交之前不会悄悄越过未成功处理的记录；第 4 章。\\
+\bottomrule
+\end{longtable}

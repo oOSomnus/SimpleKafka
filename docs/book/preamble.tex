@@ -1,4 +1,4 @@
-% Build with XeTeX through Tectonic; no shell escape, minted, or generated assets.
+% Shared XeTeX style. Fonts are resolved from the pinned Tectonic bundle.
 \usepackage{fontspec}
 \usepackage{xeCJK}
 \usepackage{geometry}
@@ -14,39 +14,42 @@
 \usepackage{hyperref}
 \usepackage{xurl}
 \usepackage{bookmark}
-\hypersetup{unicode=true,colorlinks=true,linkcolor=blue!55!black,citecolor=blue!55!black,urlcolor=blue!60!black,pdftitle={从零理解 simpleKafka},pdfauthor={simpleKafka 教学项目}}
+\hypersetup{unicode=true,colorlinks=true,linkcolor=blue!55!black,citecolor=blue!55!black,urlcolor=blue!60!black}
 \setlist{nosep,leftmargin=2em}
 \setlength{\parskip}{.32em}
 \setlength{\parindent}{2em}
-\renewcommand{\contentsname}{目录}
-\renewcommand{\figurename}{图}
-\renewcommand{\tablename}{表}
-\IfFontExistsTF{Noto Serif CJK SC}{%
-  \setCJKmainfont{Noto Serif CJK SC}%
-  \setmainfont{Noto Serif CJK SC}%
-}{%
-  \setCJKmainfont{FandolSong-Regular}%
-  \setmainfont{FandolSong-Regular}%
-}
-\IfFontExistsTF{Noto Sans CJK SC}{%
-  \setCJKsansfont{Noto Sans CJK SC}%
-  \setsansfont{Noto Sans CJK SC}%
-}{%
-  \setCJKsansfont{FandolHei-Regular}%
-  \setsansfont{FandolHei-Regular}%
-}
-\IfFontExistsTF{Noto Sans Mono CJK SC}{%
-  \setCJKmonofont{Noto Sans Mono CJK SC}%
-  \setmonofont{Noto Sans Mono CJK SC}%
-}{%
-  \IfFontExistsTF{Noto Sans CJK SC}{%
-    \setCJKmonofont{Noto Sans CJK SC}%
-    \setmonofont{Noto Sans CJK SC}%
-  }{%
-    \setCJKmonofont{FandolHei-Regular}%
-    \setmonofont{FandolHei-Regular}%
-  }%
-}
+
+\setmainfont{lmroman10-regular.otf}[
+  BoldFont={lmroman10-bold.otf},
+  ItalicFont={lmroman10-italic.otf},
+  BoldItalicFont={lmroman10-bolditalic.otf}
+]
+\setsansfont{lmsans10-regular.otf}[
+  BoldFont={lmsans10-bold.otf},
+  ItalicFont={lmsans10-oblique.otf},
+  BoldItalicFont={lmsans10-boldoblique.otf}
+]
+\setmonofont{lmmono10-regular.otf}[
+  BoldFont={lmmono10-regular.otf},
+  ItalicFont={lmmono10-italic.otf},
+  BoldItalicFont={lmmono10-italic.otf}
+]
+\setCJKmainfont{FandolSong-Regular.otf}[
+  BoldFont={FandolSong-Bold.otf},
+  ItalicFont={FandolKai-Regular.otf},
+  BoldItalicFont={FandolKai-Regular.otf}
+]
+\setCJKsansfont{FandolHei-Regular.otf}[
+  BoldFont={FandolHei-Bold.otf},
+  ItalicFont={FandolHei-Regular.otf},
+  BoldItalicFont={FandolHei-Bold.otf}
+]
+\setCJKmonofont{FandolFang-Regular.otf}[
+  BoldFont={FandolFang-Regular.otf},
+  ItalicFont={FandolFang-Regular.otf},
+  BoldItalicFont={FandolFang-Regular.otf}
+]
+
 \lstdefinestyle{java}{
   language=Java,basicstyle=\ttfamily\small,columns=fullflexible,
   keepspaces=true,showstringspaces=false,breaklines=true,
@@ -60,16 +63,4 @@
 \newcommand{\pathcode}[1]{\nolinkurl{#1}}
 \newcommand{\api}[1]{\textsc{#1}}
 \newcommand{\coursecmd}[1]{\texttt{\detokenize{#1}}}
-\newenvironment{contract}{\begin{quote}\small\noindent\textbf{行为契约与不变量。}\ }{\end{quote}}
 \newenvironment{hintlevels}{\begin{description}[style=nextline,leftmargin=3.2em,labelwidth=2.7em]}{\end{description}}
-\newcommand{\lessoncommand}[1]{\par\noindent\textbf{命令与晋级。} \coursecmd{make step-test #1} 用于定位本步；\coursecmd{make test #1} 从第 1 步累计运行至本步。仅当本章末尾编号（4、8、12、16、20、24、28）的累计测试全绿，才算完成本章并进入下一章。}
-\newcommand{\lessonquestions}[2]{\subsubsection*{自检问题}\begin{enumerate}\item #1\item #2\end{enumerate}}
-\newcommand{\lessonhints}[3]{\subsubsection*{分级提示（不是答案）}\begin{hintlevels}\item[一级] #1\item[二级] #2\item[三级] #3\end{hintlevels}}
-\newcommand{\lessonsection}[2]{\section{第 #1 步：#2}\label{step:#1}}
-\newcommand{\stepref}[2]{\hyperref[step:#1]{第 #1 步（#2）}}
-\newcommand{\expected}[1]{\begin{quote}\small\textbf{可观测例子与测试点。} #1\end{quote}}
-\newcommand{\providededit}[2]{\begin{quote}\small\textbf{起点与编辑位置。}\par 已给：#1\par 请修改：#2\end{quote}}
-\newcommand{\pitfalls}[1]{\subsubsection*{常见误区与真实 Kafka 的差异}#1}
-\newcommand{\goals}[2]{\subsubsection*{目标与前置知识}本步目标：#1\par 开始前应能解释：#2}
-\newcommand{\background}[1]{\subsubsection*{背景与推理}#1}
-\newcommand{\lessoncontract}[1]{\begin{contract}#1\end{contract}}
