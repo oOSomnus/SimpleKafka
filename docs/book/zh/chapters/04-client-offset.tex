@@ -3,12 +3,12 @@
 
 \lessonsection{13}{批量生产者}
 \goals{实现按分区有序的批量缓冲、阈值发送和显式 flush。}{理解 metadata 路由、batch 的边界、返回 receipt 与请求结果不确定性。}
-\background{每个分区的 batch 必须维持调用顺序，但不同分区可以分别积攒。send 根据 metadata 得到 partition，并在达到 batchRecords 时同步发送该分区 batch；flush 按稳定顺序发送所有非空 batch 并汇总 ProduceReceipt。自动发送返回的 receipt 不能丢失，须留到下一次 flush 交给调用者。默认 ACK 为 LEADER，不使用后台定时器。网络 timeout 只说明客户端不知道结果：broker 可能已追加，也可能未追加。自动重试会让未知结果批次产生重复，因此本课程进入“结果未知”状态，后续 send/flush 失败直到关闭，不猜测并重放。}
+\background{每个分区的 batch 必须维持调用顺序，但不同分区可以分别积攒。send 根据 metadata 得到 partition，并在达到 batchRecords 时同步发送该分区 batch；flush 按稳定顺序发送所有非空 batch 并汇总 ProduceReceipt。自动发送返回的 receipt 不能丢失，须留到下一次 flush 交给调用者。默认 ACK 为 LEADER，不使用后台定时器。produce RPC/回复处理中的 timeout 或错误都会使结果未知：broker 可能已经追加。该路径开始后的任何失败都会进入“结果未知”状态，后续操作直到关闭前均失败，不猜测并重放。}
 \providededit{RpcClient 管理 socket、timeout、correlation id 和请求/响应；metadata、Partitioner 和批次记录结构已提供。}{\pathcode{exercises/src/main/java/io/simplekafka/client/SimpleProducer.java}：\method{send(String,byte[],byte[],long)}、\method{flush()}。}
-\lessoncontract{相同 partition 保持 send 顺序，分区间 batch 可独立；batch 满时同步发送该分区。receipt 保存 topic-partition 与 [firstOffset,nextOffset)；显式 flush 返回自动发送和本次发送的 receipt。timeout 后禁止自动重发并保留 \method{REQUEST_TIMEOUT} 语义。producer 和 consumer 按单线程使用，不声称 KafkaProducer 的线程安全属性。}
-\lessonhints{先明确“发送请求”“得到确认”“向调用者交还 receipt”是三个不同时间点。}{用 TopicPartition 作为缓冲键，检查 flush 顺序和空 batch 行为。}{让 broker 在已追加但响应丢失的窗口制造 timeout，验证客户端不会再产生第二份数据。}
-\expected{配置 3 partitions 和 batchRecords=2，连续发送同 key 数据应路由至同一分区并保序；null key 分散按实例轮转。达到两条时发送一次，调用 flush 可取得包含自动发送 receipt 的结果。未知 timeout 后下一次 send 与 flush 都报 \method{REQUEST_TIMEOUT}，记录不重发。对应 \method{Step13Test}。}
-\pitfalls{若自动 flush 的 receipt 被丢弃，调用者无法知道已经成功的 offset 区间；若把 timeout 当失败再重试，可能重复。真实 Kafka producer 有异步 I/O、重试、幂等协议与更完整线程安全保证；课程故意同步发送且不自动重试，超时结果未知是设计不是缺陷。}
+\lessoncontract{相同 partition 保持 send 顺序，分区间 batch 可独立；batch 满时同步发送该分区。receipt 保存 topic-partition 与 [firstOffset,nextOffset)；显式 flush 返回自动发送和本次发送的 receipt。produce RPC/回复处理一旦开始，任何失败都使追加结果未知：保留首次错误且禁止重放 batch。此后 send、flush 或 \pathcode{setAcks} 均报 \method{REQUEST_TIMEOUT}，直到关闭 producer。metadata 查询或请求准备阶段、进入该路径前的失败不会 poison producer。}
+\lessonhints{先明确“发送请求”“得到确认”“向调用者交还 receipt”是三个不同时间点。}{用 TopicPartition 作为缓冲键，检查 flush 顺序和空 batch 行为。}{让 broker 追加后再返回错误，或延迟响应直到 timeout；验证客户端不会再产生第二份数据。}
+\expected{配置 3 partitions 和 batchRecords=2，连续发送同 key 数据应路由至同一分区并保序；null key 分散按实例轮转。达到两条时发送一次，调用 flush 可取得包含自动发送 receipt 的结果。追加后返回错误时保留首次错误；后续 send、flush、\pathcode{setAcks} 报 \method{REQUEST_TIMEOUT} 且不重放。对应 \method{Step13Test} 与 \method{Step27Test}。}
+\pitfalls{若自动 flush 的 receipt 被丢弃，调用者无法知道已经成功的 offset 区间；若把 RPC/回复错误当作“肯定未追加”并重试，可能重复。真实 Kafka producer 有异步 I/O、重试、幂等协议与更完整线程安全保证；课程故意同步发送且不自动重试，未知结果是设计不是缺陷。}
 \lessoncommand{13}
 \lessonquestions{为何 timeout 不足以证明 broker 没有追加？}{如果同一个 batch 的错误回复被重试，调用方如何识别重复？本课程为何不做这个机制？}
 

@@ -28,7 +28,6 @@ public final class SimpleProducer implements AutoCloseable {
     private final ArrayList<ProduceReceipt> receipts = new ArrayList<>();
     private Acks acks = Acks.LEADER;
     private long timeoutMillis = DEFAULT_TIMEOUT_MILLIS;
-    private boolean explicitFlushRequired;
     private boolean outcomeUnknown;
     private boolean closed;
 
@@ -67,13 +66,12 @@ public final class SimpleProducer implements AutoCloseable {
         int partition = partitioner.choose(key, partitions);
         TopicPartition tp = new TopicPartition(topic, partition);
         batches.computeIfAbsent(tp, ignored -> new ArrayList<>()).add(new RecordData(key, value, timestamp));
-        if (!explicitFlushRequired && batches.get(tp).size() >= batchRecords) sendBatch(tp);
+        if (batches.get(tp).size() >= batchRecords) sendBatch(tp);
     }
 
     public List<ProduceReceipt> flush() {
         ensureOpen();
         ensureKnownOutcome();
-        explicitFlushRequired = false;
         for (TopicPartition tp : new ArrayList<>(batches.keySet())) sendBatch(tp);
         List<ProduceReceipt> completed = List.copyOf(receipts);
         receipts.clear();
@@ -90,12 +88,8 @@ public final class SimpleProducer implements AutoCloseable {
             Messages.ProduceBody body = ClientSupport.requireBody(reply, Messages.ProduceBody.class);
             receipts.add(new ProduceReceipt(tp, body.result().firstOffset(), body.result().nextOffset()));
             batches.remove(tp);
-        } catch (CourseException exception) {
-            if (exception.code() == ErrorCode.REQUEST_TIMEOUT) outcomeUnknown = true;
-            else explicitFlushRequired = true;
-            throw exception;
         } catch (RuntimeException exception) {
-            explicitFlushRequired = true;
+            outcomeUnknown = true;
             throw exception;
         }
     }

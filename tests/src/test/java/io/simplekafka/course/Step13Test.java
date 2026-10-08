@@ -5,9 +5,11 @@ import io.simplekafka.broker.BrokerHandler;
 import io.simplekafka.broker.PartitionCatalog;
 import io.simplekafka.client.Partitioner;
 import io.simplekafka.client.SimpleProducer;
+import io.simplekafka.model.Acks;
 import io.simplekafka.model.Endpoint;
 import io.simplekafka.model.LogRecord;
 import io.simplekafka.model.ProduceReceipt;
+import io.simplekafka.model.RecordData;
 import io.simplekafka.model.TopicPartition;
 import io.simplekafka.protocol.Messages;
 import io.simplekafka.storage.PartitionLog;
@@ -19,6 +21,7 @@ import io.simplekafka.transport.RpcClient;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import static io.simplekafka.support.TestSupport.assertCode;
@@ -226,6 +229,59 @@ class Step13Test {
         }
     }
 
+    @Test
+    void makesDirectProducerOutcomeUnknownAfterEveryAppendError() throws Exception {
+        for (ErrorCode error : List.of(
+                ErrorCode.FENCED_EPOCH,
+                ErrorCode.NOT_ENOUGH_REPLICAS,
+                ErrorCode.NOT_LEADER,
+                ErrorCode.STORAGE_ERROR)) {
+            assertDirectAppendFailurePoisonsProducer(error, true);
+            assertDirectAppendFailurePoisonsProducer(error, false);
+        }
+    }
+
+    private static void assertDirectAppendFailurePoisonsProducer(ErrorCode error, boolean automatic)
+            throws Exception {
+        try (TempDirectory temp = new TempDirectory();
+             AppendThenErrorBroker broker = new AppendThenErrorBroker(temp.root(), error);
+             RpcClient observer = new RpcClient(broker.endpoint(), 3_000)) {
+            TopicPartition tp = new TopicPartition("orders", 0);
+            SimpleProducer producer = new SimpleProducer(new RpcClient(broker.endpoint(), 3_000),
+                    new Partitioner(), automatic ? 1 : 2);
+            try {
+                if (automatic) {
+                    assertCode(error,
+                            () -> producer.send(tp.topic(), null, TestSupport.utf8("old"), 1));
+                } else {
+                    producer.send(tp.topic(), null, TestSupport.utf8("old"), 1);
+                    assertCode(error, producer::flush);
+                }
+
+                for (int repetition = 0; repetition < 2; repetition++) {
+                    assertCode(ErrorCode.REQUEST_TIMEOUT,
+                            () -> producer.send(tp.topic(), null, TestSupport.utf8("must-not-append"), 2));
+                    assertCode(ErrorCode.REQUEST_TIMEOUT, producer::flush);
+                    assertCode(ErrorCode.REQUEST_TIMEOUT, () -> producer.setAcks(Acks.LEADER, 5_000));
+                }
+            } finally {
+                producer.close();
+            }
+
+            LogRecord old = new LogRecord(0, new RecordData(null, TestSupport.utf8("old"), 1));
+            assertEquals(List.of(old), TestSupport.fetch(observer, tp, 0, 10, 4_096).records());
+            assertEquals(1, broker.catalog().partition(tp).logEndOffset());
+
+            try (SimpleProducer replacement = new SimpleProducer(
+                    new RpcClient(broker.endpoint(), 3_000), new Partitioner(), 1)) {
+                replacement.send(tp.topic(), null, TestSupport.utf8("new"), 3);
+                assertEquals(List.of(new ProduceReceipt(tp, 1, 2)), replacement.flush());
+            }
+            assertEquals(List.of(old, new LogRecord(1, new RecordData(null, TestSupport.utf8("new"), 3))),
+                    TestSupport.fetch(observer, tp, 0, 10, 4_096).records());
+        }
+    }
+
     private static void assertOnlyRecord(PartitionLog log, String expectedValue) {
         List<LogRecord> records = log.read(0, 10, 4_096);
         assertEquals(List.of(0L), records.stream().map(LogRecord::offset).toList());
@@ -291,4 +347,54 @@ class Step13Test {
             catalog.close();
         }
     }
+
+    private static final class AppendThenErrorBroker implements AutoCloseable {
+        private final BrokerServer server;
+        private final Endpoint endpoint;
+        private final PartitionCatalog catalog;
+
+        private AppendThenErrorBroker(java.nio.file.Path root, ErrorCode error) {
+            AtomicReference<BrokerHandler> handler = new AtomicReference<>();
+            AtomicBoolean errorReturned = new AtomicBoolean();
+            server = new BrokerServer("127.0.0.1", 0, request -> {
+                BrokerHandler current = handler.get();
+                if (current == null)
+                    return Messages.Reply.failure(ErrorCode.INVALID_REQUEST, "broker is not ready");
+                Messages.Reply reply = current.handle(request);
+                if (request instanceof Messages.ProduceRequest && reply.error() == ErrorCode.NONE
+                        && errorReturned.compareAndSet(false, true))
+                    return Messages.Reply.failure(error, "injected post-append error");
+                return reply;
+            });
+
+            Endpoint openedEndpoint = server.start();
+            PartitionCatalog openedCatalog = null;
+            try {
+                openedCatalog = new PartitionCatalog(root, 1, openedEndpoint);
+                openedCatalog.createTopic("orders", 1);
+                handler.set(new BrokerHandler(openedCatalog, null, null, null));
+            } catch (RuntimeException failure) {
+                server.close();
+                if (openedCatalog != null) openedCatalog.close();
+                throw failure;
+            }
+            endpoint = openedEndpoint;
+            catalog = openedCatalog;
+        }
+
+        private Endpoint endpoint() {
+            return endpoint;
+        }
+
+        private PartitionCatalog catalog() {
+            return catalog;
+        }
+
+        @Override
+        public void close() {
+            server.close();
+            catalog.close();
+        }
+    }
+
 }

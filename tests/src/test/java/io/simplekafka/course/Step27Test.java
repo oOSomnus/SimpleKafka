@@ -224,6 +224,67 @@ class Step27Test {
     }
 
     @Test
+    void makesRoutedProducerOutcomeUnknownAfterEveryAppendError() {
+        for (ErrorCode error : List.of(
+                ErrorCode.FENCED_EPOCH,
+                ErrorCode.NOT_ENOUGH_REPLICAS,
+                ErrorCode.NOT_LEADER,
+                ErrorCode.STORAGE_ERROR)) {
+            assertRoutedAppendFailurePoisonsProducer(error, true);
+            assertRoutedAppendFailurePoisonsProducer(error, false);
+        }
+    }
+
+    private void assertRoutedAppendFailurePoisonsProducer(ErrorCode error, boolean automatic) {
+        TopicPartition tp = new TopicPartition(TestBroker.TOPIC, 0);
+        AtomicBoolean errorReturned = new AtomicBoolean();
+        String suffix = error.name() + (automatic ? "-automatic" : "-explicit");
+        try (TestBroker broker = new TestBroker(root.resolve("append-error-" + suffix), (handler, request) -> {
+            Messages.Reply reply = handler.handle(request);
+            if (request instanceof Messages.ProduceRequest && reply.error() == ErrorCode.NONE
+                    && errorReturned.compareAndSet(false, true))
+                return Messages.Reply.failure(error, "injected post-append error");
+            return reply;
+        }, () -> { });
+             MetadataRouter router = new MetadataRouter(List.of(broker.endpoint()),
+                     endpoint -> new RpcClient(endpoint, 3_000));
+             RpcClient observer = new RpcClient(broker.endpoint(), 3_000)) {
+            router.refresh(tp.topic());
+            SimpleProducer producer = new SimpleProducer(router, new Partitioner(), automatic ? 1 : 2);
+            try {
+                if (automatic) {
+                    TestSupport.assertCode(error,
+                            () -> producer.send(tp.topic(), null, bytes("old"), 10));
+                } else {
+                    producer.send(tp.topic(), null, bytes("old"), 10);
+                    TestSupport.assertCode(error, producer::flush);
+                }
+
+                for (int repetition = 0; repetition < 2; repetition++) {
+                    TestSupport.assertCode(ErrorCode.REQUEST_TIMEOUT,
+                            () -> producer.send(tp.topic(), null, bytes("must-not-append"), 11));
+                    TestSupport.assertCode(ErrorCode.REQUEST_TIMEOUT, producer::flush);
+                    TestSupport.assertCode(ErrorCode.REQUEST_TIMEOUT,
+                            () -> producer.setAcks(Acks.LEADER, 5_000));
+                }
+            } finally {
+                producer.close();
+            }
+
+            LogRecord old = new LogRecord(0, record("old", 10));
+            assertEquals(List.of(old), TestSupport.fetch(observer, tp, 0, 10, 4_096).records());
+            assertEquals(1, broker.catalog().partition(tp).logEndOffset());
+
+            try (SimpleProducer replacement = new SimpleProducer(router, new Partitioner(), 1)) {
+                replacement.send(tp.topic(), null, bytes("new"), 12);
+                assertEquals(List.of(new ProduceReceipt(tp, 1, 2)), replacement.flush());
+            }
+            assertEquals(List.of(old, new LogRecord(1, record("new", 12))),
+                    TestSupport.fetch(observer, tp, 0, 10, 4_096).records());
+        }
+    }
+
+    @Test
     void routerDoesNotReplayStorageOrTransportFailures() {
         AtomicBoolean failFirstProduce = new AtomicBoolean(true);
         try (TestBroker broker = new TestBroker(root.resolve("storage-failure"), (handler, request) -> {
