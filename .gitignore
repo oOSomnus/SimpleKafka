@@ -1,3 +1,5 @@
 /build/
+/exercises/bin/
+/reference/bin/
 /.tools/
 /.gradle/
