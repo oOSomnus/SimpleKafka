@@ -13,8 +13,8 @@ public final class Partitioner {
     public int choose(byte[] key, int partitions) {
         if (partitions <= 0) throw new CourseException(ErrorCode.INVALID_REQUEST, "partitions must be positive");
         if (key == null) {
-            int chosen = nextNullPartition;
-            nextNullPartition = (nextNullPartition + 1) % partitions;
+            int chosen = nextNullPartition % partitions;
+            nextNullPartition = (chosen + 1) % partitions;
             return chosen;
         }
         CRC32C crc = new CRC32C();

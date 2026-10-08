@@ -20,9 +20,9 @@
 \goals{让相同 key 稳定进入相同分区，同时为 null key 提供可观察的轮转。}{理解 key 的字节身份、CRC32C 与取模。}
 \background{producer 必须先选择 partition 才能确定该分区内的顺序。课程规定 key 非 null 时计算 CRC32C，再把 CRC 视作 unsigned 值对分区数取模；同一字节串因此稳定命中同一 partition。key 为 null 时没有可供 hash 的键，单个 Partitioner 实例按 0 起始轮转。空 byte array 是存在但长度为零的 key，不等价 null。partition count 必须大于零。这个简单规则让输出确定，便于观察 routing 结果。}
 \providededit{partitioner 实例的 round-robin 状态与无参构造器已提供；topic metadata 会给出 partition count。}{\pathcode{exercises/src/main/java/io/simplekafka/client/Partitioner.java}：\method{choose(byte[] key,int partitions)}。}
-\lessoncontract{partitions<=0 属于非法请求。非 null key 路由依赖其 CRC32C 的 unsigned 解释；null key 对同一个实例依次选择 0..partitions-1 并循环。不同实例各自从零开始。}
+\lessoncontract{partitions<=0 属于非法请求。非 null key 路由依赖其 CRC32C 的 unsigned 解释；每次选择 null key 前，按当前 partition count 归一化实例级游标，因此 topic 数量变化仍会返回有效分区。不同实例各自从零开始。}
 \lessonhints{先区分 null、空数组与非空数组三种输入。}{检查 Java signed int 与题设 unsigned CRC 的转换语义，避免负余数成为负 partition。}{用同一个实例混合调用有 key、null key 和不同 partition count 的情形，审视轮转游标是否只在约定输入上推进。}
-\expected{3 partitions 下，同一 key 连续 100 次选择都相同；空 key 也是确定路由。fresh Partitioner 对 null 连续六次返回 0、1、2、0、1、2。对应 \method{Step09Test}，并检查非正 partition 数被拒绝。}
+\expected{3 partitions 下，同一 key 连续 100 次选择都相同；空 key 也是确定路由。fresh Partitioner 对 null 连续六次返回 0、1、2、0、1、2。partition count 为 3、3、1、3、3、2、2 时，null-key 选择为 0、1、0、0、1、0、1。对应 \method{Step09Test}。}
 \pitfalls{把 key 的 hashCode 当作 CRC32C，或对可能负值直接取余，都会违反路由契约。真实 Kafka 默认 partitioner 的 key hash 算法和 null-key sticky batching 策略与本课程不同；此处 null key 采用实例级 round-robin，不应描述成 Kafka 默认行为。}
 \lessoncommand{9}
 \lessonquestions{为什么 hash 应作用于 key bytes 而不是 RecordData 对象的 Java hashCode？}{key 为 null 与 key 为零长度数组，在协议和路由上有何不同？}

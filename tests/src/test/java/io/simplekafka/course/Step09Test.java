@@ -53,6 +53,19 @@ class Step09Test {
     }
 
     @Test
+    void nullKeyCursorStaysWithinPartitionsWhenTopicSizesChange() {
+        Partitioner partitioner = new Partitioner();
+
+        assertEquals(0, partitioner.choose(null, 3));
+        assertEquals(1, partitioner.choose(null, 3));
+        assertEquals(0, partitioner.choose(null, 1));
+        assertEquals(0, partitioner.choose(null, 3));
+        assertEquals(1, partitioner.choose(null, 3));
+        assertEquals(0, partitioner.choose(null, 2));
+        assertEquals(1, partitioner.choose(null, 2));
+    }
+
+    @Test
     void requiresAPositivePartitionCount() {
         Partitioner partitioner = new Partitioner();
         assertCode(ErrorCode.INVALID_REQUEST, () -> partitioner.choose(null, 0));

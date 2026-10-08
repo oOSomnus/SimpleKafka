@@ -78,6 +78,36 @@ class Step13Test {
             assertEquals(List.of(), producer.flush());
         }
     }
+    @Test
+    void routesNullKeysWithinEachTopicAcrossDifferentPartitionCounts() throws Exception {
+        try (TempDirectory temp = new TempDirectory();
+             BrokerHarness broker = BrokerHarness.single(temp.root(), 1, 0, "large", 3);
+             RpcClient observer = new RpcClient(broker.endpoint(), 3_000);
+             SimpleProducer producer = new SimpleProducer(new RpcClient(broker.endpoint(), 3_000),
+                     new Partitioner(), 10)) {
+            broker.catalog().createTopic("small", 1);
+            TopicPartition largeZero = new TopicPartition("large", 0);
+            TopicPartition largeOne = new TopicPartition("large", 1);
+            TopicPartition smallZero = new TopicPartition("small", 0);
+
+            producer.send("large", null, TestSupport.utf8("large-zero"), 1);
+            producer.send("large", null, TestSupport.utf8("large-one"), 2);
+            producer.send("small", null, TestSupport.utf8("small-zero"), 3);
+
+            assertEquals(List.of(
+                            new ProduceReceipt(largeZero, 0, 1),
+                            new ProduceReceipt(largeOne, 0, 1),
+                            new ProduceReceipt(smallZero, 0, 1)),
+                    producer.flush());
+            assertEquals(List.of("large-zero"),
+                    values(TestSupport.fetch(observer, largeZero, 0, 10, 4_096).records()));
+            assertEquals(List.of("large-one"),
+                    values(TestSupport.fetch(observer, largeOne, 0, 10, 4_096).records()));
+            assertEquals(List.of("small-zero"),
+                    values(TestSupport.fetch(observer, smallZero, 0, 10, 4_096).records()));
+        }
+    }
+
 
     @Test
     void automaticFlushForOnePartitionLeavesAnotherPartitionsPendingBatchInvisible() throws Exception {
