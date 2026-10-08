@@ -28,6 +28,18 @@ public final class SparseIndex implements AutoCloseable {
     private long lastObservedPosition = -1;
     private boolean closed;
 
+    /**
+     * Opens or creates the index file, creating its parent directories. Existing entries are loaded
+     * only when the file length is a multiple of 16 bytes, the first entry is
+     * {@code (baseOffset, 0)}, and later offsets advance by {@code intervalRecords} with strictly
+     * increasing byte positions; otherwise, the index file is truncated to zero.
+     *
+     * @param path index file path
+     * @param baseOffset base offset of the corresponding segment
+     * @param intervalRecords number of records between persisted index points
+     * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} for a null path, negative
+     *     base, or nonpositive interval, or with {@link ErrorCode#STORAGE_ERROR} if index I/O fails
+     */
     public SparseIndex(Path path, long baseOffset, int intervalRecords) {
         if (path == null || baseOffset < 0 || intervalRecords <= 0)
             throw new CourseException(
@@ -58,24 +70,47 @@ public final class SparseIndex implements AutoCloseable {
     }
 
     /**
-     * Step 5: persist the first and each interval-th offset/byte position in increasing order. See
-     * Step05Test and book step 5.
+     * Step 5: persist the first observation and later interval-aligned offset/byte positions in
+     * increasing order. The first observation must be {@code (baseOffset, 0)}; later observations
+     * must increase both values, and only interval points are persisted. Rejected observations
+     * leave the index file and ordering state unchanged. See Step05Test and book step 5.
+     *
+     * @param offset record offset to observe
+     * @param position byte position of that record in the segment
+     * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} if the observation violates
+     *     the required ordering or interval, or with {@link ErrorCode#STORAGE_ERROR} if this index
+     *     is closed or persistence fails
+     * @throws ExerciseNotImplementedException while the Step 5 exercise method is a skeleton
      */
     public synchronized void add(long offset, long position) {
         throw new ExerciseNotImplementedException(5, "SparseIndex.add");
     }
 
     /**
-     * Step 5: return the greatest indexed offset at or before the target, or the base/zero
-     * fallback. See Step05Test and book step 5.
+     * Step 5: return the greatest indexed offset at or before the target, or the base/zero fallback
+     * when there is no qualifying entry, including targets before the base. See Step05Test and book
+     * step 5.
+     *
+     * @param offset target offset
+     * @return the greatest qualifying entry, or {@code (baseOffset, 0)} when none exists
+     * @throws CourseException with {@link ErrorCode#STORAGE_ERROR} if this index is closed
+     * @throws ExerciseNotImplementedException while the Step 5 exercise method is a skeleton
      */
     public synchronized IndexEntry floor(long offset) {
         throw new ExerciseNotImplementedException(5, "SparseIndex.floor");
     }
 
     /**
-     * Step 5: rebuild ordered hints from every validated record in the segment; the log remains the
-     * source of truth. See Step05Test and book step 5.
+     * Step 5: clear and rebuild ordered hints from every validated record in the segment; the log
+     * remains the source of truth. The scan validates record CRCs and does not alter the log file.
+     * See Step05Test and book step 5.
+     *
+     * @param logFile segment log file to scan
+     * @param baseOffset base offset that must match this index
+     * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} for a null log file or
+     *     mismatched base, with {@link ErrorCode#CORRUPT_RECORD} for invalid segment contents, or
+     *     with {@link ErrorCode#STORAGE_ERROR} if index or log I/O fails
+     * @throws ExerciseNotImplementedException while the Step 5 exercise method is a skeleton
      */
     public synchronized void rebuild(Path logFile, long baseOffset) {
         throw new ExerciseNotImplementedException(5, "SparseIndex.rebuild");
@@ -146,6 +181,12 @@ public final class SparseIndex implements AutoCloseable {
         return new CourseException(ErrorCode.STORAGE_ERROR, "failed to " + action, cause);
     }
 
+    /**
+     * Closes this index file; repeated calls have no effect. Open-state checks report
+     * {@link ErrorCode#STORAGE_ERROR} after closure.
+     *
+     * @throws CourseException with {@link ErrorCode#STORAGE_ERROR} if closing the file fails
+     */
     @Override
     public synchronized void close() {
         if (closed) return;

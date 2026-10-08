@@ -24,7 +24,17 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 
-/** Loopback-only framed TCP server with one worker per connection. */
+/**
+ * Loopback-only framed TCP server with one worker per connection.
+ *
+ * <p>Construction validates the bind address but does not bind a port; {@link #start()} performs
+ * the bind. Each accepted connection has a 30-second read timeout. Nonzero request error fields
+ * and unknown APIs are replied to with {@code INVALID_REQUEST}; {@link CourseException} codes and
+ * messages are returned, {@link ExerciseNotImplementedException} becomes {@code STORAGE_ERROR},
+ * and other request-time runtime failures become a generic {@code STORAGE_ERROR}. A reply encoding
+ * failure falls back to {@code INVALID_REQUEST}; malformed or abruptly closed clients affect only
+ * their own connection.
+ */
 public final class BrokerServer implements AutoCloseable {
     private final String host;
     private final int requestedPort;
@@ -41,6 +51,15 @@ public final class BrokerServer implements AutoCloseable {
     private ServerSocket server;
     private Thread acceptor;
 
+    /**
+     * Configures a loopback server without binding its socket.
+     *
+     * @param host bind host; only {@code 127.0.0.1} and {@code localhost} are accepted
+     * @param port requested port, from {@code 0} through {@code 65535}
+     * @param handler request handler used after frames are decoded
+     * @throws NullPointerException if {@code host} or {@code handler} is {@code null}
+     * @throws IllegalArgumentException if the host is not loopback or the port is out of range
+     */
     public BrokerServer(String host, int port, Function<Messages.Request, Messages.Reply> handler) {
         this.host = Objects.requireNonNull(host);
         this.requestedPort = port;
@@ -49,6 +68,15 @@ public final class BrokerServer implements AutoCloseable {
             throw new IllegalArgumentException("brokers must bind to loopback and a valid port");
     }
 
+    /**
+     * Binds the server socket and starts its daemon acceptor thread.
+     *
+     * <p>Repeated calls while running return the existing endpoint.
+     *
+     * @return the bound loopback endpoint
+     * @throws IllegalStateException if the server has been closed
+     * @throws CourseException with {@code STORAGE_ERROR} if binding fails
+     */
     public synchronized Endpoint start() {
         if (closed.get()) throw new IllegalStateException("broker is closed");
         if (server != null) return endpoint();
@@ -63,6 +91,12 @@ public final class BrokerServer implements AutoCloseable {
         }
     }
 
+    /**
+     * Returns the bound endpoint using the advertised host {@code 127.0.0.1}.
+     *
+     * @return endpoint for the bound socket
+     * @throws IllegalStateException if the server has not started
+     */
     public synchronized Endpoint endpoint() {
         if (server == null) throw new IllegalStateException("broker has not started");
         return new Endpoint("127.0.0.1", server.getLocalPort());
@@ -151,6 +185,12 @@ public final class BrokerServer implements AutoCloseable {
         return new Frame(requestFrame.api(), requestFrame.correlationId(), error, payload);
     }
 
+    /**
+     * Stops accepting requests, closes tracked connections, and shuts down connection workers.
+     *
+     * <p>Closing is idempotent and waits up to two seconds for the acceptor and workers while
+     * preserving the interrupt status if the wait is interrupted.
+     */
     @Override
     public void close() {
         if (!closed.compareAndSet(false, true)) return;

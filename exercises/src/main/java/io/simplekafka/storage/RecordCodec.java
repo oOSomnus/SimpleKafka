@@ -18,7 +18,14 @@ public final class RecordCodec {
 
     /**
      * Step 1: encode one big-endian record with CRC32C; return a flipped buffer containing exactly
-     * that record. See Step01Test and book step 1.
+     * that record. The CRC covers the timestamp-through-payload fields and excludes the length and
+     * CRC fields. See Step01Test and book step 1.
+     *
+     * @param record record to encode
+     * @return a new buffer positioned at zero and limited to the encoded record
+     * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} if the record is invalid or
+     *     exceeds the 1 MiB record limit
+     * @throws ExerciseNotImplementedException while the Step 1 exercise method is a skeleton
      */
     public static ByteBuffer encode(LogRecord record) {
         throw new ExerciseNotImplementedException(1, "RecordCodec.encode");
@@ -26,7 +33,16 @@ public final class RecordCodec {
 
     /**
      * Step 1: decode exactly one record, preserve following bytes, and distinguish incomplete input
-     * from corrupt data. See Step01Test and book step 1.
+     * from corrupt data. The source position advances to the record end only after a successful
+     * decode, and its byte order is not used. See Step01Test and book step 1.
+     *
+     * @param source buffer positioned at the record length prefix
+     * @return the decoded record
+     * @throws NullPointerException if {@code source} is null
+     * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} for an incomplete prefix or
+     *     body, or with {@link ErrorCode#CORRUPT_RECORD} for an invalid length, checksum, field, or
+     *     record offset or timestamp
+     * @throws ExerciseNotImplementedException while the Step 1 exercise method is a skeleton
      */
     public static LogRecord decode(ByteBuffer source) {
         throw new ExerciseNotImplementedException(1, "RecordCodec.decode");

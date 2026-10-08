@@ -25,14 +25,30 @@ public final class ClusterAuthority {
     private final Map<Integer, BrokerInfo> brokers = new TreeMap<>();
     private final Map<TopicPartition, PartitionState> partitions = new TreeMap<>();
 
+    /** Creates an authority that uses the system wall clock. */
     public ClusterAuthority() {
         this(SystemTimeSource.INSTANCE);
     }
 
+    /**
+     * Creates an authority that uses the supplied clock for replication timing.
+     *
+     * @param clock source of millisecond timestamps used by authority state
+     * @throws NullPointerException if {@code clock} is {@code null}
+     */
     public ClusterAuthority(TimeSource clock) {
         this.clock = Objects.requireNonNull(clock);
     }
 
+    /**
+     * Registers a broker as online, or updates its endpoint if it is offline.
+     *
+     * @param brokerId broker identifier to register
+     * @param endpoint network endpoint currently used by the broker
+     * @throws NullPointerException if {@code endpoint} is {@code null}
+     * @throws IllegalArgumentException if {@code brokerId} is negative or an online broker's
+     *     endpoint would change
+     */
     public synchronized void registerBroker(int brokerId, Endpoint endpoint) {
         Objects.requireNonNull(endpoint, "endpoint");
         if (brokerId < 0) throw new IllegalArgumentException("broker id must be nonnegative");
@@ -46,6 +62,13 @@ public final class ClusterAuthority {
         }
     }
 
+    /**
+     * Changes a registered broker's online state and signals partition state waiters.
+     *
+     * @param brokerId broker identifier to update
+     * @param online whether the broker should be marked online
+     * @throws CourseException with {@code UNKNOWN_MEMBER} if the broker is not registered
+     */
     public void setBrokerOnline(int brokerId, boolean online) {
         List<PartitionState> affected;
         synchronized (this) {
@@ -65,11 +88,24 @@ public final class ClusterAuthority {
         }
     }
 
+    /**
+     * Reports whether a broker is online; an unknown broker is reported as offline.
+     *
+     * @param brokerId broker identifier to query
+     * @return {@code true} only when the broker is registered and online
+     */
     public synchronized boolean isOnline(int brokerId) {
         BrokerInfo info = brokers.get(brokerId);
         return info != null && info.online;
     }
 
+    /**
+     * Returns the registered endpoint for a broker, whether or not it is online.
+     *
+     * @param brokerId broker identifier to query
+     * @return the endpoint last registered for the broker
+     * @throws CourseException with {@code UNKNOWN_MEMBER} if the broker is not registered
+     */
     public synchronized Endpoint endpoint(int brokerId) {
         BrokerInfo info = brokers.get(brokerId);
         if (info == null)
@@ -77,10 +113,29 @@ public final class ClusterAuthority {
         return info.endpoint;
     }
 
+    /**
+     * Returns broker identifiers in ascending order as an immutable snapshot.
+     *
+     * @return immutable list of registered broker identifiers
+     */
     public synchronized List<Integer> brokerIds() {
         return List.copyOf(brokers.keySet());
     }
 
+    /**
+     * Creates partition authority state with all configured replicas initially in the ISR.
+     *
+     * @param tp partition to create
+     * @param leaderId broker selected as the initial leader
+     * @param replicaIds broker identifiers assigned to the partition
+     * @param minISR minimum number of in-sync replicas required for writes
+     * @return the newly created mutable partition state
+     * @throws NullPointerException if {@code tp}, {@code replicaIds}, or an element of
+     *     {@code replicaIds} is {@code null}
+     * @throws IllegalArgumentException if the partition exists, replica identifiers are empty or
+     *     duplicated, the leader is not a replica, {@code minISR} is out of range, or a replica is
+     *     not registered
+     */
     public synchronized PartitionState createPartition(
             TopicPartition tp, int leaderId, Collection<Integer> replicaIds, int minISR) {
         Objects.requireNonNull(tp, "tp");
@@ -103,6 +158,13 @@ public final class ClusterAuthority {
         return state;
     }
 
+    /**
+     * Returns mutable authority state for a partition.
+     *
+     * @param tp partition to look up
+     * @return the partition state
+     * @throws CourseException with {@code UNKNOWN_TOPIC_OR_PARTITION} if the partition is absent
+     */
     public synchronized PartitionState partitionState(TopicPartition tp) {
         PartitionState state = partitions.get(tp);
         if (state == null)
@@ -111,6 +173,13 @@ public final class ClusterAuthority {
         return state;
     }
 
+    /**
+     * Returns metadata for one partition while holding that partition's state lock.
+     *
+     * @param tp partition to describe
+     * @return current leader and replica metadata
+     * @throws CourseException with {@code UNKNOWN_TOPIC_OR_PARTITION} if the partition is absent
+     */
     public PartitionMetadata metadata(TopicPartition tp) {
         PartitionState state = partitionState(tp);
         state.lock.lock();
@@ -121,6 +190,17 @@ public final class ClusterAuthority {
         }
     }
 
+    /**
+     * Returns metadata for a topic's partitions in ascending partition order.
+     *
+     * <p>Each partition is read separately, so the result is not an atomic snapshot across the
+     * topic.
+     *
+     * @param topic topic name to look up
+     * @return immutable list of partition metadata
+     * @throws CourseException with {@code UNKNOWN_TOPIC_OR_PARTITION} if the topic has no
+     *     partitions
+     */
     public List<PartitionMetadata> metadata(String topic) {
         List<TopicPartition> keys;
         synchronized (this) {
@@ -134,6 +214,13 @@ public final class ClusterAuthority {
         return List.copyOf(result);
     }
 
+    /**
+     * Returns a consistent snapshot of one partition's replication state.
+     *
+     * @param tp partition to snapshot
+     * @return replication state copied while holding the partition lock
+     * @throws CourseException with {@code UNKNOWN_TOPIC_OR_PARTITION} if the partition is absent
+     */
     public ReplicationSnapshot snapshot(TopicPartition tp) {
         PartitionState state = partitionState(tp);
         state.lock.lock();
@@ -144,6 +231,11 @@ public final class ClusterAuthority {
         }
     }
 
+    /**
+     * Returns the clock used for broker liveness and replication timing.
+     *
+     * @return the injected clock
+     */
     public TimeSource clock() {
         return clock;
     }
@@ -159,8 +251,13 @@ public final class ClusterAuthority {
     }
 
     /**
-     * Mutable only while lock is held. Lock order: authority state, then local partition log
-     * monitor and its internal lock.
+     * Mutable only while lock is held.
+     *
+     * <p>Lock order: authority state ({@code lock}), then local partition log monitor and its
+     * internal lock.
+     *
+     * <p>Callers must hold {@link #lock} when reading or changing mutable state. The methods on
+     * this type do not acquire that lock themselves.
      */
     public static final class PartitionState {
         public final TopicPartition tp;
@@ -188,15 +285,39 @@ public final class ClusterAuthority {
             }
         }
 
+        /**
+         * Tests whether a broker is assigned to this partition.
+         *
+         * <p>The caller must hold {@link #lock}; this method does not acquire it.
+         *
+         * @param brokerId broker identifier to test
+         * @return {@code true} if the broker is in {@code replicas}
+         */
         public boolean assigned(int brokerId) {
             return replicas.contains(brokerId);
         }
 
+        /**
+         * Builds metadata from this state and the caller-supplied leader endpoint.
+         *
+         * <p>The caller must hold {@link #lock}; this method does not acquire it.
+         *
+         * @param endpoint endpoint for the current leader
+         * @return metadata with copied replica and ISR lists
+         * @throws NullPointerException if {@code endpoint} is {@code null}
+         */
         public PartitionMetadata metadata(Endpoint endpoint) {
             return new PartitionMetadata(
                     tp, leaderId, epoch, List.copyOf(replicas), List.copyOf(isr), endpoint);
         }
 
+        /**
+         * Copies the current replication state into a snapshot.
+         *
+         * <p>The caller must hold {@link #lock}; this method does not acquire it.
+         *
+         * @return snapshot with copied replica, ISR, and per-replica LEO collections
+         */
         public ReplicationSnapshot snapshot() {
             return new ReplicationSnapshot(
                     leaderId,

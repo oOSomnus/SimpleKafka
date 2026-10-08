@@ -3,6 +3,7 @@ package io.simplekafka.protocol;
 import io.simplekafka.CourseException;
 import io.simplekafka.ErrorCode;
 
+/** Fixed API identifiers for the simpleKafka course teaching protocol. */
 public final class Api {
     public static final short METADATA = 1,
             PRODUCE = 2,
@@ -17,10 +18,24 @@ public final class Api {
 
     private Api() {}
 
+    /**
+     * Tests whether an identifier is one of the defined course API ids.
+     *
+     * @param id API identifier to test
+     * @return {@code true} when {@code id} is between {@link #METADATA} and {@link #REPLICA_FETCH},
+     *     inclusive
+     */
     public static boolean known(short id) {
         return id >= METADATA && id <= REPLICA_FETCH;
     }
 
+    /**
+     * Requires an identifier to be one of the defined course API ids.
+     *
+     * @param id API identifier to validate
+     * @throws CourseException if {@code id} is unknown, with error code
+     *     {@link io.simplekafka.ErrorCode#INVALID_REQUEST}
+     */
     public static void requireKnown(short id) {
         if (!known(id)) throw new CourseException(ErrorCode.INVALID_REQUEST, "unknown API: " + id);
     }

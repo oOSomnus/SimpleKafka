@@ -30,12 +30,30 @@ public final class SimpleConsumer implements AutoCloseable {
     private GroupToken token;
     private boolean closed;
 
+    /**
+     * Creates a manual consumer that owns the supplied RPC client. The group identifier must be a
+     * valid nonempty course identifier of at most 255 UTF-8 bytes.
+     *
+     * @param client RPC client whose ownership transfers to this consumer
+     * @param group group identifier used for committed offsets
+     * @throws NullPointerException if {@code client} is null
+     * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} if {@code group} is invalid
+     */
     public SimpleConsumer(RpcClient client, String group) {
         this.client = Objects.requireNonNull(client, "client");
         this.router = null;
         this.group = requireGroup(group);
     }
 
+    /**
+     * Creates a manual consumer that borrows the supplied metadata router. The group identifier
+     * must be a valid nonempty course identifier of at most 255 UTF-8 bytes.
+     *
+     * @param router shared router, which remains owned by its caller
+     * @param group group identifier used for committed offsets
+     * @throws NullPointerException if {@code router} is null
+     * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} if {@code group} is invalid
+     */
     public SimpleConsumer(MetadataRouter router, String group) {
         this.client = null;
         this.router = Objects.requireNonNull(router, "router");
@@ -43,19 +61,33 @@ public final class SimpleConsumer implements AutoCloseable {
     }
 
     /**
-     * Step 14: replace the manual assignment, de-duplicate and sort partitions, and initialize only
-     * new positions to zero. Contract: retain positions for partitions that remain assigned; do not
-     * consult committed offsets. Test: Step14Test. Lesson: docs/book/chapters/04-client-offset.tex,
-     * Step 14.
+     * Step 14: replace the manual assignment, deduplicate and sort partitions, and initialize only
+     * new positions to zero. Retained partitions keep their positions; committed offsets are not
+     * consulted, and an invalid element leaves the prior assignment unchanged. Test: Step14Test.
+     * Lesson: docs/book/chapters/04-client-offset.tex, Step 14.
+     *
+     * @param partitions partitions to assign
+     * @throws IllegalStateException if this consumer is closed
+     * @throws NullPointerException if {@code partitions} is null
+     * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} if an element is null
+     * @throws ExerciseNotImplementedException while the Step 14 exercise method is a skeleton
      */
     public void assign(Collection<TopicPartition> partitions) {
         throw new ExerciseNotImplementedException(14, "assign");
     }
 
     /**
-     * Step 14: set the local next-fetch position for an assigned partition. Contract: seeking does
-     * not commit; seeking an unassigned partition returns NOT_ASSIGNED. Test: Step14Test. Lesson:
+     * Step 14: set the local next-fetch position for an assigned partition; seeking does not commit,
+     * and a rejected seek leaves all positions unchanged. Test: Step14Test. Lesson:
      * docs/book/chapters/04-client-offset.tex, Step 14.
+     *
+     * @param tp assigned partition to reposition
+     * @param offset nonnegative next-fetch offset
+     * @throws IllegalStateException if this consumer is closed
+     * @throws NullPointerException if {@code tp} is null
+     * @throws CourseException with {@link ErrorCode#NOT_ASSIGNED} if the partition is not assigned,
+     *     or with {@link ErrorCode#OFFSET_OUT_OF_RANGE} if {@code offset} is negative
+     * @throws ExerciseNotImplementedException while the Step 14 exercise method is a skeleton
      */
     public void seek(TopicPartition tp, long offset) {
         throw new ExerciseNotImplementedException(14, "seek");
@@ -63,13 +95,31 @@ public final class SimpleConsumer implements AutoCloseable {
 
     /**
      * Step 14: fetch one bounded round in sorted partition order and advance successful positions.
-     * Contract: maxRecords/maxBytes are total budgets; failures do not advance that partition.
-     * Test: Step14Test. Lesson: docs/book/chapters/04-client-offset.tex, Step 14.
+     * The record and byte limits are total budgets across partitions; a failed partition keeps its
+     * prior position even if earlier partitions in the round advanced. Test: Step14Test. Lesson:
+     * docs/book/chapters/04-client-offset.tex, Step 14.
+     *
+     * @param maxRecords positive total record budget for this poll
+     * @param maxBytes positive total encoded-byte budget for this poll
+     * @return an unmodifiable map from fetched partitions to their records
+     * @throws IllegalStateException if this consumer is closed
+     * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} for nonpositive limits or an
+     *     invalid fetch reply, or with the server's error code if a fetch fails
+     * @throws ExerciseNotImplementedException while the Step 14 exercise method is a skeleton
      */
     public Map<TopicPartition, List<LogRecord>> poll(int maxRecords, int maxBytes) {
         throw new ExerciseNotImplementedException(14, "poll");
     }
 
+    /**
+     * Returns the current local next-fetch position for an assigned partition.
+     *
+     * @param tp assigned partition whose position is requested
+     * @return the local next-fetch offset
+     * @throws IllegalStateException if this consumer is closed
+     * @throws NullPointerException if {@code tp} is null
+     * @throws CourseException with {@link ErrorCode#NOT_ASSIGNED} if the partition is not assigned
+     */
     public long position(TopicPartition tp) {
         ensureOpen();
         Long offset = positions.get(Objects.requireNonNull(tp, "tp"));
@@ -79,18 +129,29 @@ public final class SimpleConsumer implements AutoCloseable {
     }
 
     /**
-     * Step 15: assign partitions and initialize positions from committed offsets, defaulting to
-     * zero. Contract: this later resume operation is not used by Step 14 assign/poll. Test:
-     * Step15Test. Lesson: docs/book/chapters/04-client-offset.tex, Step 15.
+     * Step 15: replace the deduplicated, sorted assignment and initialize each position from its
+     * committed next offset, defaulting to zero. This later resume operation is not used by Step 14
+     * assign/poll. Test: Step15Test. Lesson: docs/book/chapters/04-client-offset.tex, Step 15.
+     *
+     * @param partitions partitions to resume
+     * @throws IllegalStateException if this consumer is closed
+     * @throws NullPointerException if {@code partitions} is null
+     * @throws CourseException if an element is invalid or a committed-offset lookup fails
+     * @throws ExerciseNotImplementedException while the Step 15 exercise method is a skeleton
      */
     public void resume(Collection<TopicPartition> partitions) {
         throw new ExerciseNotImplementedException(15, "resume");
     }
 
     /**
-     * Step 15: commit each assigned next-fetch position without committing during poll. Contract:
-     * commits may move forward or backward and remain group/partition scoped. Test: Step15Test.
-     * Lesson: docs/book/chapters/04-client-offset.tex, Step 15.
+     * Step 15: commit each assigned next-fetch position without committing during poll. Each request
+     * carries the current group token (null for a manual consumer); commits may move backward and
+     * server rejection propagates unchanged. Test: Step15Test. Lesson:
+     * docs/book/chapters/04-client-offset.tex, Step 15.
+     *
+     * @throws IllegalStateException if this consumer is closed
+     * @throws CourseException if the broker rejects a commit or the request fails
+     * @throws ExerciseNotImplementedException while the Step 15 exercise method is a skeleton
      */
     public void commitSync() {
         throw new ExerciseNotImplementedException(15, "commitSync");
@@ -155,6 +216,10 @@ public final class SimpleConsumer implements AutoCloseable {
         if (closed) throw new IllegalStateException("consumer is closed");
     }
 
+    /**
+     * Closes this consumer, clears its local positions and metadata, and closes only an owned RPC
+     * client. A borrowed router remains open; repeated calls have no effect.
+     */
     @Override
     public void close() {
         if (closed) return;

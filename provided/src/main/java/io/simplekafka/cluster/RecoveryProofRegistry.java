@@ -14,17 +14,38 @@ public final class RecoveryProofRegistry {
 
     private RecoveryProofRegistry() {}
 
+    /**
+     * Removes the stored recovery proof for an authority, partition, and broker.
+     *
+     * @param authority authority whose proof entry is cleared
+     * @param tp partition associated with the proof
+     * @param brokerId broker associated with the proof
+     */
     public static synchronized void clear(
             ClusterAuthority authority, TopicPartition tp, int brokerId) {
         Map<Key, RecoveryProof> proofs = PROOFS.get(authority);
         if (proofs != null) proofs.remove(new Key(tp, brokerId));
     }
 
+    /**
+     * Stores or replaces a proof for its authority, partition, and broker.
+     *
+     * @param authority authority that scopes the proof
+     * @param proof recovery proof to store
+     */
     public static synchronized void record(ClusterAuthority authority, RecoveryProof proof) {
         PROOFS.computeIfAbsent(authority, ignored -> new HashMap<>())
                 .put(new Key(proof.tp(), proof.brokerId()), proof);
     }
 
+    /**
+     * Looks up a proof in the authority-scoped registry.
+     *
+     * @param authority authority that scopes the proof
+     * @param tp partition associated with the proof
+     * @param brokerId broker associated with the proof
+     * @return the stored proof, or {@link Optional#empty()} when none is present
+     */
     public static synchronized Optional<RecoveryProof> find(
             ClusterAuthority authority, TopicPartition tp, int brokerId) {
         Map<Key, RecoveryProof> proofs = PROOFS.get(authority);

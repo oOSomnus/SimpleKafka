@@ -2,6 +2,7 @@ package io.simplekafka;
 
 import java.util.Arrays;
 
+/** Error codes used by the simpleKafka course protocol, each paired with its wire identifier. */
 public enum ErrorCode {
     NONE(0),
     INVALID_REQUEST(1),
@@ -24,10 +25,23 @@ public enum ErrorCode {
         this.wireId = (short) wireId;
     }
 
+    /**
+     * Returns this code's numeric identifier in the course protocol.
+     *
+     * @return this error code's wire identifier
+     */
     public short wireId() {
         return wireId;
     }
 
+    /**
+     * Resolves a course-protocol error identifier.
+     *
+     * @param wireId numeric error identifier to resolve
+     * @return the matching error code
+     * @throws CourseException if {@code wireId} is not defined, with error code
+     *     {@link ErrorCode#INVALID_REQUEST}
+     */
     public static ErrorCode fromWireId(short wireId) {
         return Arrays.stream(values())
                 .filter(value -> value.wireId == wireId)

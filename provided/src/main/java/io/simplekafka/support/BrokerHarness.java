@@ -64,12 +64,35 @@ public final class BrokerHarness implements AutoCloseable {
         this.server = new BrokerServer("127.0.0.1", port, this::dispatch);
     }
 
-    /** Starts a broker with an empty catalog; callers create topics explicitly. */
+    /**
+     * Starts a broker with an empty catalog; callers create topics explicitly.
+     *
+     * @param root directory for broker data
+     * @param brokerId broker identifier
+     * @param port requested loopback port, or {@code 0} for an OS-assigned port
+     * @return an already-started broker harness
+     * @throws NullPointerException if {@code root} is {@code null}
+     * @throws IllegalArgumentException if {@code brokerId} or {@code port} is out of range
+     * @throws io.simplekafka.CourseException if the broker cannot start or open storage
+     */
     public static BrokerHarness single(Path root, int brokerId, int port) {
         return new BrokerHarness(root, brokerId, port, null, 0).startAndReturn();
     }
 
-    /** Starts a broker and creates/reopens the requested fixed-partition topic. */
+    /**
+     * Starts a broker and creates/reopens the requested fixed-partition topic.
+     *
+     * @param root directory for broker data
+     * @param brokerId broker identifier
+     * @param port requested loopback port, or {@code 0} for an OS-assigned port
+     * @param topic topic identifier to create or reopen
+     * @param partitions number of partitions in the topic
+     * @return an already-started broker harness with the topic available
+     * @throws NullPointerException if {@code root} or {@code topic} is {@code null}
+     * @throws IllegalArgumentException if broker, port, partition count, or topic identifier is
+     *     invalid
+     * @throws io.simplekafka.CourseException if the broker cannot start or open storage
+     */
     public static BrokerHarness single(
             Path root, int brokerId, int port, String topic, int partitions) {
         return new BrokerHarness(
@@ -77,7 +100,21 @@ public final class BrokerHarness implements AutoCloseable {
                 .startAndReturn();
     }
 
-    /** Starts a single broker with durable offsets and group coordination enabled. */
+    /**
+     * Starts a broker with durable offsets and group coordination enabled.
+     *
+     * <p>Group expiry runs on a daemon worker using the supplied clock.
+     *
+     * @param root directory for broker data and durable offsets
+     * @param brokerId broker identifier
+     * @param port requested loopback port, or {@code 0} for an OS-assigned port
+     * @param clock clock used by group coordination
+     * @param sessionTimeoutMillis group session timeout in milliseconds
+     * @return an already-started broker harness
+     * @throws NullPointerException if {@code root} or {@code clock} is {@code null}
+     * @throws IllegalArgumentException if the broker, port, or session timeout is out of range
+     * @throws io.simplekafka.CourseException if the broker cannot start or open storage
+     */
     public static BrokerHarness single(
             Path root, int brokerId, int port, TimeSource clock, long sessionTimeoutMillis) {
         return new BrokerHarness(
@@ -91,7 +128,15 @@ public final class BrokerHarness implements AutoCloseable {
                 .startAndReturn();
     }
 
-    /** Starts the full replicated teaching harness using the shared authority. */
+    /**
+     * Starts the full replicated teaching harness using the shared authority.
+     *
+     * @param root directory for broker logs and group offsets
+     * @param clock clock used by group expiry and replication timing
+     * @return an already-started replicated harness
+     * @throws NullPointerException if {@code root} or {@code clock} is {@code null}
+     * @throws io.simplekafka.CourseException if the harness cannot create storage or start
+     */
     public static ClusterHarness replicated(Path root, TimeSource clock) {
         ClusterHarness harness = new ClusterHarness(root, Objects.requireNonNull(clock, "clock"));
         try {
@@ -103,6 +148,14 @@ public final class BrokerHarness implements AutoCloseable {
         }
     }
 
+    /**
+     * Starts the replicated teaching harness using the system wall clock.
+     *
+     * @param root directory for broker logs and group offsets
+     * @return an already-started replicated harness
+     * @throws NullPointerException if {@code root} is {@code null}
+     * @throws io.simplekafka.CourseException if the harness cannot create storage or start
+     */
     public static ClusterHarness replicated(Path root) {
         return replicated(root, SystemTimeSource.INSTANCE);
     }
@@ -117,7 +170,17 @@ public final class BrokerHarness implements AutoCloseable {
         }
     }
 
-    /** Starts once and returns the actual loopback endpoint selected by the OS. */
+    /**
+     * Starts once and returns the actual loopback endpoint selected by the OS.
+     *
+     * <p>Repeated calls before close return the same endpoint. On initialization failure this
+     * harness closes partial resources and rethrows the failure.
+     *
+     * @return the broker endpoint
+     * @throws IllegalStateException if the harness has been closed
+     * @throws io.simplekafka.CourseException if the server cannot bind or broker storage cannot
+     *     initialize
+     */
     public synchronized Endpoint start() {
         if (closed) throw new IllegalStateException("broker harness is closed");
         if (endpoint != null) return endpoint;
@@ -161,21 +224,43 @@ public final class BrokerHarness implements AutoCloseable {
         }
     }
 
+    /**
+     * Returns the endpoint selected when this harness started.
+     *
+     * @return the loopback broker endpoint
+     * @throws IllegalStateException if the broker has not started successfully
+     */
     public synchronized Endpoint endpoint() {
         if (endpoint == null) throw new IllegalStateException("broker harness has not started");
         return endpoint;
     }
 
+    /**
+     * Returns the local partition catalog created at start.
+     *
+     * @return this broker's catalog
+     * @throws IllegalStateException if the broker has not started or has been closed
+     */
     public synchronized PartitionCatalog catalog() {
         if (catalog == null) throw new IllegalStateException("broker harness has not started");
         return catalog;
     }
 
+    /**
+     * Returns the broker identifier configured for this harness.
+     *
+     * @return broker identifier
+     */
     public int brokerId() {
         return brokerId;
     }
 
-    /** Runs deterministic group expiry for tests using an injected clock. */
+    /**
+     * Runs deterministic group expiry for tests using an injected clock.
+     *
+     * @return expired group/member identifiers, such as {@code group/member}
+     * @throws IllegalStateException if group coordination is disabled
+     */
     public java.util.Set<String> expireGroups() {
         GroupCoordinator current;
         synchronized (this) {
@@ -195,6 +280,13 @@ public final class BrokerHarness implements AutoCloseable {
         return current.handle(request);
     }
 
+    /**
+     * Closes the server, expiry worker, group resources, offsets, and catalog.
+     *
+     * <p>Closing is idempotent; later close failures are suppressed on the first failure.
+     *
+     * @throws RuntimeException if closing a group, offset, or catalog resource fails
+     */
     @Override
     public synchronized void close() {
         if (closed) return;

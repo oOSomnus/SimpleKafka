@@ -28,6 +28,16 @@ public final class MetadataRouter implements AutoCloseable {
     private final AtomicBoolean closed = new AtomicBoolean();
     private volatile Endpoint activeBootstrap;
 
+    /**
+     * Configures bootstrap endpoints in fallback order; RPC clients are created lazily and cached
+     * per endpoint.
+     *
+     * @param bootstrap non-empty ordered bootstrap endpoint list
+     * @param factory factory used to create clients on demand
+     * @throws NullPointerException if {@code bootstrap} or {@code factory} is null
+     * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} if the list is empty or
+     *     contains a null endpoint
+     */
     public MetadataRouter(List<Endpoint> bootstrap, RpcClientFactory factory) {
         Objects.requireNonNull(bootstrap, "bootstrap");
         if (bootstrap.isEmpty())
@@ -42,28 +52,52 @@ public final class MetadataRouter implements AutoCloseable {
         this.factory = Objects.requireNonNull(factory, "factory");
     }
 
-    /** Configured bootstrap endpoints in their fallback order. */
+    /**
+     * Returns the configured bootstrap endpoints in their fallback order.
+     *
+     * @return the immutable configured endpoint list
+     */
     public List<Endpoint> bootstrap() {
         return bootstrap;
     }
 
     /**
-     * Last endpoint that answered a control-plane request, or null before the first such request.
+     * Returns the currently preferred control-plane endpoint, or null before one is selected.
+     *
+     * @return the active bootstrap endpoint, or {@code null} before the first selection
      */
     public Endpoint activeBootstrap() {
         return activeBootstrap;
     }
 
     /**
-     * Step 27: refresh this topic's leader/epoch metadata through bootstrap endpoints in order.
-     * Contract: fall back only when a bootstrap connection fails and cache a successful response.
-     * Test: Step27Test. Lesson: docs/book/chapters/07-failover.tex, Step 27.
+     * Step 27: refresh this topic's leader/epoch metadata through bootstrap endpoints in configured
+     * order. Only a connection failure or {@link ErrorCode#REQUEST_TIMEOUT} falls through; a
+     * successful response is cached and selects its endpoint as active. Test: Step27Test. Lesson:
+     * docs/book/chapters/07-failover.tex, Step 27.
+     *
+     * @param topic topic whose metadata should be refreshed
+     * @throws IllegalStateException if this router is closed
+     * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} for an invalid topic or
+     *     mismatched response topic, or with the failure from the last attempted bootstrap if every
+     *     attempt fails
+     * @throws ExerciseNotImplementedException while the Step 27 exercise method is a skeleton
      */
     public void refresh(String topic) {
         throw new ExerciseNotImplementedException(27, "refresh");
     }
 
-    /** Returns cached metadata, performing the initial refresh on demand. */
+    /**
+     * Returns cached metadata, performing the initial refresh on demand.
+     *
+     * @param topic topic whose metadata is requested
+     * @return the cached partition metadata
+     * @throws IllegalStateException if this router is closed
+     * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} for an invalid topic, or with
+     *     {@link ErrorCode#UNKNOWN_TOPIC_OR_PARTITION} if no metadata is available for the topic
+     * @throws ExerciseNotImplementedException while the delegated Step 27 refresh method is a
+     *     skeleton
+     */
     public List<PartitionMetadata> metadata(String topic) {
         ensureOpen();
         validateTopic(topic);
@@ -79,15 +113,35 @@ public final class MetadataRouter implements AutoCloseable {
     }
 
     /**
-     * Step 27: route a produce/fetch request by cached leader and epoch without business retries.
-     * Contract: refresh on NOT_LEADER/FENCED_EPOCH, but return the original reply unchanged. Test:
-     * Step27Test. Lesson: docs/book/chapters/07-failover.tex, Step 27.
+     * Step 27: route a produce/fetch request for {@code tp} by cached leader and epoch without
+     * business retries. On {@link ErrorCode#NOT_LEADER} or {@link ErrorCode#FENCED_EPOCH}, refresh
+     * best-effort but return the original reply unchanged. Test: Step27Test. Lesson:
+     * docs/book/chapters/07-failover.tex, Step 27.
+     *
+     * @param tp partition used to select the cached leader
+     * @param request produce or fetch request whose partition must match {@code tp}
+     * @return the routed request's original reply
+     * @throws IllegalStateException if this router is closed
+     * @throws NullPointerException if {@code tp} or {@code request} is null
+     * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} for an unsupported request or
+     *     partition mismatch, or with {@link ErrorCode#UNKNOWN_TOPIC_OR_PARTITION} if metadata is
+     *     unavailable for the partition
+     * @throws ExerciseNotImplementedException while the Step 27 exercise method is a skeleton
      */
     public Messages.Reply call(TopicPartition tp, Messages.Request request) {
         throw new ExerciseNotImplementedException(27, "call");
     }
 
-    /** Sends one control request to the active bootstrap; failed requests are never replayed. */
+    /**
+     * Sends one control request to the active bootstrap, or configured endpoints in order before
+     * one is active. A failed request may rotate the preferred endpoint but is never replayed.
+     *
+     * @param request control request to send
+     * @return the broker's reply
+     * @throws IllegalStateException if this router is closed
+     * @throws NullPointerException if {@code request} is null
+     * @throws CourseException if client creation or the RPC call fails, or no bootstrap is available
+     */
     public Messages.Reply controlCall(Messages.Request request) {
         ensureOpen();
         Objects.requireNonNull(request, "request");
@@ -167,6 +221,10 @@ public final class MetadataRouter implements AutoCloseable {
         if (closed.get()) throw new IllegalStateException("metadata router is closed");
     }
 
+    /**
+     * Closes each unique cached RPC client once and clears client and metadata caches; repeated calls
+     * have no effect. Subsequent routed operations fail with {@link IllegalStateException}.
+     */
     @Override
     public void close() {
         if (!closed.compareAndSet(false, true)) return;

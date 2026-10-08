@@ -20,6 +20,25 @@ import java.util.Map;
 public final class ClientMain {
     private ClientMain() {}
 
+    /**
+     * Produces one record or fetches records using the course RPC protocol.
+     *
+     * <p>Usage: {@code ClientMain --bootstrap host:port produce|fetch --topic NAME --partition N
+     * [options]}. The first argument must be {@code --bootstrap}; the command is the third
+     * argument, and remaining arguments are option/value pairs. Options are {@code --bootstrap},
+     * {@code --topic}, {@code --partition}, {@code --key}, {@code --value}, and {@code --offset}.
+     * Duplicate or unknown options are rejected. The partition must be nonnegative. Produce
+     * requires {@code --value} and accepts an optional {@code --key}; both are UTF-8 encoded.
+     * Fetch rejects {@code --key} and {@code --value}; its optional {@code --offset} defaults to
+     * {@code 0}. It requests at most 100 records and 262144 bytes. Produce uses leader acknowledgments
+     * with a 5000 ms timeout. Both operations resolve partition metadata first and print the
+     * resulting receipt or fetched values.
+     *
+     * @param args command-line arguments in the grammar above
+     * @throws CourseException for invalid option syntax, missing partition metadata, remote error
+     *     replies, or RPC transport failures; invalid syntax uses {@code INVALID_REQUEST}
+     * @throws IllegalArgumentException if the topic identifier is invalid
+     */
     public static void main(String[] args) {
         Arguments arguments = Arguments.parse(args);
         Endpoint bootstrap = endpoint(arguments.required("--bootstrap"));

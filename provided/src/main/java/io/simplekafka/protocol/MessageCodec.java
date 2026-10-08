@@ -24,8 +24,11 @@ import java.util.Map;
 import java.util.TreeMap;
 
 /**
- * Encodes request and response bodies for the course protocol. Frame headers are handled by
- * FrameCodec.
+ * Encodes and decodes request and response bodies for the course teaching protocol.
+ *
+ * <p>Body fields use the protocol's big-endian encoding. Frame headers are handled separately by
+ * {@link FrameCodec}; successful responses carry their body here, while the error code is carried
+ * in the frame header.
  */
 public final class MessageCodec {
     private static final int MAX_FRAME_LENGTH = 8_388_608;
@@ -41,13 +44,34 @@ public final class MessageCodec {
 
     private MessageCodec() {}
 
-    /** The value decoded from an OffsetStore value. */
+    /**
+     * The key and next offset decoded from an OffsetStore value.
+     *
+     * @param key offset key stored in the value
+     * @param nextOffset committed next offset
+     */
     public record OffsetEntry(OffsetKey key, long nextOffset) {
+        /**
+         * Creates a decoded offset entry with a key and nonnegative next offset.
+         *
+         * @param key offset key stored in the value
+         * @param nextOffset committed next offset
+         * @throws CourseException if {@code key} is null or {@code nextOffset} is negative, with
+         *     error code {@link ErrorCode#INVALID_REQUEST}
+         */
         public OffsetEntry {
             if (key == null || nextOffset < 0) throw invalid("invalid offset entry");
         }
     }
 
+    /**
+     * Encodes a request as a course-protocol body, without a frame header.
+     *
+     * @param request request value to encode
+     * @return a newly allocated byte array containing the encoded body
+     * @throws CourseException if {@code request} is null, unsupported, invalid for encoding, or
+     *     exceeds the frame payload limit
+     */
     public static byte[] encodeRequest(Messages.Request request) {
         if (request == null) throw invalid("request is null");
         Writer sizing = new Writer(null);
@@ -58,6 +82,15 @@ public final class MessageCodec {
         return payload;
     }
 
+    /**
+     * Decodes a course-protocol request body selected by API id.
+     *
+     * @param api course API identifier selecting the request type
+     * @param payload encoded request body, without a frame header
+     * @return the decoded request value
+     * @throws CourseException if the API is unknown or the payload is null, too large, malformed,
+     *     or contains trailing bytes
+     */
     public static Messages.Request decodeRequest(short api, byte[] payload) {
         Api.requireKnown(api);
         Reader input = new Reader(payload);
@@ -97,13 +130,27 @@ public final class MessageCodec {
         }
     }
 
-    /** Decodes a request while also validating the request-only frame error field. */
+    /**
+     * Decodes a request while also validating the request-only frame error field.
+     *
+     * @param api course API identifier selecting the request type
+     * @param frameError error value from the request frame header
+     * @param payload encoded request body, without a frame header
+     * @return the decoded request value
+     * @throws CourseException if {@code frameError} is not {@link ErrorCode#NONE}, the API is
+     *     unknown, or the payload is invalid
+     */
     public static Messages.Request decodeRequest(short api, ErrorCode frameError, byte[] payload) {
         if (frameError != ErrorCode.NONE) throw invalid("request frame error must be NONE");
         return decodeRequest(api, payload);
     }
 
-    /** Caps only fetch requests whose disk-byte budget could encode beyond one response frame. */
+    /**
+     * Caps fetch requests whose disk-byte budget could encode beyond one response frame.
+     *
+     * @param request request to cap if it is a fetch request
+     * @return a request with a capped budget, or the same object if it is not capped
+     */
     public static Messages.Request capFetchBudget(Messages.Request request) {
         if (request instanceof Messages.FetchRequest fetch
                 && fetch.maxBytes() > MAX_FETCH_BYTE_BUDGET)
@@ -127,6 +174,14 @@ public final class MessageCodec {
         return request;
     }
 
+    /**
+     * Encodes a response body for the course protocol, without a frame header.
+     *
+     * @param response response value to encode
+     * @return a newly allocated byte array containing the encoded body
+     * @throws CourseException if {@code response} is null, unsupported, invalid for encoding, or
+     *     exceeds the frame payload limit
+     */
     public static byte[] encodeReply(Messages.Response response) {
         if (response == null) throw invalid("response is null");
         Writer sizing = new Writer(null);
@@ -137,14 +192,32 @@ public final class MessageCodec {
         return payload;
     }
 
-    /** Decodes a success body by API, or a failure message body from the error frame header. */
+    /**
+     * Decodes either a successful response body or the error message body selected by a frame
+     * error code.
+     *
+     * @param api course API identifier selecting the successful response type
+     * @param frameError error value from the response frame header
+     * @param payload encoded response or error body, without a frame header
+     * @return the decoded success response or {@link Messages.ErrorBody}
+     * @throws CourseException if the API is unknown, {@code frameError} is null, or the body is
+     *     malformed
+     */
     public static Messages.Response decodeReply(short api, ErrorCode frameError, byte[] payload) {
         Api.requireKnown(api);
         if (frameError == null) throw invalid("frame error is null");
         return frameError == ErrorCode.NONE ? decodeReply(api, payload) : decodeErrorBody(payload);
     }
 
-    /** Decodes a successful response body selected by API. */
+    /**
+     * Decodes a successful response body selected by API.
+     *
+     * @param api course API identifier selecting the response type
+     * @param payload encoded successful response body, without a frame header
+     * @return the decoded response value
+     * @throws CourseException if the API is unknown or the payload is null, too large, malformed,
+     *     or contains trailing bytes
+     */
     public static Messages.Response decodeReply(short api, byte[] payload) {
         Api.requireKnown(api);
         Reader input = new Reader(payload);
@@ -172,6 +245,11 @@ public final class MessageCodec {
 
     /**
      * Decodes the message carried in a failure frame; its error code remains in the frame header.
+     *
+     * @param payload encoded error body, without a frame header
+     * @return the decoded error message body, including an empty message if present
+     * @throws CourseException if the payload is null, too large, malformed, or contains trailing
+     *     bytes
      */
     public static Messages.ErrorBody decodeErrorBody(byte[] payload) {
         Reader input = new Reader(payload);
@@ -188,7 +266,15 @@ public final class MessageCodec {
         }
     }
 
-    /** Encodes the key and next offset stored as an OffsetStore record value. */
+    /**
+     * Encodes an offset key and next offset as an OffsetStore record value.
+     *
+     * @param key key identifying the group's topic-partition offset
+     * @param nextOffset offset of the next record to process
+     * @return encoded offset-entry bytes
+     * @throws CourseException if {@code key} is null or {@code nextOffset} is negative, with error
+     *     code {@link ErrorCode#INVALID_REQUEST}
+     */
     public static byte[] encodeOffsetEntry(OffsetKey key, long nextOffset) {
         if (key == null || nextOffset < 0) throw invalid("invalid offset entry");
         Writer sizing = new Writer(null);
@@ -201,7 +287,13 @@ public final class MessageCodec {
         return payload;
     }
 
-    /** Decodes the key and next offset stored as an OffsetStore record value. */
+    /**
+     * Decodes an offset key and next offset from an OffsetStore record value.
+     *
+     * @param payload encoded offset-entry value
+     * @return the decoded key and next offset
+     * @throws CourseException if the payload is null, malformed, or contains trailing bytes
+     */
     public static OffsetEntry decodeOffsetEntry(byte[] payload) {
         Reader input = new Reader(payload);
         try {

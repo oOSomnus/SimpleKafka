@@ -49,6 +49,19 @@ public final class CourseDemo {
 
     private CourseDemo() {}
 
+    /**
+     * Runs the replication and failover scenario in a temporary directory.
+     *
+     * <p>Accepts no arguments or the single argument {@code scenario}. The run prints
+     * {@code SCENARIO PASS} on success or {@code SCENARIO FAIL: ...} before rethrowing a failure.
+     * It creates a temporary {@code simple-kafka-course-demo-*} directory and attempts to delete
+     * it before returning; a deletion failure is reported to standard error.
+     *
+     * @param args zero arguments or {@code ["scenario"]}
+     * @throws IllegalArgumentException if the arguments do not match the accepted form
+     * @throws RuntimeException if the scenario fails; checked I/O failures are wrapped in
+     *     {@link IllegalStateException}
+     */
     public static void main(String[] args) {
         if (args.length > 1 || args.length == 1 && !args[0].equals("scenario")) {
             System.err.println("usage: CourseDemo [scenario]");
@@ -513,6 +526,13 @@ public final class CourseDemo {
                 throw new IllegalStateException("replication pump failed", problem);
         }
 
+        /**
+         * Stops the replication worker and checks whether it failed.
+         *
+         * @throws IllegalStateException if the worker does not stop within two seconds, the
+         *     worker failed, or this thread is interrupted while stopping; interruption is
+         *     restored before the exception is thrown
+         */
         @Override
         public void close() {
             enabled.set(false);

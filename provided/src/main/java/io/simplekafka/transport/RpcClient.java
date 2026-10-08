@@ -21,6 +21,14 @@ public final class RpcClient implements AutoCloseable {
     private final AtomicInteger correlations = new AtomicInteger();
     private volatile boolean closed;
 
+    /**
+     * Creates a client pinned to an endpoint with a connect and read timeout.
+     *
+     * @param endpoint server endpoint to use for every call
+     * @param timeoutMillis connect and socket-read timeout in milliseconds
+     * @throws NullPointerException if {@code endpoint} is {@code null}
+     * @throws IllegalArgumentException if {@code timeoutMillis} is not positive
+     */
     public RpcClient(Endpoint endpoint, int timeoutMillis) {
         this.endpoint = Objects.requireNonNull(endpoint);
         if (timeoutMillis <= 0)
@@ -28,10 +36,28 @@ public final class RpcClient implements AutoCloseable {
         this.timeoutMillis = timeoutMillis;
     }
 
+    /**
+     * Returns the endpoint to which this client is pinned.
+     *
+     * @return configured server endpoint
+     */
     public Endpoint endpoint() {
         return endpoint;
     }
 
+    /**
+     * Sends one request over a fresh TCP connection without retrying it.
+     *
+     * <p>The reply's error code is returned in the {@link Messages.Reply}; a broker error is not
+     * thrown by this method.
+     *
+     * @param request request to encode and send
+     * @return decoded reply, including any broker error code
+     * @throws NullPointerException if {@code request} is {@code null}
+     * @throws IllegalStateException if this client has been closed
+     * @throws CourseException with {@code INVALID_REQUEST} for a mismatched or malformed response,
+     *     or with {@code REQUEST_TIMEOUT} for an I/O failure or missing response
+     */
     public Messages.Reply call(Messages.Request request) {
         if (closed) throw new IllegalStateException("client is closed");
         int correlation = correlations.incrementAndGet();
@@ -67,6 +93,12 @@ public final class RpcClient implements AutoCloseable {
         }
     }
 
+    /**
+     * Marks this client closed so subsequent calls are rejected.
+     *
+     * <p>Closing is idempotent and does not cancel an in-progress call; the client retains no
+     * socket between calls.
+     */
     @Override
     public void close() {
         closed = true;

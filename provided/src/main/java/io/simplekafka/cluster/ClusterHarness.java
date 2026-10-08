@@ -55,10 +55,27 @@ public final class ClusterHarness implements AutoCloseable {
     private boolean started;
     private boolean closed;
 
+    /**
+     * Creates a harness rooted at the given directory using the system wall clock.
+     *
+     * @param root directory for broker logs and group offsets
+     * @throws NullPointerException if {@code root} is {@code null}
+     * @throws CourseException with {@code STORAGE_ERROR} if the root or offset store cannot be
+     *     created
+     */
     public ClusterHarness(Path root) {
         this(root, SystemTimeSource.INSTANCE);
     }
 
+    /**
+     * Creates a harness rooted at the given directory with an injected clock.
+     *
+     * @param root directory for broker logs and group offsets
+     * @param clock clock used by group expiry and replication timing
+     * @throws NullPointerException if {@code root} or {@code clock} is {@code null}
+     * @throws CourseException with {@code STORAGE_ERROR} if the root or offset store cannot be
+     *     created
+     */
     public ClusterHarness(Path root, TimeSource clock) {
         this.root = Objects.requireNonNull(root, "root").toAbsolutePath().normalize();
         this.clock = Objects.requireNonNull(clock, "clock");
@@ -72,7 +89,15 @@ public final class ClusterHarness implements AutoCloseable {
         }
     }
 
-    /** Starts three independent loopback servers, each bound to an OS-assigned port. */
+    /**
+     * Starts three independent loopback servers, each bound to an OS-assigned port.
+     *
+     * <p>Starting an already-started harness is a no-op. A startup failure closes partial state
+     * before the failure is rethrown.
+     *
+     * @throws IllegalStateException if the harness has been closed
+     * @throws CourseException with {@code STORAGE_ERROR} if a broker cannot bind or initialize
+     */
     public synchronized void start() {
         ensureNotClosed();
         if (started) return;
@@ -134,13 +159,30 @@ public final class ClusterHarness implements AutoCloseable {
         }
     }
 
-    /** Runs deterministic group expiry for tests using an injected clock. */
+    /**
+     * Runs deterministic group expiry for tests using an injected clock.
+     *
+     * @return expired group/member identifiers, such as {@code group/member}
+     * @throws IllegalStateException if the harness has not been started or has been closed
+     */
     public synchronized Set<String> expireGroups() {
         requireStarted();
         return groups.expire();
     }
 
-    /** Creates fixed RF3 partitions: leaders rotate 1,2,3 and every replica starts in the ISR. */
+    /**
+     * Creates fixed RF3 partitions: leaders rotate 1,2,3 and every replica starts in the ISR.
+     *
+     * <p>Repeating the same configuration is a no-op; changing it is rejected.
+     *
+     * @param topic topic identifier to create
+     * @param partitions number of partitions to create
+     * @param minISR minimum in-sync replica count for writes
+     * @throws IllegalStateException if the harness has not been started or has been closed
+     * @throws IllegalArgumentException if {@code topic} is not a valid topic identifier
+     * @throws CourseException with {@code INVALID_REQUEST} for invalid or changed configuration,
+     *     or with {@code NOT_LEADER} if any broker is offline
+     */
     public synchronized void createTopic(String topic, int partitions, int minISR) {
         requireStarted();
         if (topic == null || partitions <= 0 || minISR < 1 || minISR > BROKER_IDS.size())
@@ -189,20 +231,47 @@ public final class ClusterHarness implements AutoCloseable {
         topics.put(topic, requested);
     }
 
+    /**
+     * Returns a broker's current endpoint.
+     *
+     * @param brokerId broker whose endpoint to return
+     * @return current endpoint, which may change after a broker restart
+     * @throws CourseException with {@code UNKNOWN_MEMBER} if the broker is unknown
+     */
     public synchronized Endpoint endpoint(int brokerId) {
         return node(brokerId).endpoint;
     }
 
+    /**
+     * Returns the broker's catalog and its local partition logs.
+     *
+     * @param brokerId broker whose catalog to return
+     * @return the broker's partition catalog
+     * @throws CourseException with {@code UNKNOWN_MEMBER} if the broker is unknown
+     */
     public synchronized PartitionCatalog catalog(int brokerId) {
         return node(brokerId).catalog;
     }
 
+    /**
+     * Returns the shared single-JVM cluster authority.
+     *
+     * @return the harness authority
+     */
     public ClusterAuthority authority() {
         return authority;
     }
 
     /**
      * Stops only this broker's TCP server; authority, catalog, log handles, and peers stay alive.
+     *
+     * <p>It marks the broker and its replicas offline but retains the catalog and log handles.
+     *
+     * <p>Stopping a broker that is already stopped is a no-op.
+     *
+     * @param brokerId broker to stop
+     * @throws IllegalStateException if the harness has not been started or has been closed
+     * @throws CourseException with {@code UNKNOWN_MEMBER} if the broker is unknown
      */
     public synchronized void stopBroker(int brokerId) {
         requireStarted();
@@ -218,6 +287,13 @@ public final class ClusterHarness implements AutoCloseable {
     /**
      * Restarts the broker socket on a fresh ephemeral port and preserves its independent
      * disk/catalog.
+     *
+     * <p>Calling this for a running broker is a no-op; the endpoint changes after a restart.
+     *
+     * @param brokerId broker to restart
+     * @throws IllegalStateException if the harness has not been started or has been closed
+     * @throws CourseException with {@code UNKNOWN_MEMBER} if the broker is unknown, or with
+     *     {@code STORAGE_ERROR} if the new server cannot bind
      */
     public synchronized void restartBroker(int brokerId) {
         requireStarted();
@@ -257,29 +333,69 @@ public final class ClusterHarness implements AutoCloseable {
         }
     }
 
+    /**
+     * Returns the local partition log for a broker.
+     *
+     * @param brokerId broker whose log to return
+     * @param tp partition whose log to return
+     * @return the broker's local partition log
+     * @throws CourseException if the broker or partition is unknown
+     */
     public synchronized PartitionLog partitionLog(int brokerId, TopicPartition tp) {
         return node(brokerId).catalog.partition(tp);
     }
 
+    /**
+     * Returns a broker's role and liveness mirror for a partition.
+     *
+     * @param brokerId broker whose replica state to return
+     * @param tp partition whose replica state to return
+     * @return the broker's replica state
+     * @throws CourseException if the broker is unknown or the partition is not tracked
+     */
     public synchronized ReplicaState replicaState(int brokerId, TopicPartition tp) {
         ReplicaState state = node(brokerId).replicaStates.get(tp);
         if (state == null) throw unknownPartition(tp);
         return state;
     }
 
+    /**
+     * Returns the replication tracker for a partition.
+     *
+     * @param tp partition whose tracker to return
+     * @return the partition's replication tracker
+     * @throws CourseException with {@code UNKNOWN_TOPIC_OR_PARTITION} if the partition is unknown
+     */
     public synchronized ReplicationTracker tracker(TopicPartition tp) {
         ReplicationTracker tracker = trackers.get(tp);
         if (tracker == null) throw unknownPartition(tp);
         return tracker;
     }
 
+    /**
+     * Returns the replicated backend installed for a broker's partition.
+     *
+     * @param brokerId broker whose backend to inspect
+     * @param tp partition whose backend to return
+     * @return the replicated partition backend
+     * @throws CourseException if the broker or partition is unknown
+     * @throws IllegalStateException if the partition has no replicated backend
+     */
     public synchronized ReplicatedPartition replicatedPartition(int brokerId, TopicPartition tp) {
         if (!(node(brokerId).catalog.backend(tp) instanceof ReplicatedPartition partition))
             throw new IllegalStateException("partition has no replicated backend");
         return partition;
     }
 
-    /** Creates a follower poller aimed at the leader current at call time. */
+    /**
+     * Creates a follower poller aimed at the leader current at call time.
+     *
+     * @param brokerId follower broker to poll
+     * @param tp partition to replicate
+     * @return a poller retaining a client for the selected leader
+     * @throws CourseException with {@code UNKNOWN_MEMBER} or {@code UNKNOWN_TOPIC_OR_PARTITION} if
+     *     the broker or partition is unknown
+     */
     public synchronized FollowerReplicator replicator(int brokerId, TopicPartition tp) {
         BrokerNode follower = node(brokerId);
         int leaderId = authority.metadata(tp).leaderId();
@@ -288,7 +404,22 @@ public final class ClusterHarness implements AutoCloseable {
                 brokerId, tp, follower.catalog.partition(tp), client, replicaState(brokerId, tp));
     }
 
-    /** Runs one TCP replication poll and closes its short-lived client afterward. */
+    /**
+     * Runs one TCP replication poll and closes its short-lived client afterward.
+     *
+     * <p>The client is closed after the poll, and this method does not report the resulting log end
+     * to the replication tracker. The exercise poll currently throws
+     * {@link io.simplekafka.ExerciseNotImplementedException}.
+     *
+     * @param brokerId follower broker to poll
+     * @param tp partition to replicate
+     * @param maxRecords maximum records requested by the follower poll
+     * @param maxBytes maximum bytes requested by the follower poll
+     * @return number of records appended by the poll
+     * @throws CourseException if the broker or partition is unknown or the RPC fails
+     * @throws io.simplekafka.ExerciseNotImplementedException while follower replication is
+     *     unimplemented
+     */
     public int replicateOnce(int brokerId, TopicPartition tp, int maxRecords, int maxBytes) {
         int leaderId = authority.metadata(tp).leaderId();
         try (RpcClient client = new RpcClient(endpoint(leaderId), DEFAULT_RPC_TIMEOUT_MILLIS)) {
@@ -303,6 +434,19 @@ public final class ClusterHarness implements AutoCloseable {
         }
     }
 
+    /**
+     * Elects a clean replica when needed and refreshes the brokers' role mirrors.
+     *
+     * <p>An online leader remains selected. Otherwise the intended election selects the lowest
+     * online broker in the old ISR whose log end is at least the high watermark, advances the
+     * epoch, and makes only that broker the ISR. The exercise method currently throws
+     * {@link io.simplekafka.ExerciseNotImplementedException}.
+     *
+     * @param tp partition whose leader may be elected
+     * @return metadata for the current or newly elected leader
+     * @throws CourseException with {@code NO_ELIGIBLE_LEADER} if no clean candidate exists
+     * @throws io.simplekafka.ExerciseNotImplementedException while leader election is unimplemented
+     */
     public synchronized PartitionMetadata elect(TopicPartition tp) {
         PartitionMetadata metadata = new LeaderElection(authority).elect(tp);
         for (BrokerNode node : nodes.values()) {
@@ -316,6 +460,15 @@ public final class ClusterHarness implements AutoCloseable {
         return metadata;
     }
 
+    /**
+     * Creates a reconciler bound to the leader endpoint selected at call time.
+     *
+     * @param brokerId replica broker to reconcile
+     * @param tp partition to reconcile
+     * @return reconciler holding a client for the selected leader
+     * @throws CourseException with {@code UNKNOWN_MEMBER} or {@code UNKNOWN_TOPIC_OR_PARTITION} if
+     *     the broker or partition is unknown
+     */
     public synchronized ReplicaReconciler reconciler(int brokerId, TopicPartition tp) {
         int leaderId = authority.metadata(tp).leaderId();
         return new ReplicaReconciler(
@@ -326,6 +479,18 @@ public final class ClusterHarness implements AutoCloseable {
                 authority);
     }
 
+    /**
+     * Reconciles a replica with the leader selected at call time and returns its repaired log end.
+     *
+     * <p>The temporary RPC client is closed after the attempt. The exercise method currently throws
+     * {@link io.simplekafka.ExerciseNotImplementedException}.
+     *
+     * @param brokerId replica broker to reconcile
+     * @param tp partition to reconcile
+     * @return local log-end offset after reconciliation
+     * @throws CourseException if the broker or partition is unknown or the RPC fails
+     * @throws io.simplekafka.ExerciseNotImplementedException while reconciliation is unimplemented
+     */
     public long reconcile(int brokerId, TopicPartition tp) {
         int leaderId = authority.metadata(tp).leaderId();
         try (RpcClient client = new RpcClient(endpoint(leaderId), DEFAULT_RPC_TIMEOUT_MILLIS)) {
@@ -335,6 +500,22 @@ public final class ClusterHarness implements AutoCloseable {
         }
     }
 
+    /**
+     * Attempts to admit an assigned replica to the ISR using its current recovery proof.
+     *
+     * <p>Admission requires proof for the current epoch that matches the local log identity,
+     * mutation version, and leader log end. The exercise method currently throws
+     * {@link io.simplekafka.ExerciseNotImplementedException}.
+     *
+     * @param brokerId replica broker to admit
+     * @param tp partition for which to attempt admission
+     * @return {@code true} if admitted or already in the ISR; {@code false} if the proof is not
+     *     current and complete
+     * @throws CourseException with {@code INVALID_REQUEST} if the broker is not assigned, or with
+     *     {@code UNKNOWN_TOPIC_OR_PARTITION} if the partition is absent
+     * @throws io.simplekafka.ExerciseNotImplementedException while the admission exercise is
+     *     unimplemented
+     */
     public synchronized boolean admit(int brokerId, TopicPartition tp) {
         if (!authority.partitionState(tp).assigned(brokerId))
             throw new CourseException(
@@ -344,16 +525,40 @@ public final class ClusterHarness implements AutoCloseable {
                 .tryAdd(brokerId, tp, authority.metadata(tp).epoch());
     }
 
+    /**
+     * Returns a consistent replication snapshot for a partition.
+     *
+     * @param tp partition to snapshot
+     * @return copied replication state
+     * @throws CourseException with {@code UNKNOWN_TOPIC_OR_PARTITION} if the partition is absent
+     */
     public ReplicationSnapshot snapshot(TopicPartition tp) {
         return authority.snapshot(tp);
     }
 
+    /**
+     * Creates a client bound to the broker's current endpoint.
+     *
+     * @param brokerId broker to contact
+     * @param timeoutMillis connect and read timeout in milliseconds
+     * @return a client owned by the caller
+     * @throws CourseException with {@code INVALID_REQUEST} if the timeout is not positive, or with
+     *     {@code UNKNOWN_MEMBER} if the broker is unknown
+     */
     public synchronized RpcClient client(int brokerId, int timeoutMillis) {
         if (timeoutMillis <= 0)
             throw new CourseException(ErrorCode.INVALID_REQUEST, "RPC timeout must be positive");
         return new RpcClient(endpoint(brokerId), timeoutMillis);
     }
 
+    /**
+     * Closes the harness and its brokers, group coordinator, catalogs, and offset store.
+     *
+     * <p>Closing is idempotent. If multiple resources fail to close, the first runtime failure is
+     * thrown and later failures are suppressed on it.
+     *
+     * @throws RuntimeException if closing a resource fails
+     */
     @Override
     public synchronized void close() {
         if (closed) return;

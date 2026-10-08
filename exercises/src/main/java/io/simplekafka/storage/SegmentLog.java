@@ -34,6 +34,15 @@ public final class SegmentLog implements AutoCloseable {
         this.nextOffset = baseOffset;
     }
 
+    /**
+     * Creates a new segment file and its parent directories.
+     *
+     * @param path path of the new segment file
+     * @param baseOffset first offset represented by this segment
+     * @return the open segment
+     * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} for a null path, negative base,
+     *     or existing file, or with {@link ErrorCode#STORAGE_ERROR} if creation fails
+     */
     public static SegmentLog create(Path path, long baseOffset) {
         validatePathAndBase(path, baseOffset);
         try {
@@ -54,6 +63,19 @@ public final class SegmentLog implements AutoCloseable {
         }
     }
 
+    /**
+     * Opens a segment for reading and writing, then recovers its next offset from its contents.
+     * If recovery fails, closes the segment before rethrowing the failure.
+     *
+     * @param path path of the existing segment file
+     * @param baseOffset first offset represented by this segment
+     * @return the recovered open segment
+     * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} for a null path or negative
+     *     base, with {@link ErrorCode#CORRUPT_RECORD} for complete corrupt contents, or with
+     *     {@link ErrorCode#STORAGE_ERROR} if opening or recovery I/O fails; an I/O cause is
+     *     retained
+     * @throws ExerciseNotImplementedException if recovery reaches the unfinished Step 4 method
+     */
     public static SegmentLog open(Path path, long baseOffset) {
         validatePathAndBase(path, baseOffset);
         try {
@@ -77,20 +99,53 @@ public final class SegmentLog implements AutoCloseable {
     }
 
     /**
-     * Step 2: prevalidate and append a nonempty batch at consecutive offsets, force it, then return
-     * its half-open offset range. See Step02Test and book step 2.
+     * Step 2: validate every record before writing, append a nonempty batch at consecutive offsets,
+     * force the channel once, and return its half-open offset range. Invalid input or offset
+     * overflow leaves the file unchanged. See Step02Test and book step 2.
+     *
+     * @param records non-empty records to append in order
+     * @return the appended half-open offset range
+     * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} for an invalid batch or offset
+     *     overflow, or with {@link ErrorCode#STORAGE_ERROR} if the write fails or this segment is
+     *     closed
+     * @throws ExerciseNotImplementedException while the Step 2 exercise method is a skeleton
      */
     public AppendResult append(List<RecordData> records) {
         throw new ExerciseNotImplementedException(2, "SegmentLog.append");
     }
 
+    /**
+     * Reads from {@code offset} by delegating to {@link #readFrom(long, long, int, int)} with a
+     * byte-position hint of zero, the segment-start position.
+     *
+     * @param offset first segment offset to read
+     * @param maxRecords maximum records to return
+     * @param maxBytes maximum encoded bytes to return
+     * @return the records within both limits
+     * @throws CourseException if the delegated read rejects the offset or limits, encounters
+     *     corruption, or fails because the segment is closed or storage fails
+     * @throws ExerciseNotImplementedException while the delegated Step 3 method is a skeleton
+     */
     public List<LogRecord> read(long offset, int maxRecords, int maxBytes) {
         return readFrom(offset, 0, maxRecords, maxBytes);
     }
 
     /**
      * Step 3: read complete records within both limits from a verified record-boundary hint without
-     * changing append position. See Step03Test and book step 3.
+     * changing append position. A hint cannot skip the requested offset; an EOF hint at LEO returns
+     * an empty list. See Step03Test and book step 3.
+     *
+     * @param offset first segment offset to read
+     * @param bytePositionHint file position at a verified record boundary
+     * @param maxRecords maximum records to return
+     * @param maxBytes maximum encoded bytes to return
+     * @return the records within both limits
+     * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} for a negative, out-of-file,
+     *     non-boundary, or skipping hint or a nonpositive limit; with
+     *     {@link ErrorCode#OFFSET_OUT_OF_RANGE} when {@code offset} is outside this segment, with
+     *     {@link ErrorCode#CORRUPT_RECORD} for corrupt stored contents, or with
+     *     {@link ErrorCode#STORAGE_ERROR} for storage failure or a closed segment
+     * @throws ExerciseNotImplementedException while the Step 3 exercise method is a skeleton
      */
     public List<LogRecord> readFrom(
             long offset, long bytePositionHint, int maxRecords, int maxBytes) {
@@ -99,16 +154,33 @@ public final class SegmentLog implements AutoCloseable {
 
     /**
      * Step 4: scan contiguous valid records, truncate only an incomplete tail, and return the
-     * recovered LEO. See Step04Test and book step 4.
+     * recovered LEO. Complete corruption is rejected without truncation. See Step04Test and book
+     * step 4.
+     *
+     * @return the recovered next offset
+     * @throws CourseException with {@link ErrorCode#CORRUPT_RECORD} for invalid complete contents
+     *     or offset overflow, or with {@link ErrorCode#STORAGE_ERROR} if recovery I/O fails
+     * @throws ExerciseNotImplementedException while the Step 4 exercise method is a skeleton
      */
     public long recover() {
         throw new ExerciseNotImplementedException(4, "SegmentLog.recover");
     }
 
+    /**
+     * Returns this segment's immutable base offset.
+     *
+     * @return the first offset represented by this segment
+     */
     public long baseOffset() {
         return baseOffset;
     }
 
+    /**
+     * Returns the next offset after the last record in this segment.
+     *
+     * @return the segment log end offset
+     * @throws CourseException with {@link ErrorCode#STORAGE_ERROR} if this segment is closed
+     */
     public long logEndOffset() {
         lock.lock();
         try {
@@ -119,6 +191,13 @@ public final class SegmentLog implements AutoCloseable {
         }
     }
 
+    /**
+     * Returns the current segment file size in bytes.
+     *
+     * @return the file size
+     * @throws CourseException with {@link ErrorCode#STORAGE_ERROR} if this segment is closed or
+     *     reading its size fails
+     */
     public long sizeBytes() {
         lock.lock();
         try {
@@ -131,6 +210,11 @@ public final class SegmentLog implements AutoCloseable {
         }
     }
 
+    /**
+     * Returns this segment's file path.
+     *
+     * @return the segment file path
+     */
     public Path path() {
         return path;
     }
@@ -204,6 +288,12 @@ public final class SegmentLog implements AutoCloseable {
         return new CourseException(ErrorCode.STORAGE_ERROR, "failed to " + action, cause);
     }
 
+    /**
+     * Closes the segment file channel; repeated calls have no effect. Open-state checks report
+     * {@link ErrorCode#STORAGE_ERROR} after closure.
+     *
+     * @throws CourseException with {@link ErrorCode#STORAGE_ERROR} if closing the channel fails
+     */
     @Override
     public void close() {
         lock.lock();
