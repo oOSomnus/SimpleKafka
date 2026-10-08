@@ -1,11 +1,14 @@
 package io.simplekafka.course;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.simplekafka.CourseException;
+import io.simplekafka.client.Partitioner;
+import io.simplekafka.client.SimpleProducer;
 import io.simplekafka.ErrorCode;
 import io.simplekafka.cluster.ClusterHarness;
 import io.simplekafka.cluster.ReplicationSnapshot;
@@ -13,11 +16,13 @@ import io.simplekafka.model.Acks;
 import io.simplekafka.model.AppendResult;
 import io.simplekafka.model.LogRecord;
 import io.simplekafka.model.RecordData;
+import io.simplekafka.model.ProduceReceipt;
 import io.simplekafka.model.TopicPartition;
 import io.simplekafka.protocol.Messages;
 import io.simplekafka.support.TimeSource;
 import io.simplekafka.transport.RpcClient;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
@@ -161,6 +166,61 @@ class Step24Test {
     }
 
     @Test
+    void retainedLogStartIsEnforcedOverTcpWithoutChangingReplicationState() {
+        TimeSource clock = new AtomicLong(0)::get;
+        TopicPartition tp = new TopicPartition("step24-retained", 0);
+        List<RecordData> batch = List.of(
+                new RecordData(null, new byte[600_000], 10),
+                new RecordData(null, new byte[600_000], 11));
+        try (ClusterHarness cluster = new ClusterHarness(root, clock)) {
+            cluster.start();
+            cluster.createTopic(tp.topic(), 1, 2);
+            Messages.Reply appended = produce(cluster, tp, 0, Acks.LEADER, batch);
+            assertEquals(ErrorCode.NONE, appended.error());
+            assertEquals(new AppendResult(0, 2), ((Messages.ProduceBody) appended.body()).result());
+            assertEquals(2, cluster.partitionLog(1, tp).logEndOffset());
+            assertEquals(0, cluster.tracker(tp).highWatermark());
+            Path partitionDirectory = root.resolve("broker-1").resolve(tp.topic()).resolve("0");
+            Path firstSegment = partitionDirectory.resolve("00000000000000000000.log");
+            Path retainedSegment = partitionDirectory.resolve("00000000000000000001.log");
+            assertTrue(Files.exists(firstSegment));
+            assertTrue(Files.exists(retainedSegment));
+
+            assertEquals(1, cluster.partitionLog(1, tp).deleteBefore(1));
+            assertEquals(1, cluster.partitionLog(1, tp).logStartOffset());
+            assertFalse(Files.exists(firstSegment));
+            assertTrue(Files.exists(retainedSegment));
+            ReplicationSnapshot before = cluster.tracker(tp).snapshot();
+            List<Long> beforeLEOs = logEnds(cluster, tp);
+            List<LogRecord> retainedRecords = cluster.partitionLog(1, tp).read(1, 1, 700_000);
+
+            Messages.Reply beforeStart = fetchReply(cluster, tp, 0, 1, 1_000_000);
+            assertUnchangedAfterReply(cluster, tp, before, beforeLEOs,
+                    ErrorCode.OFFSET_OUT_OF_RANGE, beforeStart);
+            assertEquals(retainedRecords, cluster.partitionLog(1, tp).read(1, 1, 700_000));
+
+            Messages.Reply atRetainedStart = fetchReply(cluster, tp, 1, 10, 1_000_000);
+            assertEquals(ErrorCode.NONE, atRetainedStart.error());
+            Messages.FetchBody empty = (Messages.FetchBody) atRetainedStart.body();
+            assertEquals(List.of(), empty.records());
+            assertEquals(1, empty.logStartOffset());
+            assertEquals(2, empty.logEndOffset());
+            assertEquals(0, empty.highWatermark());
+            assertEquals(0, empty.epoch());
+            assertEquals(before, cluster.tracker(tp).snapshot());
+            assertEquals(beforeLEOs, logEnds(cluster, tp));
+            assertEquals(retainedRecords, cluster.partitionLog(1, tp).read(1, 1, 700_000));
+
+            Messages.Reply futureEpoch;
+            try (RpcClient client = new RpcClient(cluster.endpoint(1), 3_000)) {
+                futureEpoch = client.call(new Messages.FetchRequest(tp, 1, 1, 10, 1_000_000, null));
+            }
+            assertUnchangedAfterReply(cluster, tp, before, beforeLEOs, ErrorCode.FENCED_EPOCH, futureEpoch);
+            assertEquals(retainedRecords, cluster.partitionLog(1, tp).read(1, 1, 700_000));
+        }
+    }
+
+    @Test
     void allPrecheckDoesNotAppendAndZeroTimeoutRetainsAnInvisibleAppendUntilReplication() {
         AtomicLong now = new AtomicLong(1_000);
         TimeSource clock = now::get;
@@ -203,6 +263,69 @@ class Step24Test {
             for (int brokerId : List.of(2, 3)) {
                 assertEquals(1, cluster.replicator(brokerId, timeoutTp).pollOnce(10, 4_096));
                 cluster.tracker(timeoutTp).report(brokerId, 0, cluster.partitionLog(brokerId, timeoutTp).logEndOffset());
+            }
+            assertEquals(1, cluster.tracker(timeoutTp).highWatermark());
+            assertEquals(List.of("retained-uncommitted"), values(fetch(cluster, timeoutTp, 0).records()));
+        }
+    }
+
+    @Test
+    void producerAcksControlAdmissionVisibilityAndTimeoutWithoutDiscardingTheAppend() {
+        AtomicLong now = new AtomicLong(1_000);
+        TimeSource clock = now::get;
+        TopicPartition insufficientTp = new TopicPartition("step24-producer-acks", 0);
+        try (ClusterHarness cluster = new ClusterHarness(root.resolve("producer-acks"), clock)) {
+            cluster.start();
+            cluster.createTopic(insufficientTp.topic(), 1, 3);
+            now.set(2_000);
+            assertEquals(Set.of(2, 3), cluster.tracker(insufficientTp).expireLagging());
+
+            try (SimpleProducer producer = new SimpleProducer(
+                    new RpcClient(cluster.endpoint(1), 3_000), new Partitioner(), 1)) {
+                producer.setAcks(Acks.ALL, 5_000);
+                CourseException failure = assertThrows(CourseException.class,
+                        () -> producer.send(insufficientTp.topic(), null,
+                                "rejected-all".getBytes(StandardCharsets.UTF_8), 1));
+                assertCourseFailure(failure, ErrorCode.NOT_ENOUGH_REPLICAS);
+            }
+            assertEquals(List.of(0L, 0L, 0L), logEnds(cluster, insufficientTp));
+            assertEquals(0, cluster.tracker(insufficientTp).highWatermark());
+            assertEquals(List.of(), fetch(cluster, insufficientTp, 0).records());
+
+            try (SimpleProducer producer = new SimpleProducer(
+                    new RpcClient(cluster.endpoint(1), 3_000), new Partitioner(), 1)) {
+                producer.setAcks(Acks.LEADER, 5_000);
+                producer.send(insufficientTp.topic(), null,
+                        "leader-only".getBytes(StandardCharsets.UTF_8), 2);
+                assertEquals(List.of(new ProduceReceipt(insufficientTp, 0, 1)), producer.flush());
+            }
+            assertEquals(List.of(1L, 0L, 0L), logEnds(cluster, insufficientTp));
+            assertEquals(0, cluster.tracker(insufficientTp).highWatermark());
+            assertEquals(List.of(), fetch(cluster, insufficientTp, 0).records());
+            assertEquals(List.of("leader-only"), values(
+                    cluster.partitionLog(1, insufficientTp).read(0, 1, 4_096)));
+        }
+
+        TopicPartition timeoutTp = new TopicPartition("step24-producer-timeout", 0);
+        try (ClusterHarness cluster = new ClusterHarness(root.resolve("producer-timeout"), clock)) {
+            cluster.start();
+            cluster.createTopic(timeoutTp.topic(), 1, 2);
+            try (SimpleProducer producer = new SimpleProducer(
+                    new RpcClient(cluster.endpoint(1), 3_000), new Partitioner(), 1)) {
+                producer.setAcks(Acks.ALL, 0);
+                CourseException failure = assertThrows(CourseException.class,
+                        () -> producer.send(timeoutTp.topic(), null,
+                                "retained-uncommitted".getBytes(StandardCharsets.UTF_8), 3));
+                assertCourseFailure(failure, ErrorCode.REQUEST_TIMEOUT);
+            }
+            assertEquals(List.of(1L, 0L, 0L), logEnds(cluster, timeoutTp));
+            assertEquals(0, cluster.tracker(timeoutTp).highWatermark());
+            assertEquals(List.of(), fetch(cluster, timeoutTp, 0).records());
+
+            for (int brokerId : List.of(2, 3)) {
+                assertEquals(1, cluster.replicateOnce(brokerId, timeoutTp, 10, 4_096));
+                cluster.tracker(timeoutTp).report(
+                        brokerId, 0, cluster.partitionLog(brokerId, timeoutTp).logEndOffset());
             }
             assertEquals(1, cluster.tracker(timeoutTp).highWatermark());
             assertEquals(List.of("retained-uncommitted"), values(fetch(cluster, timeoutTp, 0).records()));

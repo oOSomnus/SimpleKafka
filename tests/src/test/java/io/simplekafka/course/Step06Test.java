@@ -132,13 +132,31 @@ class Step06Test {
     }
 
     @Test
-    void acceptsOneLegalRecordLargerThanTheConfiguredSegment() throws Exception {
-        try (TempDirectory temp = new TempDirectory();
-             PartitionLog log = new PartitionLog(temp.root().resolve("large-record"), 64, 2)) {
-            RecordData record = new RecordData(null, new byte[100], 1);
-            assertEquals(new AppendResult(0, 1), log.append(List.of(record)));
-            assertEquals(record, log.read(0, 1, 256).getFirst().data());
-            assertEquals(List.of(132L), segmentSizes(temp.root().resolve("large-record")));
+    void acceptsAnOversizedRecordBetweenRecordsInOneBatchAndReopensEverySegment() throws Exception {
+        try (TempDirectory temp = new TempDirectory()) {
+            Path directory = temp.root().resolve("large-record-batch");
+            List<RecordData> batch = List.of(
+                    new RecordData(null, new byte[0], 0),
+                    new RecordData(null, new byte[100], 1),
+                    new RecordData(null, new byte[0], 2));
+            List<LogRecord> expected = List.of(
+                    new LogRecord(0, batch.get(0)),
+                    new LogRecord(1, batch.get(1)),
+                    new LogRecord(2, batch.get(2)));
+
+            try (PartitionLog log = new PartitionLog(directory, 64, 2)) {
+                assertEquals(new AppendResult(0, 3), log.append(batch));
+                assertEquals(List.of(0L, 1L, 2L), segmentBases(directory));
+                assertEquals(List.of(32L, 132L, 32L), segmentSizes(directory));
+                assertEquals(expected, log.read(0, 3, 196));
+            }
+
+            try (PartitionLog reopened = new PartitionLog(directory, 64, 2)) {
+                assertEquals(3, reopened.logEndOffset());
+                assertEquals(expected, reopened.read(0, 3, 196));
+                assertEquals(List.of(0L, 1L, 2L), segmentBases(directory));
+                assertEquals(List.of(32L, 132L, 32L), segmentSizes(directory));
+            }
         }
     }
 
@@ -191,16 +209,17 @@ class Step06Test {
         try (TempDirectory temp = new TempDirectory()) {
             Path corruptDirectory = temp.root().resolve("crc-corrupt");
             try (PartitionLog log = new PartitionLog(corruptDirectory, 96, 1)) {
-                log.append(expectedRecords(0, 3).stream().map(LogRecord::data).toList());
+                log.append(expectedRecords(0, 6).stream().map(LogRecord::data).toList());
             }
-            Path corruptLog = segmentFiles(corruptDirectory).getFirst();
-            byte[] badCrc = RecordBytes.withField(Files.readAllBytes(corruptLog), 23, 1, 1, false);
-            Files.write(corruptLog, badCrc);
-            byte[] corruptBefore = Files.readAllBytes(corruptLog);
+            List<Path> logFiles = segmentFiles(corruptDirectory);
+            assertEquals(List.of(0L, 3L), segmentBases(corruptDirectory));
+            byte[] badCrc = Files.readAllBytes(logFiles.getFirst());
+            badCrc[badCrc.length - 1] ^= 1;
+            Files.write(logFiles.getFirst(), badCrc);
+            Map<String, String> corruptBefore = directorySnapshot(corruptDirectory);
             assertCode(ErrorCode.CORRUPT_RECORD,
                     () -> new PartitionLog(corruptDirectory, 96, 1));
-            assertArrayEquals(corruptBefore, Files.readAllBytes(corruptLog));
-
+            assertEquals(corruptBefore, directorySnapshot(corruptDirectory));
             Path gapDirectory = temp.root().resolve("base-gap");
             Files.createDirectories(gapDirectory);
             Path first = gapDirectory.resolve(segmentName(0));

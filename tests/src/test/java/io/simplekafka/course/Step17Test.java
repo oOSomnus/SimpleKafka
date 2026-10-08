@@ -16,11 +16,14 @@ class Step17Test {
                 new TopicPartition("orders", 2), new TopicPartition("orders", 0),
                 new TopicPartition("orders", 3), new TopicPartition("orders", 0));
 
-        Map<String, List<TopicPartition>> assigned = assignor.assign(input, List.of("b", "a", "a"));
-        assertEquals(Map.of(
-                "a", List.of(new TopicPartition("orders", 0), new TopicPartition("orders", 2), new TopicPartition("orders", 4)),
-                "b", List.of(new TopicPartition("orders", 1), new TopicPartition("orders", 3))), assigned);
+        Map<String, List<TopicPartition>> expected = Map.of(
+                "a", List.of(new TopicPartition("orders", 0), new TopicPartition("orders", 2),
+                        new TopicPartition("orders", 4)),
+                "b", List.of(new TopicPartition("orders", 1), new TopicPartition("orders", 3)));
+        assertEquals(expected, assignor.assign(input, List.of("b", "a", "a")));
+        assertEquals(expected, assignor.assign(input, List.of("b", "a", "a")));
     }
+
 
     @Test
     void assignsFivePartitionsToTheFirstFiveOfSevenSortedMembersAndKeepsEmptyMembers() {

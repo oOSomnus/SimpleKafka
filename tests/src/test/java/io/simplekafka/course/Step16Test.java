@@ -172,6 +172,50 @@ class Step16Test {
             }
         }
     }
+    @Test
+    void failedPollProcessesNothingAndResumeRetriesThePreviouslyFetchedRecord() throws Exception {
+        try (TempDirectory temp = new TempDirectory();
+             OffsetBrokerFixture broker = new OffsetBrokerFixture(temp.root(), 1)) {
+            broker.catalog().createTopic("orders", 1);
+            TopicPartition orders0 = new TopicPartition("orders", 0);
+            TopicPartition orders5 = new TopicPartition("orders", 5);
+            try (RpcClient setup = broker.client()) {
+                TestSupport.append(setup, orders0, TestSupport.values("work-", 1));
+                Messages.Reply committed = setup.call(new Messages.CommitOffsetRequest(
+                        new OffsetKey("workers", orders0), 0, null));
+                assertEquals(ErrorCode.NONE, committed.error());
+            }
+
+            List<String> sideEffects = new ArrayList<>();
+            try (RpcClient client = broker.client();
+                 SimpleConsumer consumer = new SimpleConsumer(client, "workers")) {
+                consumer.assign(List.of(orders0, orders5));
+                ProcessingLoop loop = new ProcessingLoop(consumer,
+                        (tp, record) -> sideEffects.add(delivery(tp, record)));
+                assertCode(ErrorCode.UNKNOWN_TOPIC_OR_PARTITION, () -> loop.runOnce(2, 8_192));
+                assertEquals(List.of(), sideEffects);
+            }
+
+            try (RpcClient offsets = broker.client()) {
+                assertEquals(OptionalLong.of(0), fetchOffset(offsets, "workers", orders0));
+                assertEquals(OptionalLong.empty(), fetchOffset(offsets, "workers", orders5));
+            }
+
+            List<String> resumedEffects = new ArrayList<>();
+            try (RpcClient retryClient = broker.client();
+                 SimpleConsumer resumed = new SimpleConsumer(retryClient, "workers")) {
+                resumed.resume(List.of(orders0));
+                assertEquals(0, resumed.position(orders0));
+                ProcessingLoop retry = new ProcessingLoop(resumed,
+                        (tp, record) -> resumedEffects.add(delivery(tp, record)));
+                assertEquals(1, retry.runOnce(1, 8_192));
+                assertEquals(List.of("orders:0:0"), resumedEffects);
+                assertEquals(1, resumed.position(orders0));
+                assertEquals(OptionalLong.of(1), fetchOffset(retryClient, "workers", orders0));
+            }
+        }
+    }
+
 
     private static OptionalLong fetchOffset(RpcClient client, String group, TopicPartition tp) {
         Messages.Reply reply = client.call(new Messages.FetchOffsetRequest(new OffsetKey(group, tp)));

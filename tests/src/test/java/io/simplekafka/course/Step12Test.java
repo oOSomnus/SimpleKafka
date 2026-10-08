@@ -3,7 +3,11 @@ package io.simplekafka.course;
 import io.simplekafka.ErrorCode;
 import io.simplekafka.model.Acks;
 import io.simplekafka.model.AppendResult;
+import io.simplekafka.model.Endpoint;
+import io.simplekafka.model.GroupAssignment;
+import io.simplekafka.model.GroupToken;
 import io.simplekafka.model.LogRecord;
+import io.simplekafka.model.OffsetKey;
 import io.simplekafka.model.PartitionMetadata;
 import io.simplekafka.model.RecordData;
 import io.simplekafka.model.TopicPartition;
@@ -23,6 +27,7 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -36,6 +41,7 @@ import static io.simplekafka.support.TestSupport.assertCode;
 import static io.simplekafka.support.TestSupport.record;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
@@ -185,23 +191,257 @@ class Step12Test {
     @Test
     void messageCodecMatchesIndependentManualRequestBodiesInBothDirections() {
         Messages.MetadataRequest metadata = new Messages.MetadataRequest("t");
+        assertEquals((short) 1, metadata.apiId());
         assertArrayEquals(METADATA_T_BODY, MessageCodec.encodeRequest(metadata));
-        assertEquals(metadata, MessageCodec.decodeRequest(Api.METADATA, METADATA_T_BODY));
+        assertEquals(metadata, MessageCodec.decodeRequest((short) 1, METADATA_T_BODY));
 
         Messages.ProduceRequest produce = new Messages.ProduceRequest(new TopicPartition("t", 0), 0,
                 Acks.LEADER, 1_000, List.of(record(null, "v", 0)));
+        assertEquals((short) 2, produce.apiId());
         assertArrayEquals(PRODUCE_T_BODY, MessageCodec.encodeRequest(produce));
-        assertEquals(produce, MessageCodec.decodeRequest(Api.PRODUCE, PRODUCE_T_BODY));
+        assertEquals(produce, MessageCodec.decodeRequest((short) 2, PRODUCE_T_BODY));
 
         Messages.FetchRequest fetch = new Messages.FetchRequest(new TopicPartition("t", 0), 0, 0, 10, 4_096, null);
+        assertEquals((short) 3, fetch.apiId());
         assertArrayEquals(FETCH_T_BODY, MessageCodec.encodeRequest(fetch));
-        assertEquals(fetch, MessageCodec.decodeRequest(Api.FETCH, FETCH_T_BODY));
+        assertEquals(fetch, MessageCodec.decodeRequest((short) 3, FETCH_T_BODY));
 
         for (InvalidBody invalid : invalidBodies()) {
             assertCode(ErrorCode.INVALID_REQUEST,
                     () -> MessageCodec.decodeRequest(invalid.api(), invalid.body()));
         }
     }
+    @Test
+    void matchesIndependentManualGoldensForEveryAdditionalRequestAndResponseSchema() {
+        for (RequestWireCase wireCase : additionalRequestWireCases()) {
+            assertEquals(wireCase.api(), wireCase.request().apiId());
+            assertArrayEquals(wireCase.body(), MessageCodec.encodeRequest(wireCase.request()),
+                    wireCase.request().toString());
+            assertEquals(wireCase.request(), MessageCodec.decodeRequest(wireCase.api(), wireCase.body()));
+        }
+
+        for (ResponseWireCase wireCase : additionalResponseWireCases()) {
+            assertArrayEquals(wireCase.body(), MessageCodec.encodeReply(wireCase.response()),
+                    wireCase.response().toString());
+            assertEquals(wireCase.response(),
+                    MessageCodec.decodeReply(wireCase.api(), ErrorCode.NONE, wireCase.body()));
+        }
+
+        byte[] errorBody = hex("00000003 e59d8f");
+        assertArrayEquals(errorBody, MessageCodec.encodeReply(new Messages.ErrorBody("坏")));
+        assertEquals(new Messages.ErrorBody("坏"),
+                MessageCodec.decodeReply((short) 1, ErrorCode.CORRUPT_RECORD, errorBody));
+        assertArrayEquals(hex("00000003 e7bb84 00000001 74 00000002 0000000000000009"),
+                MessageCodec.encodeOffsetEntry(new OffsetKey("组", new TopicPartition("t", 2)), 9));
+        assertEquals(new MessageCodec.OffsetEntry(new OffsetKey("组", new TopicPartition("t", 2)), 9),
+                MessageCodec.decodeOffsetEntry(
+                        hex("00000003 e7bb84 00000001 74 00000002 0000000000000009")));
+
+        assertEquals(new Messages.EmptyBody(),
+                MessageCodec.decodeReply((short) 7, ErrorCode.NONE, new byte[0]));
+        assertEquals(new Messages.ErrorBody(""),
+                MessageCodec.decodeReply((short) 1, ErrorCode.CORRUPT_RECORD, hex("00000000")));
+    }
+
+    @Test
+    void rejectsEveryTruncatedAndExtendedAdditionalSchemaBody() {
+        for (RequestWireCase wireCase : additionalRequestWireCases()) {
+            byte[] body = wireCase.body();
+            for (int length = 0; length < body.length; length++) {
+                byte[] prefix = java.util.Arrays.copyOf(body, length);
+                assertCode(ErrorCode.INVALID_REQUEST,
+                        () -> MessageCodec.decodeRequest(wireCase.api(), prefix));
+            }
+            assertCode(ErrorCode.INVALID_REQUEST,
+                    () -> MessageCodec.decodeRequest(wireCase.api(), concat(body, hex("00"))));
+        }
+
+        for (ResponseWireCase wireCase : additionalResponseWireCases()) {
+            byte[] body = wireCase.body();
+            for (int length = 0; length < body.length; length++) {
+                byte[] prefix = java.util.Arrays.copyOf(body, length);
+                assertCode(ErrorCode.INVALID_REQUEST,
+                        () -> MessageCodec.decodeReply(wireCase.api(), ErrorCode.NONE, prefix));
+            }
+            assertCode(ErrorCode.INVALID_REQUEST,
+                    () -> MessageCodec.decodeReply(wireCase.api(), ErrorCode.NONE, concat(body, hex("00"))));
+        }
+
+        byte[] errorBody = hex("00000003 e59d8f");
+        for (int length = 0; length < errorBody.length; length++) {
+            byte[] prefix = java.util.Arrays.copyOf(errorBody, length);
+            assertCode(ErrorCode.INVALID_REQUEST,
+                    () -> MessageCodec.decodeReply((short) 1, ErrorCode.CORRUPT_RECORD, prefix));
+        }
+        assertCode(ErrorCode.INVALID_REQUEST,
+                () -> MessageCodec.decodeReply((short) 1, ErrorCode.CORRUPT_RECORD,
+                        concat(errorBody, hex("00"))));
+
+        byte[] offsetEntry = hex("00000003 e7bb84 00000001 74 00000002 0000000000000009");
+        for (int length = 0; length < offsetEntry.length; length++) {
+            byte[] prefix = java.util.Arrays.copyOf(offsetEntry, length);
+            assertCode(ErrorCode.INVALID_REQUEST, () -> MessageCodec.decodeOffsetEntry(prefix));
+        }
+        assertCode(ErrorCode.INVALID_REQUEST,
+                () -> MessageCodec.decodeOffsetEntry(concat(offsetEntry, hex("00"))));
+        assertCode(ErrorCode.INVALID_REQUEST,
+                () -> MessageCodec.decodeReply((short) 7, ErrorCode.NONE, hex("00")));
+
+        for (InvalidReplyBody invalid : invalidReplyBodies()) {
+            assertCode(ErrorCode.INVALID_REQUEST,
+                    () -> MessageCodec.decodeReply(invalid.api(), ErrorCode.NONE, invalid.body()));
+        }
+    }
+
+    @Test
+    void enforcesUtf8IdentifierAndTopicBoundariesForEncodingAndDecoding() {
+        String maximumIdentifier = "组".repeat(85);
+        Messages.JoinGroupRequest maximum = new Messages.JoinGroupRequest(maximumIdentifier, maximumIdentifier, "t");
+        byte[] maximumBody = concat(concat(identifierBytes(maximumIdentifier), identifierBytes(maximumIdentifier)),
+                METADATA_T_BODY);
+        assertArrayEquals(maximumBody, MessageCodec.encodeRequest(maximum));
+        assertEquals(maximum, MessageCodec.decodeRequest(Api.JOIN_GROUP, maximumBody));
+
+        String oversizedIdentifier = maximumIdentifier + "a";
+        assertCode(ErrorCode.INVALID_REQUEST,
+                () -> MessageCodec.encodeRequest(new Messages.JoinGroupRequest(oversizedIdentifier, "A", "t")));
+        assertCode(ErrorCode.INVALID_REQUEST,
+                () -> MessageCodec.decodeRequest(Api.JOIN_GROUP,
+                        concat(concat(identifierBytes(oversizedIdentifier), identifierBytes("A")), METADATA_T_BODY)));
+        assertCode(ErrorCode.INVALID_REQUEST,
+                () -> MessageCodec.encodeRequest(new Messages.JoinGroupRequest("G", oversizedIdentifier, "t")));
+        assertCode(ErrorCode.INVALID_REQUEST,
+                () -> MessageCodec.decodeRequest(Api.JOIN_GROUP,
+                        concat(concat(identifierBytes("G"), identifierBytes(oversizedIdentifier)), METADATA_T_BODY)));
+
+        for (Messages.JoinGroupRequest invalid : List.of(
+                new Messages.JoinGroupRequest("", "A", "t"),
+                new Messages.JoinGroupRequest("G", "", "t"))) {
+            assertCode(ErrorCode.INVALID_REQUEST, () -> MessageCodec.encodeRequest(invalid));
+            assertCode(ErrorCode.INVALID_REQUEST,
+                    () -> MessageCodec.decodeRequest(Api.JOIN_GROUP,
+                            concat(concat(identifierBytes(invalid.group()), identifierBytes(invalid.member())),
+                                    METADATA_T_BODY)));
+        }
+
+        for (String invalidTopic : List.of(".", "..", "a/b")) {
+            assertCode(ErrorCode.INVALID_REQUEST,
+                    () -> MessageCodec.encodeRequest(new Messages.MetadataRequest(invalidTopic)));
+            assertCode(ErrorCode.INVALID_REQUEST,
+                    () -> MessageCodec.decodeRequest(Api.METADATA, identifierBytes(invalidTopic)));
+        }
+        assertCode(ErrorCode.INVALID_REQUEST,
+                () -> MessageCodec.decodeRequest(Api.JOIN_GROUP,
+                        concat(concat(hex("00000002 c328"), identifierBytes("A")), METADATA_T_BODY)));
+        assertCode(ErrorCode.INVALID_REQUEST,
+                () -> MessageCodec.encodeRequest(new Messages.JoinGroupRequest("\ud800", "A", "t")));
+
+        byte[] zeroAcks = PRODUCE_T_BODY.clone();
+        ByteBuffer.wrap(zeroAcks).order(ByteOrder.BIG_ENDIAN).putShort(13, (short) 0);
+        assertCode(ErrorCode.INVALID_REQUEST, () -> MessageCodec.decodeRequest(Api.PRODUCE, zeroAcks));
+    }
+
+    @Test
+    void sanitizesHandlerRuntimeExceptionsAndKeepsBothConnectionsUsable() throws Exception {
+        String marker = "private-handler-cause-7f31";
+        TopicPartition tp = new TopicPartition("t", 0);
+        PartitionMetadata expected = new PartitionMetadata(
+                tp, 4, 3, List.of(4, 5), List.of(4), new Endpoint("h", 1_234));
+        try (BrokerServer server = new BrokerServer("127.0.0.1", 0, request -> {
+            if (request.equals(new Messages.MetadataRequest("explode")))
+                throw new IllegalStateException(marker);
+            return Messages.Reply.success(new Messages.MetadataBody(List.of(expected)));
+        })) {
+            io.simplekafka.model.Endpoint endpoint = server.start();
+            try (Socket socket = connect(endpoint.host(), endpoint.port())) {
+                Frame failure = rawRequest(socket, Api.METADATA, 41, 0,
+                        MessageCodec.encodeRequest(new Messages.MetadataRequest("explode")));
+                assertEquals(Api.METADATA, failure.api());
+                assertEquals(41, failure.correlationId());
+                assertEquals(ErrorCode.STORAGE_ERROR, failure.error());
+                Messages.ErrorBody error = assertInstanceOf(Messages.ErrorBody.class,
+                        MessageCodec.decodeReply(failure.api(), failure.error(), failure.payload()));
+                assertFalse(error.message().contains(marker));
+                assertFalse(error.message().contains(IllegalStateException.class.getSimpleName()));
+                assertFalse(error.message().contains(IllegalStateException.class.getName()));
+                assertFalse(error.message().contains("\tat "));
+
+                Frame sameConnection = rawRequest(socket, Api.METADATA, 42, 0, METADATA_T_BODY);
+                assertEquals(ErrorCode.NONE, sameConnection.error());
+                assertEquals(new Messages.MetadataBody(List.of(expected)),
+                        MessageCodec.decodeReply(sameConnection.api(), sameConnection.error(),
+                                sameConnection.payload()));
+            }
+            try (RpcClient client = new RpcClient(endpoint, 2_000)) {
+                Messages.Reply reply = client.call(new Messages.MetadataRequest("t"));
+                assertEquals(ErrorCode.NONE, reply.error());
+                assertEquals(new Messages.MetadataBody(List.of(expected)), reply.body());
+            }
+        }
+    }
+
+    @Test
+    void isolatesExistingTopicPartitionsAndServesFetchesFromNonzeroLogStart() throws Exception {
+        try (TempDirectory temp = new TempDirectory();
+             BrokerHarness broker = BrokerHarness.single(temp.root(), 1, 0);
+             RpcClient client = new RpcClient(broker.endpoint(), 3_000)) {
+            broker.catalog().createTopic("orders", 2);
+            broker.catalog().createTopic("payments", 1);
+            List<TopicPartition> partitions = List.of(
+                    new TopicPartition("orders", 0),
+                    new TopicPartition("orders", 1),
+                    new TopicPartition("payments", 0));
+            List<RecordData> data = List.of(
+                    new RecordData(null, new byte[0], 10),
+                    new RecordData(null, new byte[0], 11),
+                    new RecordData(null, new byte[0], 12));
+            for (int index = 0; index < partitions.size(); index++) {
+                assertEquals(new AppendResult(0, 1), TestSupport.append(client, partitions.get(index),
+                        List.of(data.get(index))));
+                Messages.FetchBody fetched = TestSupport.fetch(client, partitions.get(index), 0, 10, 32);
+                assertEquals(List.of(new LogRecord(0, data.get(index))), fetched.records());
+                assertFetchMetadata(fetched, 0, 1, 1);
+            }
+
+            TopicPartition missing = new TopicPartition("orders", 2);
+            Map<String, String> unchanged = snapshotFiles(temp.root());
+            assertRpcErrorWithoutMutation(client, temp.root(), unchanged,
+                    new Messages.ProduceRequest(missing, 0, Acks.LEADER, 1_000,
+                            List.of(new RecordData(null, new byte[0], 13))),
+                    ErrorCode.UNKNOWN_TOPIC_OR_PARTITION);
+            assertRpcErrorWithoutMutation(client, temp.root(), unchanged,
+                    new Messages.FetchRequest(missing, 0, 0, 1, 32, null),
+                    ErrorCode.UNKNOWN_TOPIC_OR_PARTITION);
+            assertEquals(new AppendResult(1, 2),
+                    TestSupport.append(client, partitions.getFirst(),
+                            List.of(new RecordData(null, new byte[0], 13))));
+            assertEquals(List.of(
+                    new LogRecord(0, data.getFirst()),
+                    new LogRecord(1, new RecordData(null, new byte[0], 13))),
+                    TestSupport.fetch(client, partitions.getFirst(), 0, 10, 64).records());
+        }
+
+        try (TempDirectory temp = new TempDirectory();
+             BrokerHarness broker = BrokerHarness.single(temp.root(), 1, 0, "orders", 1);
+             RpcClient client = new RpcClient(broker.endpoint(), 5_000)) {
+            TopicPartition tp = new TopicPartition("orders", 0);
+            List<RecordData> batch = List.of(
+                    new RecordData(null, new byte[600_000], 20),
+                    new RecordData(null, new byte[600_000], 21));
+            assertEquals(new AppendResult(0, 2), TestSupport.append(client, tp, batch));
+            assertEquals(1, broker.catalog().partition(tp).deleteBefore(1));
+            assertEquals(2, broker.catalog().partition(tp).logEndOffset());
+            Map<String, String> retained = snapshotFiles(temp.root());
+            assertRpcErrorWithoutMutation(client, temp.root(), retained,
+                    new Messages.FetchRequest(tp, 0, 0, 1, 1_000_000, null),
+                    ErrorCode.OFFSET_OUT_OF_RANGE);
+
+            Messages.FetchBody atRetainedStart = TestSupport.fetch(client, tp, 1, 10, 1_000_000);
+            assertEquals(List.of(new LogRecord(1, batch.get(1))), atRetainedStart.records());
+            assertFetchMetadata(atRetainedStart, 1, 2, 2);
+        }
+    }
+
 
     @Test
     void rawTcpRequestsAndMalformedBodiesStayIsolatedToTheirConnections() throws Exception {
@@ -271,6 +511,99 @@ class Step12Test {
                     TestSupport.fetch(client, tp, 0, 10, 4_096).records());
         }
     }
+    private static List<RequestWireCase> additionalRequestWireCases() {
+        TopicPartition tp = new TopicPartition("t", 2);
+        GroupToken token = new GroupToken("组", "A", 7);
+        OffsetKey key = new OffsetKey("组", tp);
+        return List.of(
+                new RequestWireCase((short) 2,
+                        new Messages.ProduceRequest(tp, 3, Acks.ALL, 1_000,
+                                List.of(new RecordData(new byte[0], new byte[0], 9))),
+                        hex("00000001 74 00000002 00000003 ffff 00000000000003e8 " +
+                                "00000001 00000000 00000000 0000000000000009")),
+                new RequestWireCase((short) 3,
+                        new Messages.FetchRequest(tp, 3, 5, 2, 256, token),
+                        hex("00000001 74 00000002 00000003 0000000000000005 00000002 00000100 " +
+                                "01 00000003 e7bb84 00000001 41 00000007")),
+                new RequestWireCase((short) 4,
+                        new Messages.CommitOffsetRequest(key, 9, token),
+                        hex("00000003 e7bb84 00000001 74 00000002 0000000000000009 " +
+                                "01 00000003 e7bb84 00000001 41 00000007")),
+                new RequestWireCase((short) 5,
+                        new Messages.FetchOffsetRequest(key),
+                        hex("00000003 e7bb84 00000001 74 00000002")),
+                new RequestWireCase((short) 6,
+                        new Messages.JoinGroupRequest("组", "A", "t"),
+                        hex("00000003 e7bb84 00000001 41 00000001 74")),
+                new RequestWireCase((short) 7,
+                        new Messages.HeartbeatRequest(token),
+                        hex("01 00000003 e7bb84 00000001 41 00000007")),
+                new RequestWireCase((short) 8,
+                        new Messages.LeaveGroupRequest("组", "A"),
+                        hex("00000003 e7bb84 00000001 41")),
+                new RequestWireCase((short) 9,
+                        new Messages.GroupAssignmentRequest("组", "A"),
+                        hex("00000003 e7bb84 00000001 41")),
+                new RequestWireCase((short) 10,
+                        new Messages.ReplicaFetchRequest(tp, 4, 3, 5, 2, 256, true),
+                        hex("00000001 74 00000002 00000004 00000003 0000000000000005 " +
+                                "00000002 00000100 01")));
+    }
+
+    private static List<ResponseWireCase> additionalResponseWireCases() {
+        TopicPartition tp = new TopicPartition("t", 2);
+        LogRecord record = new LogRecord(5, record(null, "v", 9));
+        GroupAssignment assignment = new GroupAssignment(7, Map.of(
+                "A", List.of(tp),
+                "B", List.of()));
+        return List.of(
+                new ResponseWireCase((short) 1,
+                        new Messages.MetadataBody(List.of(new PartitionMetadata(
+                                tp, 4, 3, List.of(4, 5), List.of(4), new Endpoint("h", 1_234)))),
+                        hex("00000001 00000001 74 00000002 00000004 00000003 " +
+                                "00000002 00000004 00000005 00000001 00000004 00000001 68 000004d2")),
+                new ResponseWireCase((short) 2,
+                        new Messages.ProduceBody(new AppendResult(5, 6)),
+                        hex("0000000000000005 0000000000000006")),
+                new ResponseWireCase((short) 3,
+                        new Messages.FetchBody(List.of(record), 2, 6, 6, 3),
+                        hex("00000001 0000000000000005 ffffffff 00000001 76 0000000000000009 " +
+                                "0000000000000002 0000000000000006 0000000000000006 00000003")),
+                new ResponseWireCase((short) 6, new Messages.GroupBody(assignment),
+                        hex("00000007 00000002 00000001 41 00000001 00000001 74 00000002 " +
+                                "00000001 42 00000000")),
+                new ResponseWireCase((short) 8, new Messages.GroupBody(assignment),
+                        hex("00000007 00000002 00000001 41 00000001 00000001 74 00000002 " +
+                                "00000001 42 00000000")),
+                new ResponseWireCase((short) 9, new Messages.GroupBody(assignment),
+                        hex("00000007 00000002 00000001 41 00000001 00000001 74 00000002 " +
+                                "00000001 42 00000000")),
+                new ResponseWireCase((short) 10,
+                        new Messages.ReplicaFetchBody(List.of(record), 3, 5, 6),
+                        hex("00000001 0000000000000005 ffffffff 00000001 76 0000000000000009 " +
+                                "00000003 0000000000000005 0000000000000006")));
+    }
+
+    private static List<InvalidReplyBody> invalidReplyBodies() {
+        return List.of(
+                new InvalidReplyBody((short) 1, "negative metadata count", hex("ffffffff")),
+                new InvalidReplyBody((short) 3, "negative fetch record count", hex("ffffffff")),
+                new InvalidReplyBody((short) 6, "duplicate group member",
+                        hex("00000007 00000002 00000001 41 00000000 00000001 41 00000000")),
+                new InvalidReplyBody((short) 5, "invalid offset presence boolean", hex("02")));
+    }
+
+    private static byte[] identifierBytes(String value) {
+        byte[] encoded = value.getBytes(StandardCharsets.UTF_8);
+        return ByteBuffer.allocate(Integer.BYTES + encoded.length).order(ByteOrder.BIG_ENDIAN)
+                .putInt(encoded.length).put(encoded).array();
+    }
+
+    private static byte[] replicaFetchRequestWithInvalidRecoveryBoolean() {
+        return hex("00000001 74 00000002 00000004 00000003 0000000000000005 " +
+                "00000002 00000100 02");
+    }
+
 
     private static List<LogRecord> largeRecords(byte[] value, int firstOffset, int nextOffset) {
         List<LogRecord> records = new ArrayList<>(nextOffset - firstOffset);
@@ -296,7 +629,9 @@ class Step12Test {
                 new InvalidBody(Api.PRODUCE, "truncated value and timestamp",
                         concat(PRODUCE_PREFIX, hex("00000001 ffffffff 00000002 76"))),
                 new InvalidBody(Api.FETCH, "optional token boolean 2",
-                        concat(FETCH_PREFIX, hex("02"))));
+                        concat(FETCH_PREFIX, hex("02"))),
+                new InvalidBody((short) 10, "replica recovery boolean 2",
+                        replicaFetchRequestWithInvalidRecoveryBoolean()));
     }
 
     private static void assertFetchMetadata(Messages.FetchBody body, long start, long end, long highWatermark) {
@@ -384,5 +719,8 @@ class Step12Test {
         return HexFormat.of().parseHex(value.replace(" ", ""));
     }
 
-    private record InvalidBody(short api, String name, byte[] body) {}
+    private record RequestWireCase(short api, Messages.Request request, byte[] body) { }
+    private record ResponseWireCase(short api, Messages.Response response, byte[] body) { }
+    private record InvalidReplyBody(short api, String name, byte[] body) { }
+    private record InvalidBody(short api, String name, byte[] body) { }
 }

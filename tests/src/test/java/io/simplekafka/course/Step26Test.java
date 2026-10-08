@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.simplekafka.CourseException;
 import io.simplekafka.ErrorCode;
+import io.simplekafka.cluster.ClusterAuthority;
 import io.simplekafka.cluster.ClusterHarness;
 import io.simplekafka.cluster.RecoveryProof;
 import io.simplekafka.cluster.ReplicationSnapshot;
@@ -407,6 +408,90 @@ class Step26Test {
         }
     }
 
+
+    @Test
+    void epochChangeDuringRecoveryPreservesLocalTailAndPublishesNoProof() throws Exception {
+        TopicPartition tp = new TopicPartition("step26-epoch-race", 0);
+        try (ClusterHarness cluster = new ClusterHarness(root, new AtomicLong(0)::get)) {
+            cluster.start();
+            cluster.createTopic(tp.topic(), 1, 2);
+            List<RecordData> committed = prefix();
+            assertEquals(3, checkpoint(cluster, tp, committed));
+            PartitionLog leader = cluster.partitionLog(1, tp);
+            PartitionLog local = cluster.partitionLog(2, tp);
+            RecordData localTail = record("local-uncommitted-tail", 99);
+            local.append(List.of(localTail));
+            List<LogRecord> localBefore = local.read(0, 10, 65_536);
+            Map<String, String> diskBefore = diskImage(logDirectory(cluster, 2, tp));
+            ReplicationSnapshot authorityBefore = cluster.snapshot(tp);
+            CountDownLatch requestReceived = new CountDownLatch(1);
+            CountDownLatch releaseResponse = new CountDownLatch(1);
+
+            try (BrokerServer scriptedLeader = new BrokerServer("127.0.0.1", 0, request -> {
+                if (!(request instanceof Messages.ReplicaFetchRequest fetch))
+                    return Messages.Reply.failure(ErrorCode.INVALID_REQUEST, "expected replica fetch");
+                requestReceived.countDown();
+                try {
+                    if (!releaseResponse.await(5, TimeUnit.SECONDS))
+                        return Messages.Reply.failure(ErrorCode.REQUEST_TIMEOUT, "test did not release recovery response");
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    return Messages.Reply.failure(ErrorCode.REQUEST_TIMEOUT, "recovery response interrupted");
+                }
+                return Messages.Reply.success(new Messages.ReplicaFetchBody(
+                        leader.read(fetch.fetchOffset(), fetch.maxRecords(), fetch.maxBytes()), 0, 3, 3));
+            })) {
+                Endpoint endpoint = scriptedLeader.start();
+                try (RpcClient client = new RpcClient(endpoint, 5_000)) {
+                    ReplicaReconciler reconciler = new ReplicaReconciler(2, tp, local, client, cluster.authority());
+                    AtomicReference<Throwable> failure = new AtomicReference<>();
+                    Thread scan = new Thread(() -> {
+                        try {
+                            reconciler.reconcile(0);
+                        } catch (Throwable thrown) {
+                            failure.set(thrown);
+                        }
+                    }, "step26-epoch-change-scan");
+                    scan.setDaemon(true);
+                    scan.start();
+                    try {
+                        assertTrue(requestReceived.await(2, TimeUnit.SECONDS),
+                                "recovery must pause before the leader reply");
+                        ClusterAuthority.PartitionState state = cluster.authority().partitionState(tp);
+                        state.lock.lock();
+                        try {
+                            state.epoch = 1;
+                            state.changed.signalAll();
+                        } finally {
+                            state.lock.unlock();
+                        }
+                        releaseResponse.countDown();
+                        scan.join(3_000);
+                        assertTrue(!scan.isAlive(), "reconciliation worker must finish after the epoch change");
+                        assertTrue(failure.get() instanceof CourseException,
+                                "expected FENCED_EPOCH, got " + failure.get());
+                        assertEquals(ErrorCode.FENCED_EPOCH, ((CourseException) failure.get()).code());
+                        assertEquals(4, local.logEndOffset());
+                        assertEquals(localBefore, local.read(0, 10, 65_536));
+                        assertEquals(diskBefore, diskImage(logDirectory(cluster, 2, tp)));
+                        assertTrue(reconciler.recoveryProof().isEmpty());
+                        assertEquals(new ReplicationSnapshot(
+                                        authorityBefore.leaderId(), 1, authorityBefore.replicas(),
+                                        authorityBefore.isr(), authorityBefore.highWatermark(),
+                                        authorityBefore.perReplicaLEO()),
+                                cluster.snapshot(tp));
+                    } finally {
+                        releaseResponse.countDown();
+                        if (scan.isAlive()) {
+                            scan.interrupt();
+                            scan.join(3_000);
+                        }
+                        assertTrue(!scan.isAlive(), "reconciliation worker must not leak");
+                    }
+                }
+            }
+        }
+    }
 
     private static long checkpoint(ClusterHarness cluster, TopicPartition tp, List<RecordData> records) {
         Messages.Reply reply = produce(cluster, tp, 1, 0, Acks.LEADER, records);

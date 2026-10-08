@@ -27,6 +27,7 @@ import org.junit.jupiter.api.Test;
 import static io.simplekafka.support.TestSupport.assertCode;
 import static io.simplekafka.support.TestSupport.values;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class Step13Test {
@@ -190,6 +191,48 @@ class Step13Test {
             }
             assertEquals(List.of(), TestSupport.fetch(observer, tp, 0, 10, 4_096).records(),
                     "unknown-topic rejection must not append to an existing partition");
+
+            try (SimpleProducer producer = new SimpleProducer(new RpcClient(broker.endpoint(), 3_000),
+                    new Partitioner(), 1)) {
+                assertCode(ErrorCode.INVALID_REQUEST, () -> producer.send("orders", null, null, 0));
+                assertCode(ErrorCode.INVALID_REQUEST,
+                        () -> producer.send("orders", null, TestSupport.utf8("negative-time"), -1));
+                assertCode(ErrorCode.UNKNOWN_TOPIC_OR_PARTITION,
+                        () -> producer.send("missing", null, TestSupport.utf8("discard"), 0));
+
+                producer.send("orders", null, TestSupport.utf8("valid"), 10);
+                assertEquals(List.of(new ProduceReceipt(tp, 0, 1)), producer.flush());
+                assertEquals(List.of(new LogRecord(0, new RecordData(null, TestSupport.utf8("valid"), 10))),
+                        TestSupport.fetch(observer, tp, 0, 10, 4_096).records());
+
+                broker.catalog().createTopic("missing", 1);
+                TopicPartition created = new TopicPartition("missing", 0);
+                producer.send("missing", null, TestSupport.utf8("created"), 11);
+                assertEquals(List.of(new ProduceReceipt(created, 0, 1)), producer.flush());
+                assertEquals(List.of(new LogRecord(0, new RecordData(null, TestSupport.utf8("created"), 11))),
+                        TestSupport.fetch(observer, created, 0, 10, 4_096).records());
+            }
+        }
+    }
+
+    @Test
+    void directRpcClientCannotBeReusedAfterClosingAfterARecordOperation() throws Exception {
+        try (TempDirectory temp = new TempDirectory();
+             BrokerHarness broker = BrokerHarness.single(temp.root(), 1, 0, "orders", 1);
+             RpcClient observer = new RpcClient(broker.endpoint(), 3_000);
+             RpcClient owner = new RpcClient(broker.endpoint(), 3_000)) {
+            TopicPartition tp = new TopicPartition("orders", 0);
+            RecordData data = new RecordData(null, TestSupport.utf8("written"), 10);
+            Messages.Reply reply = owner.call(new Messages.ProduceRequest(
+                    tp, 0, Acks.LEADER, 1_000, List.of(data)));
+            assertEquals(ErrorCode.NONE, reply.error());
+            assertEquals(new io.simplekafka.model.AppendResult(0, 1),
+                    ((Messages.ProduceBody) reply.body()).result());
+            assertEquals(List.of(new LogRecord(0, data)), TestSupport.fetch(observer, tp, 0, 10, 4_096).records());
+
+            owner.close();
+            assertThrows(IllegalStateException.class,
+                    () -> owner.call(new Messages.MetadataRequest("orders")));
         }
     }
 

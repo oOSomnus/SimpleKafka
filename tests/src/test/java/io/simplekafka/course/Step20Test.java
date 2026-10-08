@@ -23,6 +23,7 @@ import org.junit.jupiter.api.Test;
 import static io.simplekafka.support.TestSupport.assertCode;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class Step20Test {
     @Test
@@ -118,6 +119,8 @@ class Step20Test {
 
                 assertEquals(ErrorCode.NONE,
                         client.call(new Messages.CommitOffsetRequest(zeroKey, 2, owner)).error());
+                assertCommitFailure(client, new Messages.CommitOffsetRequest(zeroKey, -1, owner),
+                        ErrorCode.INVALID_REQUEST, zeroKey, oneKey);
                 assertCommitFailure(client, new Messages.CommitOffsetRequest(zeroKey, 5,
                         new GroupToken("workers", "a", 2)), ErrorCode.ILLEGAL_GENERATION, zeroKey, oneKey);
                 assertCommitFailure(client, new Messages.CommitOffsetRequest(zeroKey, 5,
@@ -183,6 +186,11 @@ class Step20Test {
                 Map<TopicPartition, List<io.simplekafka.model.LogRecord>> firstRecord = first.poll(1, 4_096);
                 assertEquals(List.of(0L), firstRecord.get(zero).stream()
                         .map(record -> record.offset()).toList());
+                assertEquals(OptionalLong.empty(), fetchOffset(inspector, zeroKey),
+                        "repeated subscribe preserves the retained position without committing it");
+                first.subscribe("orders");
+                assertEquals(1, assignment(inspector, "workers", "a").generation());
+                assertEquals(OptionalLong.empty(), fetchOffset(inspector, zeroKey));
                 Map<TopicPartition, List<io.simplekafka.model.LogRecord>> p1Record = first.poll(1, 4_096);
                 assertEquals(List.of(7L), p1Record.get(one).stream()
                         .map(record -> record.offset()).toList());
@@ -191,6 +199,10 @@ class Step20Test {
                 assertEquals(OptionalLong.of(7), fetchOffset(inspector, oneKey));
 
                 second.subscribe("orders");
+                assertEquals(2, assignment(inspector, "workers", "a").generation());
+                assertCode(ErrorCode.ILLEGAL_GENERATION, first::commitSync);
+                assertEquals(OptionalLong.empty(), fetchOffset(inspector, zeroKey));
+                assertEquals(OptionalLong.of(7), fetchOffset(inspector, oneKey));
                 TestSupport.append(writer, zero, List.of(TestSupport.value("p0-1")));
                 Map<TopicPartition, List<io.simplekafka.model.LogRecord>> afterRebalance = first.poll(1, 4_096);
                 assertEquals(List.of(zero), List.copyOf(afterRebalance.keySet()),
@@ -252,6 +264,26 @@ class Step20Test {
             }
         }
     }
+    @Test
+    void groupConsumerClosesItsOwnedRpcClientAfterPollingARecord() throws Exception {
+        try (TempDirectory temp = new TempDirectory();
+             GroupBrokerFixture broker = new GroupBrokerFixture(
+                     temp.root(), 1, "orders", 1, new ManualTimeSource(1_000), 100);
+             RpcClient owner = broker.client()) {
+            TopicPartition tp = new TopicPartition("orders", 0);
+            try (RpcClient writer = broker.client()) {
+                TestSupport.append(writer, tp, List.of(TestSupport.value("owned")));
+            }
+            GroupConsumer consumer = new GroupConsumer(owner, "workers", "a");
+            consumer.subscribe("orders");
+            assertEquals(List.of(0L), consumer.poll(1, 4_096).get(tp).stream()
+                    .map(record -> record.offset()).toList());
+            consumer.close();
+            assertThrows(IllegalStateException.class,
+                    () -> owner.call(new Messages.MetadataRequest("orders")));
+        }
+    }
+
 
     private static GroupAssignment join(RpcClient client, String group, String member) {
         Messages.Reply reply = client.call(new Messages.JoinGroupRequest(group, member, "orders"));

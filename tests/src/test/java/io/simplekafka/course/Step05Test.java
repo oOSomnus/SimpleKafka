@@ -56,6 +56,19 @@ class Step05Test {
                 assertEquals(new IndexEntry(8, 0), reopened.floor(9));
                 assertEquals(new IndexEntry(10, 66), reopened.floor(11));
                 assertEquals(new IndexEntry(10, 66), reopened.floor(Long.MAX_VALUE));
+                reopened.add(11, 99);
+                assertArrayEquals(indexBytes(8, 0, 10, 66), Files.readAllBytes(indexFile));
+                reopened.add(12, 132);
+                byte[] extendedIndex = indexBytes(8, 0, 10, 66, 12, 132);
+                assertArrayEquals(extendedIndex, Files.readAllBytes(indexFile));
+                assertEquals(new IndexEntry(12, 132), reopened.floor(13));
+
+                assertCode(ErrorCode.INVALID_REQUEST, () -> reopened.add(10, 165));
+                assertArrayEquals(extendedIndex, Files.readAllBytes(indexFile));
+            }
+            try (SparseIndex reopened = new SparseIndex(indexFile, 8, 2)) {
+                assertEquals(new IndexEntry(12, 132), reopened.floor(13));
+                assertArrayEquals(indexBytes(8, 0, 10, 66, 12, 132), Files.readAllBytes(indexFile));
             }
         }
     }

@@ -55,6 +55,8 @@ class Step15Test {
                 store.commit(worker1, 7);
                 store.commit(otherTopic, 11);
                 store.commit(worker0, 1);
+                assertCode(ErrorCode.INVALID_REQUEST, () -> store.commit(null, 5));
+                assertCode(ErrorCode.INVALID_REQUEST, () -> store.fetch(null));
                 assertEquals(OptionalLong.of(1), store.fetch(worker0));
                 assertCode(ErrorCode.INVALID_REQUEST, () -> store.commit(worker0, -1));
                 assertEquals(OptionalLong.of(1), store.fetch(worker0));

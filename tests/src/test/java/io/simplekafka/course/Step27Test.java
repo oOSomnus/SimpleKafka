@@ -326,6 +326,53 @@ class Step27Test {
     }
 
     @Test
+    void closingBorrowedClientsLeavesTheSharedRouterUsableForSubsequentOperations() {
+        TopicPartition tp = new TopicPartition("shared", 0);
+        try (ClusterHarness cluster = new ClusterHarness(root, new AtomicLong(0)::get)) {
+            cluster.start();
+            cluster.createTopic(tp.topic(), 1, 1);
+            List<Endpoint> bootstrap = List.of(cluster.endpoint(1), cluster.endpoint(2), cluster.endpoint(3));
+            try (MetadataRouter router = new MetadataRouter(bootstrap,
+                    endpoint -> new RpcClient(endpoint, 1_000))) {
+                try (SimpleProducer producer = new SimpleProducer(router, new Partitioner(), 1)) {
+                    producer.send(tp.topic(), null, bytes("v0"), 10);
+                    assertEquals(List.of(new ProduceReceipt(tp, 0, 1)), producer.flush());
+                }
+                for (int brokerId : List.of(2, 3)) {
+                    assertEquals(1, cluster.replicateOnce(brokerId, tp, 10, 4_096));
+                    cluster.tracker(tp).report(brokerId, 0, cluster.partitionLog(brokerId, tp).logEndOffset());
+                }
+
+                LogRecord first = new LogRecord(0, record("v0", 10));
+                try (SimpleConsumer consumer = new SimpleConsumer(router, "shared-manual")) {
+                    consumer.assign(List.of(tp));
+                    assertEquals(List.of(first), consumer.poll(1, 4_096).get(tp));
+                }
+
+                try (GroupConsumer consumer = new GroupConsumer(router, "shared-group", "member")) {
+                    consumer.subscribe(tp.topic());
+                    assertEquals(List.of(first), consumer.poll(1, 4_096).get(tp));
+                }
+
+                try (SimpleProducer producer = new SimpleProducer(router, new Partitioner(), 1)) {
+                    producer.send(tp.topic(), null, bytes("v1"), 11);
+                    assertEquals(List.of(new ProduceReceipt(tp, 1, 2)), producer.flush());
+                }
+                for (int brokerId : List.of(2, 3)) {
+                    assertEquals(1, cluster.replicateOnce(brokerId, tp, 10, 4_096));
+                    cluster.tracker(tp).report(brokerId, 0, cluster.partitionLog(brokerId, tp).logEndOffset());
+                }
+
+                try (SimpleConsumer consumer = new SimpleConsumer(router, "shared-reopened-manual")) {
+                    consumer.assign(List.of(tp));
+                    assertEquals(List.of(first, new LogRecord(1, record("v1", 11))),
+                            consumer.poll(2, 4_096).get(tp));
+                }
+            }
+        }
+    }
+
+    @Test
     void keepsTopicRoutesIndependentAcrossFailoverAndRestartAndRoutesAllClientTypes() {
         TopicPartition routeA = new TopicPartition("route-a", 0);
         TopicPartition routeB = new TopicPartition("route-b", 0);

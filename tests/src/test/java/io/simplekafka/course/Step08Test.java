@@ -24,6 +24,7 @@ import org.junit.jupiter.api.Test;
 import static io.simplekafka.support.TestSupport.assertCode;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class Step08Test {
@@ -89,6 +90,85 @@ class Step08Test {
             }
         }
     }
+    @Test
+    void truncatesThenRetainsAcrossRestartAndContinuesAtTheReopenedEnd() throws Exception {
+        try (TempDirectory temp = new TempDirectory()) {
+            Path directory = temp.root().resolve("truncate-retain-reopen");
+            Path notes = directory.resolve("unrelated.txt");
+            Files.createDirectories(directory);
+            Files.writeString(notes, "preserve this file");
+
+            try (PartitionLog log = new PartitionLog(directory, 96, 1)) {
+                assertEquals(new AppendResult(0, 9),
+                        log.append(records(0, 9).stream().map(LogRecord::data).toList()));
+                assertEquals(1, log.mutationVersion());
+                assertEquals(List.of(0L, 3L, 6L), segmentBases(directory));
+                assertEquals(List.of(96L, 96L, 96L), segmentSizes(directory));
+                assertSegmentFileSet(directory, List.of(0L, 3L, 6L));
+                assertArrayEquals(indexBytes(0, 3), Files.readAllBytes(indexFile(directory, 0)));
+                assertArrayEquals(indexBytes(3, 3), Files.readAllBytes(indexFile(directory, 3)));
+                assertArrayEquals(indexBytes(6, 3), Files.readAllBytes(indexFile(directory, 6)));
+
+                log.truncateTo(7);
+                assertEquals(2, log.mutationVersion());
+                assertEquals(7, log.logEndOffset());
+                assertEquals(List.of(0L, 3L, 6L), segmentBases(directory));
+                assertEquals(List.of(96L, 96L, 32L), segmentSizes(directory));
+                assertSegmentFileSet(directory, List.of(0L, 3L, 6L));
+                assertArrayEquals(indexBytes(0, 3), Files.readAllBytes(indexFile(directory, 0)));
+                assertArrayEquals(indexBytes(3, 3), Files.readAllBytes(indexFile(directory, 3)));
+                assertArrayEquals(indexBytes(6, 1), Files.readAllBytes(indexFile(directory, 6)));
+
+                assertEquals(3, log.deleteBefore(4));
+                assertEquals(3, log.logStartOffset());
+                assertEquals(3, log.mutationVersion());
+                assertEquals(List.of(3L, 6L), segmentBases(directory));
+                assertEquals(List.of(96L, 32L), segmentSizes(directory));
+                assertSegmentFileSet(directory, List.of(3L, 6L));
+                assertFalse(Files.exists(logFile(directory, 0)));
+                assertFalse(Files.exists(indexFile(directory, 0)));
+                assertArrayEquals(indexBytes(3, 3), Files.readAllBytes(indexFile(directory, 3)));
+                assertArrayEquals(indexBytes(6, 1), Files.readAllBytes(indexFile(directory, 6)));
+                assertEquals(records(3, 4), log.read(3, 10, 1024));
+                assertEquals(3, log.deleteBefore(3));
+                assertEquals(3, log.mutationVersion());
+                assertEquals(List.of(3L, 6L), segmentBases(directory));
+                assertSegmentFileSet(directory, List.of(3L, 6L));
+                assertArrayEquals(indexBytes(3, 3), Files.readAllBytes(indexFile(directory, 3)));
+                assertArrayEquals(indexBytes(6, 1), Files.readAllBytes(indexFile(directory, 6)));
+
+                assertEquals(6, log.deleteBefore(6));
+                assertEquals(6, log.logStartOffset());
+                assertEquals(4, log.mutationVersion());
+                assertEquals(List.of(6L), segmentBases(directory));
+                assertEquals(List.of(32L), segmentSizes(directory));
+                assertSegmentFileSet(directory, List.of(6L));
+                assertFalse(Files.exists(logFile(directory, 0)));
+                assertFalse(Files.exists(indexFile(directory, 0)));
+                assertFalse(Files.exists(logFile(directory, 3)));
+                assertFalse(Files.exists(indexFile(directory, 3)));
+                assertArrayEquals(indexBytes(6, 1), Files.readAllBytes(indexFile(directory, 6)));
+                assertEquals("preserve this file", Files.readString(notes));
+            }
+
+            try (PartitionLog reopened = new PartitionLog(directory, 96, 1)) {
+                assertEquals(6, reopened.logStartOffset());
+                assertEquals(7, reopened.logEndOffset());
+                assertEquals(records(6, 1), reopened.read(6, 10, 1024));
+                assertCode(ErrorCode.OFFSET_OUT_OF_RANGE, () -> reopened.read(5, 1, 32));
+                assertEquals(new AppendResult(7, 8),
+                        reopened.append(List.of(new RecordData(null, new byte[0], 7))));
+                assertEquals(1, reopened.mutationVersion());
+                assertEquals(List.of(6L), segmentBases(directory));
+                assertEquals(List.of(64L), segmentSizes(directory));
+                assertSegmentFileSet(directory, List.of(6L));
+                assertArrayEquals(indexBytes(6, 2), Files.readAllBytes(indexFile(directory, 6)));
+                assertEquals(records(6, 2), reopened.read(6, 10, 64));
+                assertEquals("preserve this file", Files.readString(notes));
+            }
+        }
+    }
+
 
     @Test
     void fixedSeedOperationsMatchAnIndependentSegmentAndOffsetModel() throws Exception {
@@ -198,8 +278,10 @@ class Step08Test {
         assertEquals(end, log.logEndOffset());
         assertEquals(bases, segmentBases(directory));
         assertEquals(sizes, segmentSizes(directory));
+        assertSegmentFileSet(directory, bases);
         List<LogRecord> expected = records(start, Math.toIntExact(end - start));
         assertEquals(expected, log.read(start, expected.size() + 1, Math.max(32, (expected.size() + 1) * 32)));
+        assertEquals(List.of(), log.read(end, 10, 8192));
         for (int index = 0; index < bases.size(); index++) {
             long base = bases.get(index);
             int count = counts.get(index);
@@ -210,6 +292,7 @@ class Step08Test {
         }
         assertEquals(expected, diskRecords(directory));
     }
+
 
     private static List<LogRecord> records(long firstOffset, int count) {
         return LongStream.range(firstOffset, firstOffset + count)
@@ -227,6 +310,23 @@ class Step08Test {
     private static byte[] indexBytes(long offset0, long position0, long offset1, long position1) {
         return ByteBuffer.allocate(Long.BYTES * 4).order(ByteOrder.BIG_ENDIAN)
                 .putLong(offset0).putLong(position0).putLong(offset1).putLong(position1).array();
+    }
+
+    private static void assertSegmentFileSet(Path directory, List<Long> expectedBases) throws IOException {
+        List<String> expectedFiles = new ArrayList<>();
+        for (long base : expectedBases) {
+            expectedFiles.add(logFile(directory, base).getFileName().toString());
+            expectedFiles.add(indexFile(directory, base).getFileName().toString());
+        }
+        expectedFiles.sort(String::compareTo);
+        List<String> actualFiles;
+        try (Stream<Path> paths = Files.list(directory)) {
+            actualFiles = paths.filter(Files::isRegularFile)
+                    .map(path -> path.getFileName().toString())
+                    .filter(name -> name.matches("[0-9]{20}\\.(log|index)"))
+                    .sorted().toList();
+        }
+        assertEquals(expectedFiles, actualFiles);
     }
 
     private static List<Path> segmentFiles(Path directory) throws IOException {
@@ -287,6 +387,7 @@ class Step08Test {
                 Math.max(32, Math.toIntExact((model.end() - model.start() + 1) * 32))),
                 message + " retained reads");
         assertEquals(model.allRecords(), diskRecords(directory), message + " independent disk records");
+        assertSegmentFileSet(directory, model.bases());
         assertEquals(model.bases(), segmentBases(directory), message + " segment boundaries");
         assertEquals(model.segmentSizes(), segmentSizes(directory), message + " segment byte counts");
         for (ModelSegment segment : model.segments.values()) {
@@ -295,6 +396,7 @@ class Step08Test {
             assertArrayEquals(indexBytes(segment.base, segment.records.size()),
                     Files.readAllBytes(indexFile(directory, segment.base)), message + " index " + segment.base);
         }
+        assertEquals(List.of(), actual.read(model.end(), 10, 8192), message + " empty read at LEO");
 
         assertCode(ErrorCode.OFFSET_OUT_OF_RANGE, () -> actual.read(model.start() - 1, 1, 32));
         assertCode(ErrorCode.OFFSET_OUT_OF_RANGE, () -> actual.read(model.end() + 1, 1, 32));

@@ -3,7 +3,10 @@ package io.simplekafka.course;
 import io.simplekafka.CourseException;
 import io.simplekafka.ErrorCode;
 import io.simplekafka.broker.PartitionCatalog;
+import io.simplekafka.model.AppendResult;
+import io.simplekafka.model.LogRecord;
 import io.simplekafka.model.PartitionMetadata;
+import io.simplekafka.model.RecordData;
 import io.simplekafka.model.TopicPartition;
 import io.simplekafka.support.BrokerHarness;
 import io.simplekafka.support.TempDirectory;
@@ -34,6 +37,13 @@ class Step10Test {
             try (BrokerHarness broker = BrokerHarness.single(temp.root(), 7, 0)) {
                 PartitionCatalog catalog = broker.catalog();
                 catalog.createTopic("orders", 2);
+                TopicPartition orders0 = new TopicPartition("orders", 0);
+                RecordData firstValue = new RecordData(null, "v0".getBytes(StandardCharsets.UTF_8), 0);
+                RecordData secondValue = new RecordData(null, "v1".getBytes(StandardCharsets.UTF_8), 1);
+                List<LogRecord> expectedOrders = List.of(new LogRecord(0, firstValue), new LogRecord(1, secondValue));
+                assertEquals(new AppendResult(0, 2),
+                        catalog.partition(orders0).append(List.of(firstValue, secondValue)));
+                assertEquals(expectedOrders, catalog.partition(orders0).read(0, 10, 1_024));
                 List<PartitionMetadata> firstOrdersMetadata = catalog.metadata("orders");
                 Map<String, String> ordersBeforeRepeat = treeSnapshot(temp.root().resolve("orders"));
 
@@ -41,6 +51,7 @@ class Step10Test {
                 assertEquals(firstOrdersMetadata, catalog.metadata("orders"));
                 assertEquals(ordersBeforeRepeat, treeSnapshot(temp.root().resolve("orders")),
                         "repeating the same partition count is idempotent on disk");
+                assertEquals(expectedOrders, catalog.partition(orders0).read(0, 10, 1_024));
 
                 Path strayPartition = temp.root().resolve("orders").resolve("9");
                 Files.createDirectories(strayPartition);
@@ -58,6 +69,7 @@ class Step10Test {
                         "a conflicting count leaves original metadata unchanged");
                 assertEquals(ordersBeforeDifferentCount, treeSnapshot(temp.root().resolve("orders")),
                         "a conflicting count leaves the original topic directory unchanged");
+                assertEquals(expectedOrders, catalog.partition(orders0).read(0, 10, 1_024));
 
                 catalog.createTopic("payments", 3);
                 List<PartitionMetadata> payments = catalog.metadata("payments");
@@ -79,6 +91,17 @@ class Step10Test {
                 assertCode(ErrorCode.UNKNOWN_TOPIC_OR_PARTITION, () -> catalog.metadata("payments"));
 
                 catalog.createTopic("orders", 2);
+                TopicPartition orders0 = new TopicPartition("orders", 0);
+                RecordData firstValue = new RecordData(null, "v0".getBytes(StandardCharsets.UTF_8), 0);
+                RecordData secondValue = new RecordData(null, "v1".getBytes(StandardCharsets.UTF_8), 1);
+                RecordData thirdValue = new RecordData(null, "v2".getBytes(StandardCharsets.UTF_8), 2);
+                List<LogRecord> expectedOrders = List.of(
+                        new LogRecord(0, firstValue), new LogRecord(1, secondValue), new LogRecord(2, thirdValue));
+                assertEquals(expectedOrders.subList(0, 2),
+                        catalog.partition(orders0).read(0, 10, 1_024));
+                assertCode(ErrorCode.INVALID_REQUEST, () -> catalog.createTopic("orders", 3));
+                assertEquals(new AppendResult(2, 3), catalog.partition(orders0).append(List.of(thirdValue)));
+                assertEquals(expectedOrders, catalog.partition(orders0).read(0, 10, 1_024));
                 catalog.createTopic("payments", 3);
                 List<PartitionMetadata> ordersAfterRestart = catalog.metadata("orders");
                 List<PartitionMetadata> paymentsAfterRestart = catalog.metadata("payments");

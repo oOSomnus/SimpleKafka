@@ -21,6 +21,7 @@ import java.util.function.Function;
 import org.junit.jupiter.api.Test;
 import static io.simplekafka.support.TestSupport.assertCode;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class Step14Test {
     @Test
@@ -121,6 +122,86 @@ class Step14Test {
                 assertEquals(3, consumer.position(zero));
                 assertEquals(0, consumer.position(one));
             }
+        }
+    }
+    @Test
+    void accumulatesByteBudgetAcrossTopicsAndKeepsAssignmentAtomicOnFailures() throws Exception {
+        try (TempDirectory temp = new TempDirectory();
+             BrokerHarness broker = BrokerHarness.single(temp.root(), 1, 0);
+             RpcClient client = new RpcClient(broker.endpoint(), 3_000);
+             SimpleConsumer consumer = new SimpleConsumer(client, "cross-topic-budget")) {
+            broker.catalog().createTopic("alpha", 2);
+            broker.catalog().createTopic("zeta", 1);
+            TopicPartition alpha0 = new TopicPartition("alpha", 0);
+            TopicPartition alpha1 = new TopicPartition("alpha", 1);
+            TopicPartition zeta0 = new TopicPartition("zeta", 0);
+            RecordData alphaZero = new RecordData(null, new byte[0], 10);
+            RecordData alphaOne = new RecordData(null, new byte[0], 11);
+            RecordData zetaZero = new RecordData(null, new byte[0], 12);
+            broker.catalog().partition(alpha0).append(List.of(alphaZero));
+            broker.catalog().partition(alpha1).append(List.of(alphaOne));
+            broker.catalog().partition(zeta0).append(List.of(zetaZero));
+
+            consumer.assign(List.of(zeta0, alpha1, alpha0, alpha1));
+            Map<TopicPartition, List<LogRecord>> completeBudget = consumer.poll(3, 96);
+            assertEquals(List.of(alpha0, alpha1, zeta0), List.copyOf(completeBudget.keySet()));
+            assertEquals(List.of(new LogRecord(0, alphaZero)), completeBudget.get(alpha0));
+            assertEquals(List.of(new LogRecord(0, alphaOne)), completeBudget.get(alpha1));
+            assertEquals(List.of(new LogRecord(0, zetaZero)), completeBudget.get(zeta0));
+            assertEquals(1, consumer.position(alpha0));
+            assertEquals(1, consumer.position(alpha1));
+            assertEquals(1, consumer.position(zeta0));
+
+            consumer.seek(alpha0, 0);
+            consumer.seek(alpha1, 0);
+            consumer.seek(zeta0, 0);
+            Map<TopicPartition, List<LogRecord>> shortBudget = consumer.poll(3, 95);
+            assertEquals(List.of(alpha0, alpha1), List.copyOf(shortBudget.keySet()));
+            assertEquals(List.of(new LogRecord(0, alphaZero)), shortBudget.get(alpha0));
+            assertEquals(List.of(new LogRecord(0, alphaOne)), shortBudget.get(alpha1));
+            assertEquals(1, consumer.position(alpha0));
+            assertEquals(1, consumer.position(alpha1));
+            assertEquals(0, consumer.position(zeta0));
+
+            Map<TopicPartition, List<LogRecord>> finalRecord = consumer.poll(1, 32);
+            assertEquals(List.of(zeta0), List.copyOf(finalRecord.keySet()));
+            assertEquals(List.of(new LogRecord(0, zetaZero)), finalRecord.get(zeta0));
+            assertEquals(1, consumer.position(zeta0));
+
+            assertCode(ErrorCode.INVALID_REQUEST,
+                    () -> consumer.assign(java.util.Arrays.asList(alpha0, null)));
+            assertEquals(1, consumer.position(alpha0));
+            assertEquals(1, consumer.position(alpha1));
+            assertEquals(1, consumer.position(zeta0));
+            RecordData alphaOneNext = new RecordData(null, new byte[0], 4);
+            assertEquals(new io.simplekafka.model.AppendResult(1, 2),
+                    broker.catalog().partition(alpha1).append(List.of(alphaOneNext)));
+            Map<TopicPartition, List<LogRecord>> noReplay = consumer.poll(1, 32);
+            assertEquals(List.of(alpha1), List.copyOf(noReplay.keySet()));
+            assertEquals(List.of(new LogRecord(1, alphaOneNext)), noReplay.get(alpha1));
+
+            TopicPartition missing = new TopicPartition("alpha", 5);
+            consumer.assign(List.of(missing));
+            assertEquals(0, consumer.position(missing));
+            assertCode(ErrorCode.UNKNOWN_TOPIC_OR_PARTITION, () -> consumer.poll(1, 32));
+            assertEquals(0, consumer.position(missing));
+        }
+    }
+
+    @Test
+    void manualConsumerClosesItsOwnedRpcClientAfterReadingARecord() throws Exception {
+        try (TempDirectory temp = new TempDirectory();
+             BrokerHarness broker = BrokerHarness.single(temp.root(), 1, 0, "orders", 1);
+             RpcClient owner = new RpcClient(broker.endpoint(), 3_000)) {
+            TopicPartition tp = new TopicPartition("orders", 0);
+            RecordData data = new RecordData(null, new byte[0], 10);
+            broker.catalog().partition(tp).append(List.of(data));
+            SimpleConsumer consumer = new SimpleConsumer(owner, "owned-client");
+            consumer.assign(List.of(tp));
+            assertEquals(List.of(new LogRecord(0, data)), consumer.poll(1, 32).get(tp));
+            consumer.close();
+            assertThrows(IllegalStateException.class,
+                    () -> owner.call(new Messages.MetadataRequest("orders")));
         }
     }
 

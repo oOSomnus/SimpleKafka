@@ -13,6 +13,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Arrays;
 import java.util.HexFormat;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import static io.simplekafka.support.TestSupport.assertCode;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -38,6 +39,39 @@ class Step11Test {
         assertArrayEquals(hex("0000000a00010001000000010000"), emptyOutput.toByteArray());
         assertFrameEquals(empty, FrameCodec.read(new ByteArrayInputStream(emptyOutput.toByteArray())));
     }
+    @Test
+    void preservesIndependentWireIdsForEveryApiAndMetadataError() throws Exception {
+        List<HeaderWireCase> cases = List.of(
+                new HeaderWireCase((short) 2, ErrorCode.NONE, "0000000a00010002000000290000"),
+                new HeaderWireCase((short) 3, ErrorCode.NONE, "0000000a00010003000000290000"),
+                new HeaderWireCase((short) 4, ErrorCode.NONE, "0000000a00010004000000290000"),
+                new HeaderWireCase((short) 5, ErrorCode.NONE, "0000000a00010005000000290000"),
+                new HeaderWireCase((short) 6, ErrorCode.NONE, "0000000a00010006000000290000"),
+                new HeaderWireCase((short) 7, ErrorCode.NONE, "0000000a00010007000000290000"),
+                new HeaderWireCase((short) 8, ErrorCode.NONE, "0000000a00010008000000290000"),
+                new HeaderWireCase((short) 9, ErrorCode.NONE, "0000000a00010009000000290000"),
+                new HeaderWireCase((short) 10, ErrorCode.NONE, "0000000a0001000a000000290000"),
+                new HeaderWireCase((short) 1, ErrorCode.INVALID_REQUEST, "0000000a00010001000000290001"),
+                new HeaderWireCase((short) 1, ErrorCode.UNKNOWN_TOPIC_OR_PARTITION, "0000000a00010001000000290002"),
+                new HeaderWireCase((short) 1, ErrorCode.OFFSET_OUT_OF_RANGE, "0000000a00010001000000290003"),
+                new HeaderWireCase((short) 1, ErrorCode.CORRUPT_RECORD, "0000000a00010001000000290004"),
+                new HeaderWireCase((short) 1, ErrorCode.NOT_LEADER, "0000000a00010001000000290005"),
+                new HeaderWireCase((short) 1, ErrorCode.FENCED_EPOCH, "0000000a00010001000000290006"),
+                new HeaderWireCase((short) 1, ErrorCode.NOT_ENOUGH_REPLICAS, "0000000a00010001000000290007"),
+                new HeaderWireCase((short) 1, ErrorCode.ILLEGAL_GENERATION, "0000000a00010001000000290009"),
+                new HeaderWireCase((short) 1, ErrorCode.UNKNOWN_MEMBER, "0000000a0001000100000029000a"),
+                new HeaderWireCase((short) 1, ErrorCode.NOT_ASSIGNED, "0000000a0001000100000029000b"),
+                new HeaderWireCase((short) 1, ErrorCode.NO_ELIGIBLE_LEADER, "0000000a0001000100000029000c"),
+                new HeaderWireCase((short) 1, ErrorCode.STORAGE_ERROR, "0000000a0001000100000029000d"));
+
+        for (HeaderWireCase wireCase : cases) {
+            Frame expected = new Frame(wireCase.api(), 41, wireCase.error(), new byte[0]);
+            byte[] golden = hex(wireCase.goldenHex());
+            assertArrayEquals(golden, encode(expected), wireCase.toString());
+            assertFrameEquals(expected, FrameCodec.read(new ByteArrayInputStream(golden)));
+        }
+    }
+
 
     @Test
     void acceptsMaximumFrameAndRejectsOneByteOverBeforeWritingAnything() throws Exception {
@@ -165,4 +199,5 @@ class Step11Test {
         assertEquals(expected.error(), actual.error());
         assertArrayEquals(expected.payload(), actual.payload());
     }
+    private record HeaderWireCase(short api, ErrorCode error, String goldenHex) { }
 }

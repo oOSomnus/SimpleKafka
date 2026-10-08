@@ -102,6 +102,36 @@ class Step21Test {
     @TempDir Path root;
 
     @Test
+    void rejectsFollowerPollingWhenOfflineOrAlreadyLeaderWithoutChangingDisk() throws Exception {
+        TopicPartition tp = new TopicPartition("step21-entry", 0);
+        Path directory = root.resolve("entry-state");
+        Messages.ReplicaFetchBody reply = new Messages.ReplicaFetchBody(
+                List.of(new LogRecord(0, record("reply", 0))), 0, 0, 1);
+        try (BrokerServer server = new BrokerServer("127.0.0.1", 0,
+                     request -> Messages.Reply.success(reply));
+             PartitionLog log = new PartitionLog(directory, 96, 1)) {
+            var endpoint = server.start();
+            Path logFile = segmentFile(directory);
+            Path indexFile = directory.resolve("00000000000000000000.index");
+            byte[] logBefore = Files.readAllBytes(logFile);
+            byte[] indexBefore = Files.readAllBytes(indexFile);
+            try (RpcClient client = new RpcClient(endpoint, 2_000)) {
+                for (ReplicaState state : List.of(
+                        new ReplicaState(2, 0, false, false),
+                        new ReplicaState(2, 0, true, true))) {
+                    CourseException failure = assertThrows(CourseException.class,
+                            () -> new FollowerReplicator(2, tp, log, client, state).pollOnce(10, 4_096));
+                    assertEquals(ErrorCode.NOT_LEADER, failure.code());
+                    assertEquals(0, log.logEndOffset());
+                    assertEquals(List.of(), log.read(0, 10, 4_096));
+                    assertArrayEquals(logBefore, Files.readAllBytes(logFile));
+                    assertArrayEquals(indexBefore, Files.readAllBytes(indexFile));
+                }
+            }
+        }
+    }
+
+    @Test
     void replicaFetchIncludesUncommittedLeaderTailAndReturnsEmptyAtLeo() {
         TopicPartition tp = new TopicPartition("step21-fetch", 0);
         try (ClusterHarness cluster = new ClusterHarness(root)) {

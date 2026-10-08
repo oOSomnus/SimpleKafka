@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 import io.simplekafka.CourseException;
 import io.simplekafka.ErrorCode;
@@ -24,6 +25,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -98,6 +102,86 @@ class Step25Test {
         }
     }
 
+
+    @Test
+    void electionFencesAnOutstandingAllAckWithoutRollingBackAppend() throws Exception {
+        TopicPartition tp = new TopicPartition("step25-pending-all", 0);
+        try (ClusterHarness cluster = new ClusterHarness(root, new AtomicLong(0)::get)) {
+            cluster.start();
+            cluster.createTopic(tp.topic(), 1, 2);
+            CountDownLatch started = new CountDownLatch(1);
+            CountDownLatch completed = new CountDownLatch(1);
+            AtomicReference<Messages.Reply> reply = new AtomicReference<>();
+            AtomicReference<Throwable> failure = new AtomicReference<>();
+            Thread producer = new Thread(() -> {
+                started.countDown();
+                try (RpcClient client = new RpcClient(cluster.endpoint(1), 10_000)) {
+                    reply.set(client.call(new Messages.ProduceRequest(
+                            tp, 0, Acks.ALL, 5_000, List.of(record("pending", 10)))));
+                } catch (Throwable thrown) {
+                    failure.set(thrown);
+                } finally {
+                    completed.countDown();
+                }
+            }, "step25-pending-all-producer");
+            producer.setDaemon(true);
+            producer.start();
+
+            try {
+                assertTrue(started.await(2, TimeUnit.SECONDS));
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                while (producer.isAlive() && cluster.partitionLog(1, tp).logEndOffset() < 1
+                        && System.nanoTime() < deadline) Thread.onSpinWait();
+                assertEquals(1, cluster.partitionLog(1, tp).logEndOffset(),
+                        "the append must reach disk before election");
+                assertEquals(0, cluster.tracker(tp).highWatermark());
+                ClusterAuthority.PartitionState state = cluster.authority().partitionState(tp);
+                awaitConditionWaiter(state, producer);
+
+                state.lock.lock();
+                try {
+                    cluster.authority().setBrokerOnline(1, false);
+                    var elected = cluster.elect(tp);
+                    assertEquals(2, elected.leaderId());
+                    assertEquals(1, elected.epoch());
+                    assertEquals(List.of(2), elected.isr());
+                    assertEquals(0, cluster.tracker(tp).highWatermark());
+                } finally {
+                    state.lock.unlock();
+                }
+
+                assertTrue(completed.await(3, TimeUnit.SECONDS));
+                producer.join(2_000);
+                assertFalse(producer.isAlive());
+                assertNull(failure.get());
+                assertEquals(ErrorCode.FENCED_EPOCH, reply.get().error());
+                assertEquals(List.of(new LogRecord(0, record("pending", 10))),
+                        cluster.partitionLog(1, tp).read(0, 10, 4_096));
+                assertEquals(List.of(), cluster.partitionLog(2, tp).read(0, 10, 4_096));
+            } finally {
+                if (producer.isAlive()) {
+                    producer.interrupt();
+                    producer.join(3_000);
+                }
+                assertFalse(producer.isAlive(), "the outstanding ALL producer must terminate");
+            }
+        }
+    }
+
+    private static void awaitConditionWaiter(ClusterAuthority.PartitionState state, Thread producer) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        boolean waiting = false;
+        while (!waiting && producer.isAlive() && System.nanoTime() < deadline) {
+            state.lock.lock();
+            try {
+                waiting = state.lock.hasWaiters(state.changed);
+            } finally {
+                state.lock.unlock();
+            }
+            if (!waiting) Thread.onSpinWait();
+        }
+        assertTrue(waiting, "the actual ALL request must be waiting for high-watermark progress");
+    }
 
     @Test
     void electionRequiresTheCommittedPrefixBeforeChoosingTheLowestIsr() {

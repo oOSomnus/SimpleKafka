@@ -71,6 +71,8 @@ class Step09Test {
         assertCode(ErrorCode.INVALID_REQUEST, () -> partitioner.choose(null, 0));
         assertCode(ErrorCode.INVALID_REQUEST,
                 () -> partitioner.choose(new byte[]{1}, -1));
+        assertEquals(0, partitioner.choose(null, 3));
+        assertEquals(1, partitioner.choose(null, 3));
     }
 
     private static long crc32c(byte[] bytes) {

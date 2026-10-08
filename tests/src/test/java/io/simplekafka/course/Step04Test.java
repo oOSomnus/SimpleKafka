@@ -62,6 +62,28 @@ class Step04Test {
             }
         }
     }
+    @Test
+    void truncatesAnIncompleteFirstRecordAtZeroAndNonzeroBases() throws Exception {
+        try (TempDirectory temp = new TempDirectory()) {
+            for (long baseOffset : new long[]{0, 5}) {
+                byte[] first = record(baseOffset, "a");
+                for (int prefixLength : new int[]{1, 3, 4, 17, 32}) {
+                    Path file = temp.root().resolve("first-" + baseOffset + "-" + prefixLength + ".log");
+                    Files.write(file, Arrays.copyOf(first, prefixLength));
+
+                    try (SegmentLog recovered = SegmentLog.open(file, baseOffset)) {
+                        assertEquals(baseOffset, recovered.recover());
+                        assertEquals(baseOffset, recovered.logEndOffset());
+                        assertEquals(0, recovered.sizeBytes());
+                        assertArrayEquals(new byte[0], Files.readAllBytes(file));
+                        assertEquals(new AppendResult(baseOffset, baseOffset + 1), recovered.append(List.of(value("a"))));
+                    }
+                    assertArrayEquals(first, Files.readAllBytes(file));
+                }
+            }
+        }
+    }
+
 
     @Test
     void recoversEmptyAndNonzeroBaseFilesIdempotentlyAndRejectsWrongBase() throws Exception {
@@ -121,6 +143,15 @@ class Step04Test {
                 assertCorruptFileUnchanged(temp.root().resolve("length-" + index + ".log"),
                         replaceRecord(valid, index, badLength), 0, "illegal length at record " + index);
             }
+            byte[] oversizedDeclaredLength = RecordBytes.withLengthPrefix(record(2, "c"), 1_048_577);
+            byte[] validPrefix = records(0, 1);
+            assertCorruptFileUnchanged(temp.root().resolve("oversized-declared-length-complete-prefix.log"),
+                    RecordBytes.concat(validPrefix, oversizedDeclaredLength), 0,
+                    "oversized declared record with its fixed header and body prefix");
+            assertCorruptFileUnchanged(temp.root().resolve("oversized-declared-length-header-only.log"),
+                    RecordBytes.concat(validPrefix, Arrays.copyOf(oversizedDeclaredLength, 4)), 0,
+                    "oversized declared record with only its length header");
+
 
             assertCorruptFileUnchanged(temp.root().resolve("gap-first.log"),
                     records(1, 2, 3), 0, "gapped offset at the first record");

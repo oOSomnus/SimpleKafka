@@ -2,6 +2,7 @@ package io.simplekafka.course;
 
 import io.simplekafka.ErrorCode;
 import io.simplekafka.model.GroupAssignment;
+import io.simplekafka.model.OffsetKey;
 import io.simplekafka.model.TopicPartition;
 import io.simplekafka.protocol.Messages;
 import io.simplekafka.support.GroupBrokerFixture;
@@ -9,6 +10,7 @@ import io.simplekafka.support.ManualTimeSource;
 import io.simplekafka.support.TempDirectory;
 import io.simplekafka.transport.RpcClient;
 import java.util.List;
+import java.util.OptionalLong;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -87,14 +89,28 @@ class Step18Test {
             assertEquals(5, afterLeaveA.generation());
             assertEquals(Map.of("b", all), afterLeaveA.assignments());
             assertEquals(afterLeaveA, assignment(client, "workers", "b"));
+            OffsetKey retainedOffset = new OffsetKey("workers", all.getFirst());
+            Messages.Reply commit = client.call(new Messages.CommitOffsetRequest(retainedOffset, 3, null));
+            assertEquals(ErrorCode.NONE, commit.error());
+
 
             GroupAssignment empty = leave(client, "workers", "b");
             assertEquals(6, empty.generation());
             assertEquals(Map.of(), empty.assignments());
+            Messages.Reply emptyOffset = client.call(new Messages.FetchOffsetRequest(retainedOffset));
+            assertEquals(ErrorCode.NONE, emptyOffset.error());
+            assertEquals(OptionalLong.of(3),
+                    assertInstanceOf(Messages.OffsetBody.class, emptyOffset.body()).nextOffset());
+            assertEquals(ErrorCode.INVALID_REQUEST,
+                    client.call(new Messages.JoinGroupRequest("workers", "cross-topic", "another-topic")).error());
             GroupAssignment afterEmptyRejoin = join(client, "workers", "c", "orders");
             assertEquals(7, afterEmptyRejoin.generation(),
                     "an empty group retains its generation for the next member");
             assertEquals(Map.of("c", all), afterEmptyRejoin.assignments());
+            Messages.Reply rejoinedOffset = client.call(new Messages.FetchOffsetRequest(retainedOffset));
+            assertEquals(ErrorCode.NONE, rejoinedOffset.error());
+            assertEquals(OptionalLong.of(3),
+                    assertInstanceOf(Messages.OffsetBody.class, rejoinedOffset.body()).nextOffset());
         }
     }
 
