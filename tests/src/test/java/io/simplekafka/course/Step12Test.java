@@ -5,6 +5,7 @@ import io.simplekafka.model.Acks;
 import io.simplekafka.model.AppendResult;
 import io.simplekafka.model.LogRecord;
 import io.simplekafka.model.PartitionMetadata;
+import io.simplekafka.model.RecordData;
 import io.simplekafka.model.TopicPartition;
 import io.simplekafka.protocol.Api;
 import io.simplekafka.protocol.Frame;
@@ -12,9 +13,10 @@ import io.simplekafka.protocol.FrameCodec;
 import io.simplekafka.protocol.MessageCodec;
 import io.simplekafka.protocol.Messages;
 import io.simplekafka.support.BrokerHarness;
+import io.simplekafka.support.RecordBytes;
 import io.simplekafka.support.TempDirectory;
 import io.simplekafka.support.TestSupport;
-import io.simplekafka.support.RecordBytes;
+import io.simplekafka.transport.BrokerServer;
 import io.simplekafka.transport.RpcClient;
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -23,6 +25,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -143,6 +146,43 @@ class Step12Test {
     }
 
     @Test
+    void boundsLargeFetchRepliesAndPreservesRecordContinuation() throws Exception {
+        try (TempDirectory temp = new TempDirectory();
+             BrokerHarness broker = BrokerHarness.single(temp.root(), 1, 0, "orders", 1);
+             RpcClient client = new RpcClient(broker.endpoint(), 3_000)) {
+            TopicPartition tp = new TopicPartition("orders", 0);
+            byte[] value = new byte[1_048_548];
+            for (int offset = 0; offset < 9; offset++) {
+                assertEquals(new AppendResult(offset, offset + 1),
+                        TestSupport.append(client, tp, List.of(new RecordData(null, value, offset))));
+            }
+
+            Messages.FetchBody firstPage = TestSupport.fetch(client, tp, 0, 9, 10_000_000);
+            assertEquals(largeRecords(value, 0, 7), firstPage.records());
+            assertFetchMetadata(firstPage, 0, 9, 9);
+            assertEquals(7_340_036, MessageCodec.encodeReply(firstPage).length);
+
+            Messages.FetchBody secondPage = TestSupport.fetch(client, tp, 7, 9, Integer.MAX_VALUE);
+            assertEquals(largeRecords(value, 7, 9), secondPage.records());
+            assertFetchMetadata(secondPage, 0, 9, 9);
+        }
+    }
+
+    @Test
+    void returnsAnErrorReplyWhenAHandlerProducesAnOversizedFetchBody() {
+        byte[] value = new byte[1_048_548];
+        List<LogRecord> records = largeRecords(value, 0, 9);
+        try (BrokerServer server = new BrokerServer("127.0.0.1", 0, request ->
+                Messages.Reply.success(new Messages.FetchBody(records, 0, 9, 9, 0)));
+             RpcClient client = new RpcClient(server.start(), 3_000)) {
+            Messages.Reply reply = client.call(new Messages.FetchRequest(
+                    new TopicPartition("orders", 0), 0, 0, 1, 1, null));
+            assertEquals(ErrorCode.INVALID_REQUEST, reply.error());
+            assertEquals(new Messages.ErrorBody("broker reply could not be encoded"), reply.body());
+        }
+    }
+
+    @Test
     void messageCodecMatchesIndependentManualRequestBodiesInBothDirections() {
         Messages.MetadataRequest metadata = new Messages.MetadataRequest("t");
         assertArrayEquals(METADATA_T_BODY, MessageCodec.encodeRequest(metadata));
@@ -230,6 +270,13 @@ class Step12Test {
                     new LogRecord(1, record(null, "after-raw-errors", 8))),
                     TestSupport.fetch(client, tp, 0, 10, 4_096).records());
         }
+    }
+
+    private static List<LogRecord> largeRecords(byte[] value, int firstOffset, int nextOffset) {
+        List<LogRecord> records = new ArrayList<>(nextOffset - firstOffset);
+        for (int offset = firstOffset; offset < nextOffset; offset++)
+            records.add(new LogRecord(offset, new RecordData(null, value, offset)));
+        return List.copyOf(records);
     }
 
     private static List<InvalidBody> invalidBodies() {

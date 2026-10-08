@@ -14,6 +14,7 @@ import io.simplekafka.cluster.ReplicationSnapshot;
 import io.simplekafka.model.LogRecord;
 import io.simplekafka.model.RecordData;
 import io.simplekafka.model.TopicPartition;
+import io.simplekafka.protocol.MessageCodec;
 import io.simplekafka.protocol.Messages;
 import io.simplekafka.replication.FollowerReplicator;
 import io.simplekafka.storage.PartitionLog;
@@ -35,7 +36,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-
 
 class Step21Test {
     @Test
@@ -144,6 +144,43 @@ class Step21Test {
             }
             assertEquals(authorityBefore, cluster.snapshot(tp),
                     "serving replica fetches must not report follower progress or advance authority state");
+        }
+    }
+
+    @Test
+    void boundsLargeReplicaFetchesAndCopiesTheCompleteSuffix() throws Exception {
+        TopicPartition tp = new TopicPartition("step21-large-fetch", 0);
+        byte[] value = new byte[1_048_548];
+        List<RecordData> records = new ArrayList<>(9);
+        for (int offset = 0; offset < 9; offset++)
+            records.add(new RecordData(null, value, offset));
+
+        try (ClusterHarness cluster = new ClusterHarness(root)) {
+            cluster.start();
+            cluster.createTopic(tp.topic(), 1, 2);
+            var append = cluster.partitionLog(1, tp).append(records);
+            assertEquals(0, append.firstOffset());
+            assertEquals(9, append.nextOffset());
+            assertEquals(0, cluster.snapshot(tp).highWatermark());
+
+            try (RpcClient client = cluster.client(1, 3_000)) {
+                Messages.Reply reply = client.call(
+                        new Messages.ReplicaFetchRequest(tp, 2, 0, 0, 9, 10_000_000, false));
+                assertEquals(ErrorCode.NONE, reply.error());
+                Messages.ReplicaFetchBody body =
+                        assertInstanceOf(Messages.ReplicaFetchBody.class, reply.body());
+                assertEquals(largeRecords(value, 0, 7), body.records());
+                assertEquals(0, body.epoch());
+                assertEquals(0, body.highWatermark());
+                assertEquals(9, body.leaderLogEndOffset());
+                assertEquals(7_340_028, MessageCodec.encodeReply(body).length);
+            }
+
+            assertEquals(7, cluster.replicateOnce(2, tp, 9, 10_000_000));
+            assertEquals(2, cluster.replicateOnce(2, tp, 9, Integer.MAX_VALUE));
+            assertEquals(9, cluster.partitionLog(2, tp).logEndOffset());
+            assertEquals(largeRecords(value, 0, 9),
+                    cluster.partitionLog(2, tp).read(0, 10, 10_000_000));
         }
     }
 
@@ -362,6 +399,13 @@ class Step21Test {
 
     private static Path segmentFile(Path partitionDirectory) {
         return partitionDirectory.resolve("00000000000000000000.log");
+    }
+
+    private static List<LogRecord> largeRecords(byte[] value, int firstOffset, int nextOffset) {
+        List<LogRecord> records = new ArrayList<>(nextOffset - firstOffset);
+        for (int offset = firstOffset; offset < nextOffset; offset++)
+            records.add(new LogRecord(offset, new RecordData(null, value, offset)));
+        return List.copyOf(records);
     }
 
     private static RecordData record(String value, long timestamp) {

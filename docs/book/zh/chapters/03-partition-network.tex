@@ -40,7 +40,7 @@
 \lessonsection{11}{TCP帧协议}
 \goals{把 TCP 字节流切分成有界、可匹配的请求/响应帧。}{理解 readFully、EOF 位置、长度前缀和 correlation id。}
 \providededit{Messages 请求/成功响应 body、API id 常量、Frame 值类型与 ErrorCode wire id 已提供；body codec 不由本步重写。}{\pathcode{exercises/src/main/java/io/simplekafka/protocol/FrameCodec.java}：\method{write(OutputStream,Frame)}、\method{read(InputStream)}。}
-\lessoncontract{第一字节前 EOF 返回 null；帧中途 EOF 为 \method{INVALID_REQUEST}。拒绝负数或超限长度后再分配。未知 version/api 和非零请求 error 由服务端验证拒绝。多帧连续流逐帧读取不丢边界；输出一帧不能发半帧。Stream I/O 按接口抛 IOException，协议格式错误使用课程错误码。}
+\lessoncontract{第一字节前 EOF 返回 null；帧中途 EOF 为 \method{INVALID_REQUEST}。拒绝负数或超限长度后再分配。未知 version/api 和非零请求 error 由服务端验证拒绝。多帧连续流逐帧读取不丢边界；输出一帧不能发半帧。Stream I/O 按接口抛 IOException，协议格式错误使用课程错误码。响应 body 超出单帧上限时，服务端返回有界的 \method{INVALID_REQUEST} error Reply，而不是静默关闭连接。}
 \lessonhints{帧的最短长度由固定 header 各字段宽度之和决定，不由示例 payload 推测。}{把“干净的流结束”与“帧内提前结束”分开处理。}{用每次只返回一个 byte 的 InputStream 喂入连续两帧，并用只有超长前缀的输入检查是否立即拒绝。}
 \expected{把两帧流拆成单字节块，连续两次 read 得到原 correlation id 和 payload；下一次 read 才得到 null。只有 4-byte 超长 length、没有 body 的输入会立即失败而不是等待或分配数 MB。对应 \method{Step11Test}。}
 \pitfalls{使用一次 read 期待填满 header 会受到 TCP 分段影响；先分配后检查 length 会被恶意请求放大内存。真实 Kafka 使用自己的请求头、API 版本协商与消息格式，本课程 version=1/API 列表是教学协议，不可接入官方客户端。}

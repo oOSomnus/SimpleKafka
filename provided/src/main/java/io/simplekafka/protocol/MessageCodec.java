@@ -27,6 +27,10 @@ public final class MessageCodec {
     private static final int MAX_FRAME_LENGTH = 8_388_608;
     private static final int FRAME_HEADER_LENGTH = 10;
     private static final int MAX_PAYLOAD_LENGTH = MAX_FRAME_LENGTH - FRAME_HEADER_LENGTH;
+    public static final int MAX_FETCH_BYTE_BUDGET =
+            MAX_PAYLOAD_LENGTH - Integer.BYTES - (3 * Long.BYTES + Integer.BYTES);
+    public static final int MAX_REPLICA_FETCH_BYTE_BUDGET =
+            MAX_PAYLOAD_LENGTH - Integer.BYTES - (2 * Long.BYTES + Integer.BYTES);
     private static final int MAX_RECORD_LENGTH = 1_048_576;
     private static final int RECORD_FIXED_LENGTH = 28;
     private static final int MAX_IDENTIFIER_BYTES = 255;
@@ -83,6 +87,20 @@ public final class MessageCodec {
     public static Messages.Request decodeRequest(short api, ErrorCode frameError, byte[] payload) {
         if (frameError != ErrorCode.NONE) throw invalid("request frame error must be NONE");
         return decodeRequest(api, payload);
+    }
+
+    /** Caps only fetch requests whose disk-byte budget could encode beyond one response frame. */
+    public static Messages.Request capFetchBudget(Messages.Request request) {
+        if (request instanceof Messages.FetchRequest fetch
+                && fetch.maxBytes() > MAX_FETCH_BYTE_BUDGET)
+            return new Messages.FetchRequest(fetch.tp(), fetch.epoch(), fetch.offset(), fetch.maxRecords(),
+                    MAX_FETCH_BYTE_BUDGET, fetch.token());
+        if (request instanceof Messages.ReplicaFetchRequest fetch
+                && fetch.maxBytes() > MAX_REPLICA_FETCH_BYTE_BUDGET)
+            return new Messages.ReplicaFetchRequest(fetch.tp(), fetch.brokerId(), fetch.epoch(),
+                    fetch.fetchOffset(), fetch.maxRecords(), MAX_REPLICA_FETCH_BYTE_BUDGET,
+                    fetch.recoveryRead());
+        return request;
     }
 
     public static byte[] encodeReply(Messages.Response response) {

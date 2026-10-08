@@ -89,7 +89,7 @@ public final class BrokerServer implements AutoCloseable {
                     if (requestFrame.error() != ErrorCode.NONE) throw new CourseException(ErrorCode.INVALID_REQUEST, "request error field must be zero");
                     Api.requireKnown(requestFrame.api());
                     Messages.Request request = MessageCodec.decodeRequest(requestFrame.api(), requestFrame.payload());
-                    reply = handler.apply(request);
+                    reply = handler.apply(MessageCodec.capFetchBudget(request));
                 } catch (CourseException exception) {
                     reply = Messages.Reply.failure(exception.code(), exception.getMessage() == null ? exception.code().name() : exception.getMessage());
                 } catch (ExerciseNotImplementedException exception) {
@@ -97,8 +97,7 @@ public final class BrokerServer implements AutoCloseable {
                 } catch (RuntimeException exception) {
                     reply = Messages.Reply.failure(ErrorCode.STORAGE_ERROR, "broker request failed");
                 }
-                Frame response = new Frame(requestFrame.api(), requestFrame.correlationId(), reply.error(),
-                        MessageCodec.encodeReply(reply.body()));
+                Frame response = encodeResponse(requestFrame, reply);
                 FrameCodec.write(socket.getOutputStream(), response);
                 socket.getOutputStream().flush();
             }
@@ -108,6 +107,21 @@ public final class BrokerServer implements AutoCloseable {
             connections.remove(socket);
         }
     }
+
+    private static Frame encodeResponse(Frame requestFrame, Messages.Reply reply) {
+        byte[] payload;
+        ErrorCode error = reply.error();
+        try {
+            payload = MessageCodec.encodeReply(reply.body());
+        } catch (CourseException exception) {
+            Messages.Reply fallback =
+                    Messages.Reply.failure(ErrorCode.INVALID_REQUEST, "broker reply could not be encoded");
+            error = fallback.error();
+            payload = MessageCodec.encodeReply(fallback.body());
+        }
+        return new Frame(requestFrame.api(), requestFrame.correlationId(), error, payload);
+    }
+
     @Override public void close() {
         if (!closed.compareAndSet(false, true)) return;
         try { if (server != null) server.close(); } catch (IOException ignored) { }
