@@ -30,18 +30,28 @@ public final class SparseIndex implements AutoCloseable {
 
     public SparseIndex(Path path, long baseOffset, int intervalRecords) {
         if (path == null || baseOffset < 0 || intervalRecords <= 0)
-            throw new CourseException(ErrorCode.INVALID_REQUEST, "invalid sparse index configuration");
+            throw new CourseException(
+                    ErrorCode.INVALID_REQUEST, "invalid sparse index configuration");
         this.path = path;
         this.baseOffset = baseOffset;
         this.intervalRecords = intervalRecords;
         try {
             Path parent = path.getParent();
             if (parent != null) Files.createDirectories(parent);
-            channel = FileChannel.open(path, StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE);
+            channel =
+                    FileChannel.open(
+                            path,
+                            StandardOpenOption.CREATE,
+                            StandardOpenOption.READ,
+                            StandardOpenOption.WRITE);
             loadIfValid();
         } catch (IOException exception) {
             if (channel != null) {
-                try { channel.close(); } catch (IOException closeFailure) { exception.addSuppressed(closeFailure); }
+                try {
+                    channel.close();
+                } catch (IOException closeFailure) {
+                    exception.addSuppressed(closeFailure);
+                }
             }
             throw storageError("open sparse index", exception);
         }
@@ -50,12 +60,18 @@ public final class SparseIndex implements AutoCloseable {
     public synchronized void add(long offset, long position) {
         ensureOpen();
         if (offset < baseOffset || position < 0)
-            throw new CourseException(ErrorCode.INVALID_REQUEST, "index offset and position must be nonnegative and in range");
+            throw new CourseException(
+                    ErrorCode.INVALID_REQUEST,
+                    "index offset and position must be nonnegative and in range");
         if (lastObservedOffset < 0) {
             if (offset != baseOffset || position != 0)
-                throw new CourseException(ErrorCode.INVALID_REQUEST, "the first sparse index observation must be the segment start");
+                throw new CourseException(
+                        ErrorCode.INVALID_REQUEST,
+                        "the first sparse index observation must be the segment start");
         } else if (offset <= lastObservedOffset || position <= lastObservedPosition) {
-            throw new CourseException(ErrorCode.INVALID_REQUEST, "sparse index entries must increase by offset and position");
+            throw new CourseException(
+                    ErrorCode.INVALID_REQUEST,
+                    "sparse index entries must increase by offset and position");
         }
         lastObservedOffset = offset;
         lastObservedPosition = position;
@@ -75,13 +91,17 @@ public final class SparseIndex implements AutoCloseable {
     public synchronized IndexEntry floor(long offset) {
         ensureOpen();
         Map.Entry<Long, Long> entry = entries.floorEntry(offset);
-        return entry == null ? new IndexEntry(baseOffset, 0) : new IndexEntry(entry.getKey(), entry.getValue());
+        return entry == null
+                ? new IndexEntry(baseOffset, 0)
+                : new IndexEntry(entry.getKey(), entry.getValue());
     }
 
     public synchronized void rebuild(Path logFile, long requestedBaseOffset) {
         ensureOpen();
         if (logFile == null || requestedBaseOffset != baseOffset)
-            throw new CourseException(ErrorCode.INVALID_REQUEST, "sparse index rebuild base does not match its segment");
+            throw new CourseException(
+                    ErrorCode.INVALID_REQUEST,
+                    "sparse index rebuild base does not match its segment");
         clearEntries();
         try (FileChannel log = FileChannel.open(logFile, StandardOpenOption.READ)) {
             long fileSize = log.size();
@@ -90,13 +110,18 @@ public final class SparseIndex implements AutoCloseable {
             while (position < fileSize) {
                 RecordAt found = readRecordAt(log, position, fileSize);
                 if (found.record().offset() != expectedOffset)
-                    throw new CourseException(ErrorCode.CORRUPT_RECORD, "segment offsets are not contiguous while rebuilding its index");
+                    throw new CourseException(
+                            ErrorCode.CORRUPT_RECORD,
+                            "segment offsets are not contiguous while rebuilding its index");
                 add(expectedOffset, position);
                 position += found.bytes();
                 try {
                     expectedOffset = Math.addExact(expectedOffset, 1L);
                 } catch (ArithmeticException exception) {
-                    throw new CourseException(ErrorCode.CORRUPT_RECORD, "segment offset overflow while rebuilding its index", exception);
+                    throw new CourseException(
+                            ErrorCode.CORRUPT_RECORD,
+                            "segment offset overflow while rebuilding its index",
+                            exception);
                 }
             }
         } catch (IOException exception) {
@@ -117,10 +142,12 @@ public final class SparseIndex implements AutoCloseable {
                 long offset = entry.getLong();
                 long bytePosition = entry.getLong();
                 boolean first = entries.isEmpty();
-                if (offset < baseOffset || bytePosition < 0
+                if (offset < baseOffset
+                        || bytePosition < 0
                         || (first && (offset != baseOffset || bytePosition != 0))
-                        || (!first && (offset - previousOffset != intervalRecords
-                        || bytePosition <= previousPosition))) {
+                        || (!first
+                                && (offset - previousOffset != intervalRecords
+                                        || bytePosition <= previousPosition))) {
                     valid = false;
                     break;
                 }
@@ -139,20 +166,27 @@ public final class SparseIndex implements AutoCloseable {
         }
     }
 
-    void reset() { clearEntries(); }
+    void reset() {
+        clearEntries();
+    }
 
-    private RecordAt readRecordAt(FileChannel log, long position, long fileSize) throws IOException {
+    private RecordAt readRecordAt(FileChannel log, long position, long fileSize)
+            throws IOException {
         if (fileSize - position < Integer.BYTES)
-            throw new CourseException(ErrorCode.CORRUPT_RECORD, "segment ends in an incomplete index-rebuild header");
+            throw new CourseException(
+                    ErrorCode.CORRUPT_RECORD, "segment ends in an incomplete index-rebuild header");
         ByteBuffer lengthBuffer = ByteBuffer.allocate(Integer.BYTES).order(ByteOrder.BIG_ENDIAN);
         ChannelIO.readFully(log, lengthBuffer, position);
         lengthBuffer.flip();
         int length = lengthBuffer.getInt();
         if (length < RecordCodec.MIN_LENGTH || length > RecordCodec.MAX_LENGTH)
-            throw new CourseException(ErrorCode.CORRUPT_RECORD, "segment has an invalid record length during index rebuild");
+            throw new CourseException(
+                    ErrorCode.CORRUPT_RECORD,
+                    "segment has an invalid record length during index rebuild");
         int bytes = Integer.BYTES + length;
         if (fileSize - position < bytes)
-            throw new CourseException(ErrorCode.CORRUPT_RECORD, "segment ends in an incomplete index-rebuild body");
+            throw new CourseException(
+                    ErrorCode.CORRUPT_RECORD, "segment ends in an incomplete index-rebuild body");
         ByteBuffer encoded = ByteBuffer.allocate(bytes).order(ByteOrder.BIG_ENDIAN);
         encoded.putInt(length);
         ChannelIO.readFully(log, encoded, position + Integer.BYTES);
@@ -172,8 +206,13 @@ public final class SparseIndex implements AutoCloseable {
         lastObservedPosition = -1;
     }
 
-    Path path() { return path; }
-    long baseOffset() { return baseOffset; }
+    Path path() {
+        return path;
+    }
+
+    long baseOffset() {
+        return baseOffset;
+    }
 
     private void ensureOpen() {
         if (closed) throw new CourseException(ErrorCode.STORAGE_ERROR, "sparse index is closed");
@@ -183,7 +222,8 @@ public final class SparseIndex implements AutoCloseable {
         return new CourseException(ErrorCode.STORAGE_ERROR, "failed to " + action, cause);
     }
 
-    @Override public synchronized void close() {
+    @Override
+    public synchronized void close() {
         if (closed) return;
         closed = true;
         try {
@@ -193,5 +233,5 @@ public final class SparseIndex implements AutoCloseable {
         }
     }
 
-    private record RecordAt(LogRecord record, int bytes) { }
+    private record RecordAt(LogRecord record, int bytes) {}
 }

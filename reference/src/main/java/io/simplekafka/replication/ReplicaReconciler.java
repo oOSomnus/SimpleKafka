@@ -12,6 +12,7 @@ import io.simplekafka.model.TopicPartition;
 import io.simplekafka.protocol.Messages;
 import io.simplekafka.storage.PartitionLog;
 import io.simplekafka.transport.RpcClient;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -29,9 +30,14 @@ public final class ReplicaReconciler {
     private final RpcClient client;
     private final ClusterAuthority authority;
 
-    public ReplicaReconciler(int brokerId, TopicPartition tp, PartitionLog log,
-                             RpcClient client, ClusterAuthority authority) {
-        if (brokerId < 0) throw new CourseException(ErrorCode.INVALID_REQUEST, "broker id must be nonnegative");
+    public ReplicaReconciler(
+            int brokerId,
+            TopicPartition tp,
+            PartitionLog log,
+            RpcClient client,
+            ClusterAuthority authority) {
+        if (brokerId < 0)
+            throw new CourseException(ErrorCode.INVALID_REQUEST, "broker id must be nonnegative");
         this.brokerId = brokerId;
         this.tp = Objects.requireNonNull(tp);
         this.log = Objects.requireNonNull(log);
@@ -50,14 +56,21 @@ public final class ReplicaReconciler {
         long localMutationVersion = log.mutationVersion();
         state.lock.lock();
         try {
-            if (expectedEpoch != state.epoch) throw new CourseException(ErrorCode.FENCED_EPOCH, "reconciliation epoch is stale");
-            if (brokerId == state.leaderId) throw new CourseException(ErrorCode.INVALID_REQUEST, "leader cannot reconcile against itself");
-            if (!state.assigned(brokerId)) throw new CourseException(ErrorCode.INVALID_REQUEST, "broker is not an assigned replica");
+            if (expectedEpoch != state.epoch)
+                throw new CourseException(ErrorCode.FENCED_EPOCH, "reconciliation epoch is stale");
+            if (brokerId == state.leaderId)
+                throw new CourseException(
+                        ErrorCode.INVALID_REQUEST, "leader cannot reconcile against itself");
+            if (!state.assigned(brokerId))
+                throw new CourseException(
+                        ErrorCode.INVALID_REQUEST, "broker is not an assigned replica");
             leaderId = state.leaderId;
             capturedEpoch = state.epoch;
             capturedHw = state.highWatermark;
             Long leo = state.reportedLEO.get(leaderId);
-            if (leo == null) throw new CourseException(ErrorCode.CORRUPT_RECORD, "leader progress is unavailable");
+            if (leo == null)
+                throw new CourseException(
+                        ErrorCode.CORRUPT_RECORD, "leader progress is unavailable");
             capturedLeaderLeo = leo;
         } finally {
             state.lock.unlock();
@@ -67,7 +80,9 @@ public final class ReplicaReconciler {
         long localStart = log.logStartOffset();
         long localLeo = log.logEndOffset();
         if (localStart != 0)
-            throw new CourseException(ErrorCode.CORRUPT_RECORD, "full-prefix reconciliation requires log start offset 0");
+            throw new CourseException(
+                    ErrorCode.CORRUPT_RECORD,
+                    "full-prefix reconciliation requires log start offset 0");
         List<LogRecord> localRecords = readPrefix(localLeo);
         long mismatch = firstMismatch(localRecords, leaderRecords, localLeo, capturedLeaderLeo);
         boolean truncate = mismatch >= 0 || localLeo > capturedLeaderLeo;
@@ -76,17 +91,28 @@ public final class ReplicaReconciler {
         state.lock.lock();
         try {
             if (state.epoch != capturedEpoch || state.leaderId != leaderId)
-                throw new CourseException(ErrorCode.FENCED_EPOCH, "leader changed during reconciliation");
+                throw new CourseException(
+                        ErrorCode.FENCED_EPOCH, "leader changed during reconciliation");
             synchronized (log) {
-                if (log.logEndOffset() != localLeo || log.logStartOffset() != localStart
+                if (log.logEndOffset() != localLeo
+                        || log.logStartOffset() != localStart
                         || log.mutationVersion() != localMutationVersion)
-                    throw new CourseException(ErrorCode.REQUEST_TIMEOUT, "local log changed during reconciliation");
+                    throw new CourseException(
+                            ErrorCode.REQUEST_TIMEOUT, "local log changed during reconciliation");
                 if (state.highWatermark > capturedLeaderLeo)
-                    throw new CourseException(ErrorCode.CORRUPT_RECORD, "captured leader prefix no longer contains the committed high watermark");
+                    throw new CourseException(
+                            ErrorCode.CORRUPT_RECORD,
+                            "captured leader prefix no longer contains the committed high watermark");
                 if (mismatch >= 0 && mismatch < capturedHw)
-                    throw new CourseException(ErrorCode.CORRUPT_RECORD, "replica diverges inside the captured committed prefix at offset " + mismatch);
+                    throw new CourseException(
+                            ErrorCode.CORRUPT_RECORD,
+                            "replica diverges inside the captured committed prefix at offset "
+                                    + mismatch);
                 if (truncate && divergence < state.highWatermark)
-                    throw new CourseException(ErrorCode.CORRUPT_RECORD, "replica diverges inside the current committed prefix at offset " + divergence);
+                    throw new CourseException(
+                            ErrorCode.CORRUPT_RECORD,
+                            "replica diverges inside the current committed prefix at offset "
+                                    + divergence);
 
                 if (truncate && divergence < localLeo) log.truncateTo(divergence);
                 long appendFrom = truncate ? divergence : localLeo;
@@ -98,9 +124,19 @@ public final class ReplicaReconciler {
                 }
                 long repairedLeo = log.logEndOffset();
                 if (repairedLeo != capturedLeaderLeo)
-                    throw new CourseException(ErrorCode.CORRUPT_RECORD, "reconciled LEO does not match captured leader LEO");
-                RecoveryProof proof = new RecoveryProof(brokerId, tp, capturedEpoch, capturedLeaderLeo,
-                        repairedLeo, capturedHw, log, log.mutationVersion());
+                    throw new CourseException(
+                            ErrorCode.CORRUPT_RECORD,
+                            "reconciled LEO does not match captured leader LEO");
+                RecoveryProof proof =
+                        new RecoveryProof(
+                                brokerId,
+                                tp,
+                                capturedEpoch,
+                                capturedLeaderLeo,
+                                repairedLeo,
+                                capturedHw,
+                                log,
+                                log.mutationVersion());
                 RecoveryProofRegistry.record(authority, proof);
                 return repairedLeo;
             }
@@ -114,30 +150,47 @@ public final class ReplicaReconciler {
         long offset = 0;
         while (offset < leaderLeo) {
             checkEpoch(epoch);
-            Messages.Reply reply = client.call(new Messages.ReplicaFetchRequest(tp, brokerId, epoch,
-                    offset, FETCH_RECORDS, FETCH_BYTES, true));
+            Messages.Reply reply =
+                    client.call(
+                            new Messages.ReplicaFetchRequest(
+                                    tp, brokerId, epoch, offset, FETCH_RECORDS, FETCH_BYTES, true));
             if (reply.error() != ErrorCode.NONE) {
-                String message = reply.body() instanceof Messages.ErrorBody error ? error.message() : reply.error().name();
+                String message =
+                        reply.body() instanceof Messages.ErrorBody error
+                                ? error.message()
+                                : reply.error().name();
                 throw new CourseException(reply.error(), message);
             }
             if (!(reply.body() instanceof Messages.ReplicaFetchBody body))
-                throw new CourseException(ErrorCode.INVALID_REQUEST, "recovery fetch returned an unexpected response");
-            if (body.epoch() != epoch) throw new CourseException(ErrorCode.FENCED_EPOCH, "recovery response has a stale epoch");
+                throw new CourseException(
+                        ErrorCode.INVALID_REQUEST,
+                        "recovery fetch returned an unexpected response");
+            if (body.epoch() != epoch)
+                throw new CourseException(
+                        ErrorCode.FENCED_EPOCH, "recovery response has a stale epoch");
             if (body.leaderLogEndOffset() < leaderLeo)
-                throw new CourseException(ErrorCode.CORRUPT_RECORD, "leader LEO moved behind the captured prefix");
+                throw new CourseException(
+                        ErrorCode.CORRUPT_RECORD, "leader LEO moved behind the captured prefix");
             List<LogRecord> batch = body.records();
-            if (batch.isEmpty()) throw new CourseException(ErrorCode.CORRUPT_RECORD, "leader returned an empty recovery batch before captured LEO");
+            if (batch.isEmpty())
+                throw new CourseException(
+                        ErrorCode.CORRUPT_RECORD,
+                        "leader returned an empty recovery batch before captured LEO");
             for (LogRecord record : batch) {
                 if (offset >= leaderLeo) break;
                 if (record.offset() != offset)
-                    throw new CourseException(ErrorCode.CORRUPT_RECORD, "recovery response is not a contiguous captured prefix");
+                    throw new CourseException(
+                            ErrorCode.CORRUPT_RECORD,
+                            "recovery response is not a contiguous captured prefix");
                 records.add(record);
                 offset++;
             }
             checkEpoch(epoch);
         }
         if (records.size() != leaderLeo)
-            throw new CourseException(ErrorCode.CORRUPT_RECORD, "recovery scan did not cover the complete leader prefix");
+            throw new CourseException(
+                    ErrorCode.CORRUPT_RECORD,
+                    "recovery scan did not cover the complete leader prefix");
         return records;
     }
 
@@ -146,22 +199,25 @@ public final class ReplicaReconciler {
         state.lock.lock();
         try {
             if (state.epoch != expectedEpoch)
-                throw new CourseException(ErrorCode.FENCED_EPOCH, "leader epoch changed during recovery scan");
+                throw new CourseException(
+                        ErrorCode.FENCED_EPOCH, "leader epoch changed during recovery scan");
         } finally {
             state.lock.unlock();
         }
     }
-
 
     private List<LogRecord> readPrefix(long leo) {
         List<LogRecord> records = new ArrayList<>();
         long offset = 0;
         while (offset < leo) {
             List<LogRecord> batch = log.read(offset, FETCH_RECORDS, FETCH_BYTES);
-            if (batch.isEmpty()) throw new CourseException(ErrorCode.CORRUPT_RECORD, "local log ended before its LEO");
+            if (batch.isEmpty())
+                throw new CourseException(
+                        ErrorCode.CORRUPT_RECORD, "local log ended before its LEO");
             for (LogRecord record : batch) {
                 if (record.offset() != offset || record.offset() >= leo)
-                    throw new CourseException(ErrorCode.CORRUPT_RECORD, "local log is not a contiguous prefix");
+                    throw new CourseException(
+                            ErrorCode.CORRUPT_RECORD, "local log is not a contiguous prefix");
                 records.add(record);
                 offset++;
             }
@@ -169,11 +225,13 @@ public final class ReplicaReconciler {
         return records;
     }
 
-    private static long firstMismatch(List<LogRecord> local, List<LogRecord> leader,
-                                     long localLeo, long leaderLeo) {
+    private static long firstMismatch(
+            List<LogRecord> local, List<LogRecord> leader, long localLeo, long leaderLeo) {
         long common = Math.min(localLeo, leaderLeo);
         for (long offset = 0; offset < common; offset++) {
-            if (!sameRecord(local.get(Math.toIntExact(offset)), leader.get(Math.toIntExact(offset)))) return offset;
+            if (!sameRecord(
+                    local.get(Math.toIntExact(offset)), leader.get(Math.toIntExact(offset))))
+                return offset;
         }
         return -1;
     }
@@ -182,7 +240,9 @@ public final class ReplicaReconciler {
         if (left.offset() != right.offset()) return false;
         RecordData a = left.data();
         RecordData b = right.data();
-        return a.timestamp() == b.timestamp() && Arrays.equals(a.key(), b.key()) && Arrays.equals(a.value(), b.value());
+        return a.timestamp() == b.timestamp()
+                && Arrays.equals(a.key(), b.key())
+                && Arrays.equals(a.value(), b.value());
     }
 
     /** The proof includes the exact leader LEO captured by the latest successful reconciliation. */

@@ -2,6 +2,7 @@ package io.simplekafka.cli;
 
 import io.simplekafka.model.Endpoint;
 import io.simplekafka.support.BrokerHarness;
+
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
@@ -14,22 +15,31 @@ public final class SingleBrokerMain {
     public static void main(String[] args) throws InterruptedException {
         for (String arg : args) {
             if (arg.equals("--help")) {
-                System.out.println("Usage: SingleBrokerMain [--data-dir PATH] [--broker-id N] [--port N] [--topic NAME] [--partitions N]");
+                System.out.println(
+                        "Usage: SingleBrokerMain [--data-dir PATH] [--broker-id N] [--port N] [--topic NAME] [--partitions N]");
                 return;
             }
         }
         Options options = Options.parse(args);
-        try (BrokerHarness harness = BrokerHarness.single(options.dataDirectory(), options.brokerId(),
-                options.port(), options.topic(), options.partitions())) {
+        try (BrokerHarness harness =
+                BrokerHarness.single(
+                        options.dataDirectory(),
+                        options.brokerId(),
+                        options.port(),
+                        options.topic(),
+                        options.partitions())) {
             Endpoint endpoint = harness.endpoint();
             CountDownLatch stopped = new CountDownLatch(1);
-            Thread hook = new Thread(() -> {
-                try {
-                    harness.close();
-                } finally {
-                    stopped.countDown();
-                }
-            }, "simple-kafka-shutdown");
+            Thread hook =
+                    new Thread(
+                            () -> {
+                                try {
+                                    harness.close();
+                                } finally {
+                                    stopped.countDown();
+                                }
+                            },
+                            "simple-kafka-shutdown");
             Runtime.getRuntime().addShutdownHook(hook);
             System.out.printf("LISTEN host=%s port=%d%n", endpoint.host(), endpoint.port());
             System.out.flush();
@@ -41,7 +51,8 @@ public final class SingleBrokerMain {
         }
     }
 
-    private record Options(Path dataDirectory, int brokerId, int port, String topic, int partitions) {
+    private record Options(
+            Path dataDirectory, int brokerId, int port, String topic, int partitions) {
         private static Options parse(String[] args) {
             Map<String, String> values = new HashMap<>();
             for (int i = 0; i < args.length; i++) {
@@ -57,18 +68,25 @@ public final class SingleBrokerMain {
             String topic = values.getOrDefault("--topic", "demo");
             int partitions = integer(values.getOrDefault("--partitions", "1"), "partitions");
             for (String option : values.keySet()) {
-                if (!option.equals("--data-dir") && !option.equals("--broker-id") && !option.equals("--port")
-                        && !option.equals("--topic") && !option.equals("--partitions"))
+                if (!option.equals("--data-dir")
+                        && !option.equals("--broker-id")
+                        && !option.equals("--port")
+                        && !option.equals("--topic")
+                        && !option.equals("--partitions"))
                     throw new IllegalArgumentException("unknown option: " + option);
             }
             if (brokerId < 0 || port < 0 || port > 65535 || partitions <= 0)
-                throw new IllegalArgumentException("broker id, port, or partition count is out of range");
+                throw new IllegalArgumentException(
+                        "broker id, port, or partition count is out of range");
             return new Options(directory, brokerId, port, topic, partitions);
         }
 
         private static int integer(String value, String name) {
-            try { return Integer.parseInt(value); }
-            catch (NumberFormatException exception) { throw new IllegalArgumentException("invalid " + name + ": " + value, exception); }
+            try {
+                return Integer.parseInt(value);
+            } catch (NumberFormatException exception) {
+                throw new IllegalArgumentException("invalid " + name + ": " + value, exception);
+            }
         }
     }
 }

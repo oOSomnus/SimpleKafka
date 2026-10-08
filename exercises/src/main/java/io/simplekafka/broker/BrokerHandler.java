@@ -5,6 +5,7 @@ import io.simplekafka.cluster.ClusterAuthority;
 import io.simplekafka.group.GroupCoordinator;
 import io.simplekafka.group.OffsetStore;
 import io.simplekafka.protocol.Messages;
+
 import java.util.Objects;
 
 /** Request dispatch shared by single and replicated brokers. */
@@ -14,8 +15,11 @@ public final class BrokerHandler {
     private final GroupCoordinator groups;
     private final OffsetStore offsets;
 
-    public BrokerHandler(PartitionCatalog catalog, ClusterAuthority authority,
-                         GroupCoordinator groups, OffsetStore offsets) {
+    public BrokerHandler(
+            PartitionCatalog catalog,
+            ClusterAuthority authority,
+            GroupCoordinator groups,
+            OffsetStore offsets) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.authority = authority;
         this.groups = groups;

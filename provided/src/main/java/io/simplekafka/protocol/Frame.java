@@ -1,6 +1,7 @@
 package io.simplekafka.protocol;
 
 import io.simplekafka.ErrorCode;
+
 import java.util.Objects;
 
 /** Frame payload ownership transfers to the frame at construction. */

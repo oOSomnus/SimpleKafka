@@ -22,6 +22,7 @@ import io.simplekafka.support.SystemTimeSource;
 import io.simplekafka.support.TimeSource;
 import io.simplekafka.transport.BrokerServer;
 import io.simplekafka.transport.RpcClient;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -54,7 +55,9 @@ public final class ClusterHarness implements AutoCloseable {
     private boolean started;
     private boolean closed;
 
-    public ClusterHarness(Path root) { this(root, SystemTimeSource.INSTANCE); }
+    public ClusterHarness(Path root) {
+        this(root, SystemTimeSource.INSTANCE);
+    }
 
     public ClusterHarness(Path root, TimeSource clock) {
         this.root = Objects.requireNonNull(root, "root").toAbsolutePath().normalize();
@@ -64,7 +67,8 @@ public final class ClusterHarness implements AutoCloseable {
             Files.createDirectories(this.root);
             this.offsets = new OffsetStore(this.root.resolve("group-offsets"));
         } catch (IOException exception) {
-            throw new CourseException(ErrorCode.STORAGE_ERROR, "cannot create cluster harness root", exception);
+            throw new CourseException(
+                    ErrorCode.STORAGE_ERROR, "cannot create cluster harness root", exception);
         }
     }
 
@@ -75,34 +79,51 @@ public final class ClusterHarness implements AutoCloseable {
         try {
             for (int brokerId : BROKER_IDS) {
                 AtomicReference<BrokerHandler> handler = new AtomicReference<>();
-                BrokerServer server = new BrokerServer("127.0.0.1", 0, request -> {
-                    BrokerHandler current = handler.get();
-                    return current == null
-                            ? io.simplekafka.protocol.Messages.Reply.failure(ErrorCode.STORAGE_ERROR, "broker initialization is incomplete")
-                            : current.handle(request);
-                });
+                BrokerServer server =
+                        new BrokerServer(
+                                "127.0.0.1",
+                                0,
+                                request -> {
+                                    BrokerHandler current = handler.get();
+                                    return current == null
+                                            ? io.simplekafka.protocol.Messages.Reply.failure(
+                                                    ErrorCode.STORAGE_ERROR,
+                                                    "broker initialization is incomplete")
+                                            : current.handle(request);
+                                });
                 Endpoint endpoint = server.start();
                 try {
                     authority.registerBroker(brokerId, endpoint);
                     Path brokerRoot = root.resolve("broker-" + brokerId);
                     PartitionCatalog catalog = new PartitionCatalog(brokerRoot, brokerId, endpoint);
-                    nodes.put(brokerId, new BrokerNode(brokerId, server, endpoint, catalog, handler));
+                    nodes.put(
+                            brokerId, new BrokerNode(brokerId, server, endpoint, catalog, handler));
                 } catch (RuntimeException failure) {
                     server.close();
                     throw failure;
                 }
             }
             PartitionCatalog coordinatorCatalog = nodes.get(2).catalog;
-            groups = new GroupCoordinator(coordinatorCatalog, new RoundRobinAssignor(), clock,
-                    DEFAULT_GROUP_TIMEOUT_MILLIS);
+            groups =
+                    new GroupCoordinator(
+                            coordinatorCatalog,
+                            new RoundRobinAssignor(),
+                            clock,
+                            DEFAULT_GROUP_TIMEOUT_MILLIS);
             GroupCoordinator coordinator = groups;
-            groupExpiry = Executors.newSingleThreadScheduledExecutor(task -> {
-                Thread worker = new Thread(task, "simple-kafka-cluster-group-expiry");
-                worker.setDaemon(true);
-                return worker;
-            });
+            groupExpiry =
+                    Executors.newSingleThreadScheduledExecutor(
+                            task -> {
+                                Thread worker =
+                                        new Thread(task, "simple-kafka-cluster-group-expiry");
+                                worker.setDaemon(true);
+                                return worker;
+                            });
             long expiryPeriodMillis = Math.max(1, Math.min(DEFAULT_GROUP_TIMEOUT_MILLIS / 2, 250));
-            groupExpiry.scheduleAtFixedRate(coordinator::expire, expiryPeriodMillis, expiryPeriodMillis,
+            groupExpiry.scheduleAtFixedRate(
+                    coordinator::expire,
+                    expiryPeriodMillis,
+                    expiryPeriodMillis,
                     TimeUnit.MILLISECONDS);
             for (BrokerNode node : nodes.values())
                 node.handler.set(new BrokerHandler(node.catalog, authority, groups, offsets));
@@ -123,16 +144,20 @@ public final class ClusterHarness implements AutoCloseable {
     public synchronized void createTopic(String topic, int partitions, int minISR) {
         requireStarted();
         if (topic == null || partitions <= 0 || minISR < 1 || minISR > BROKER_IDS.size())
-            throw new CourseException(ErrorCode.INVALID_REQUEST, "invalid replicated topic configuration");
+            throw new CourseException(
+                    ErrorCode.INVALID_REQUEST, "invalid replicated topic configuration");
         TopicSpec existing = topics.get(topic);
         TopicSpec requested = new TopicSpec(partitions, minISR);
         if (existing != null) {
-            if (!existing.equals(requested)) throw new CourseException(ErrorCode.INVALID_REQUEST, "topic configuration changed");
+            if (!existing.equals(requested))
+                throw new CourseException(ErrorCode.INVALID_REQUEST, "topic configuration changed");
             return;
         }
         for (BrokerNode node : nodes.values()) {
             if (!authority.isOnline(node.brokerId))
-                throw new CourseException(ErrorCode.NOT_LEADER, "all brokers must be online when creating a replicated topic");
+                throw new CourseException(
+                        ErrorCode.NOT_LEADER,
+                        "all brokers must be online when creating a replicated topic");
             node.catalog.createTopic(topic, partitions);
         }
         List<Integer> replicaIds = List.copyOf(BROKER_IDS);
@@ -140,14 +165,23 @@ public final class ClusterHarness implements AutoCloseable {
             TopicPartition tp = new TopicPartition(topic, partition);
             int leaderId = BROKER_IDS.get(partition % BROKER_IDS.size());
             authority.createPartition(tp, leaderId, replicaIds, minISR);
-            ReplicationTracker tracker = new ReplicationTracker(authority, tp, leaderId,
-                    Set.copyOf(replicaIds), minISR, clock, DEFAULT_LAG_TIMEOUT_MILLIS);
+            ReplicationTracker tracker =
+                    new ReplicationTracker(
+                            authority,
+                            tp,
+                            leaderId,
+                            Set.copyOf(replicaIds),
+                            minISR,
+                            clock,
+                            DEFAULT_LAG_TIMEOUT_MILLIS);
             AckPolicy policy = new AckPolicy(tracker);
             trackers.put(tp, tracker);
             for (BrokerNode node : nodes.values()) {
-                ReplicaState replica = new ReplicaState(node.brokerId, 0, node.brokerId == leaderId, true);
-                ReplicatedPartition backend = new ReplicatedPartition(tp, node.catalog.partition(tp),
-                        replica, tracker, policy);
+                ReplicaState replica =
+                        new ReplicaState(node.brokerId, 0, node.brokerId == leaderId, true);
+                ReplicatedPartition backend =
+                        new ReplicatedPartition(
+                                tp, node.catalog.partition(tp), replica, tracker, policy);
                 node.replicaStates.put(tp, replica);
                 node.catalog.installBackend(tp, backend);
             }
@@ -155,11 +189,21 @@ public final class ClusterHarness implements AutoCloseable {
         topics.put(topic, requested);
     }
 
-    public synchronized Endpoint endpoint(int brokerId) { return node(brokerId).endpoint; }
-    public synchronized PartitionCatalog catalog(int brokerId) { return node(brokerId).catalog; }
-    public ClusterAuthority authority() { return authority; }
+    public synchronized Endpoint endpoint(int brokerId) {
+        return node(brokerId).endpoint;
+    }
 
-    /** Stops only this broker's TCP server; authority, catalog, log handles, and peers stay alive. */
+    public synchronized PartitionCatalog catalog(int brokerId) {
+        return node(brokerId).catalog;
+    }
+
+    public ClusterAuthority authority() {
+        return authority;
+    }
+
+    /**
+     * Stops only this broker's TCP server; authority, catalog, log handles, and peers stay alive.
+     */
     public synchronized void stopBroker(int brokerId) {
         requireStarted();
         BrokerNode node = node(brokerId);
@@ -171,18 +215,27 @@ public final class ClusterHarness implements AutoCloseable {
         node.server = null;
     }
 
-    /** Restarts the broker socket on a fresh ephemeral port and preserves its independent disk/catalog. */
+    /**
+     * Restarts the broker socket on a fresh ephemeral port and preserves its independent
+     * disk/catalog.
+     */
     public synchronized void restartBroker(int brokerId) {
         requireStarted();
         BrokerNode node = node(brokerId);
         if (node.server != null) return;
         AtomicReference<BrokerHandler> handler = node.handler;
-        BrokerServer server = new BrokerServer("127.0.0.1", 0, request -> {
-            BrokerHandler current = handler.get();
-            return current == null
-                    ? io.simplekafka.protocol.Messages.Reply.failure(ErrorCode.STORAGE_ERROR, "broker initialization is incomplete")
-                    : current.handle(request);
-        });
+        BrokerServer server =
+                new BrokerServer(
+                        "127.0.0.1",
+                        0,
+                        request -> {
+                            BrokerHandler current = handler.get();
+                            return current == null
+                                    ? io.simplekafka.protocol.Messages.Reply.failure(
+                                            ErrorCode.STORAGE_ERROR,
+                                            "broker initialization is incomplete")
+                                    : current.handle(request);
+                        });
         Endpoint endpoint = server.start();
         try {
             // The authority permits endpoint replacement only after the broker was marked offline.
@@ -231,8 +284,8 @@ public final class ClusterHarness implements AutoCloseable {
         BrokerNode follower = node(brokerId);
         int leaderId = authority.metadata(tp).leaderId();
         RpcClient client = new RpcClient(endpoint(leaderId), DEFAULT_RPC_TIMEOUT_MILLIS);
-        return new FollowerReplicator(brokerId, tp, follower.catalog.partition(tp), client,
-                replicaState(brokerId, tp));
+        return new FollowerReplicator(
+                brokerId, tp, follower.catalog.partition(tp), client, replicaState(brokerId, tp));
     }
 
     /** Runs one TCP replication poll and closes its short-lived client afterward. */
@@ -240,8 +293,13 @@ public final class ClusterHarness implements AutoCloseable {
         int leaderId = authority.metadata(tp).leaderId();
         try (RpcClient client = new RpcClient(endpoint(leaderId), DEFAULT_RPC_TIMEOUT_MILLIS)) {
             BrokerNode follower = node(brokerId);
-            return new FollowerReplicator(brokerId, tp, follower.catalog.partition(tp), client,
-                    replicaState(brokerId, tp)).pollOnce(maxRecords, maxBytes);
+            return new FollowerReplicator(
+                            brokerId,
+                            tp,
+                            follower.catalog.partition(tp),
+                            client,
+                            replicaState(brokerId, tp))
+                    .pollOnce(maxRecords, maxBytes);
         }
     }
 
@@ -250,82 +308,119 @@ public final class ClusterHarness implements AutoCloseable {
         for (BrokerNode node : nodes.values()) {
             ReplicaState replica = node.replicaStates.get(tp);
             if (replica != null)
-                replica.update(metadata.epoch(), metadata.leaderId() == node.brokerId, authority.isOnline(node.brokerId));
+                replica.update(
+                        metadata.epoch(),
+                        metadata.leaderId() == node.brokerId,
+                        authority.isOnline(node.brokerId));
         }
         return metadata;
     }
 
     public synchronized ReplicaReconciler reconciler(int brokerId, TopicPartition tp) {
         int leaderId = authority.metadata(tp).leaderId();
-        return new ReplicaReconciler(brokerId, tp, node(brokerId).catalog.partition(tp),
-                new RpcClient(endpoint(leaderId), DEFAULT_RPC_TIMEOUT_MILLIS), authority);
+        return new ReplicaReconciler(
+                brokerId,
+                tp,
+                node(brokerId).catalog.partition(tp),
+                new RpcClient(endpoint(leaderId), DEFAULT_RPC_TIMEOUT_MILLIS),
+                authority);
     }
 
     public long reconcile(int brokerId, TopicPartition tp) {
         int leaderId = authority.metadata(tp).leaderId();
         try (RpcClient client = new RpcClient(endpoint(leaderId), DEFAULT_RPC_TIMEOUT_MILLIS)) {
-            return new ReplicaReconciler(brokerId, tp, node(brokerId).catalog.partition(tp), client, authority)
+            return new ReplicaReconciler(
+                            brokerId, tp, node(brokerId).catalog.partition(tp), client, authority)
                     .reconcile(authority.metadata(tp).epoch());
         }
     }
 
     public synchronized boolean admit(int brokerId, TopicPartition tp) {
         if (!authority.partitionState(tp).assigned(brokerId))
-            throw new CourseException(ErrorCode.INVALID_REQUEST, "broker is not assigned to partition");
+            throw new CourseException(
+                    ErrorCode.INVALID_REQUEST, "broker is not assigned to partition");
         PartitionLog localLog = node(brokerId).catalog.partition(tp);
-        return new ReplicaAdmission(authority, localLog).tryAdd(brokerId, tp, authority.metadata(tp).epoch());
+        return new ReplicaAdmission(authority, localLog)
+                .tryAdd(brokerId, tp, authority.metadata(tp).epoch());
     }
 
-    public ReplicationSnapshot snapshot(TopicPartition tp) { return authority.snapshot(tp); }
+    public ReplicationSnapshot snapshot(TopicPartition tp) {
+        return authority.snapshot(tp);
+    }
 
     public synchronized RpcClient client(int brokerId, int timeoutMillis) {
-        if (timeoutMillis <= 0) throw new CourseException(ErrorCode.INVALID_REQUEST, "RPC timeout must be positive");
+        if (timeoutMillis <= 0)
+            throw new CourseException(ErrorCode.INVALID_REQUEST, "RPC timeout must be positive");
         return new RpcClient(endpoint(brokerId), timeoutMillis);
     }
 
-    @Override public synchronized void close() {
+    @Override
+    public synchronized void close() {
         if (closed) return;
         closed = true;
         stopGroupExpiry();
         RuntimeException failure = null;
         for (BrokerNode node : nodes.values()) {
             try {
-                if (authority.isOnline(node.brokerId)) authority.setBrokerOnline(node.brokerId, false);
+                if (authority.isOnline(node.brokerId))
+                    authority.setBrokerOnline(node.brokerId, false);
                 if (node.server != null) node.server.close();
                 node.server = null;
             } catch (RuntimeException exception) {
                 failure = combine(failure, exception);
             }
         }
-        try { if (groups != null) groups.close(); }
-        catch (RuntimeException exception) { failure = combine(failure, exception); }
-        for (BrokerNode node : nodes.values()) {
-            try { node.catalog.close(); }
-            catch (RuntimeException exception) { failure = combine(failure, exception); }
+        try {
+            if (groups != null) groups.close();
+        } catch (RuntimeException exception) {
+            failure = combine(failure, exception);
         }
-        try { if (offsets != null) offsets.close(); }
-        catch (RuntimeException exception) { failure = combine(failure, exception); }
+        for (BrokerNode node : nodes.values()) {
+            try {
+                node.catalog.close();
+            } catch (RuntimeException exception) {
+                failure = combine(failure, exception);
+            }
+        }
+        try {
+            if (offsets != null) offsets.close();
+        } catch (RuntimeException exception) {
+            failure = combine(failure, exception);
+        }
         if (failure != null) throw failure;
     }
 
     private synchronized void closeAfterFailedStart(RuntimeException original) {
         stopGroupExpiry();
         for (BrokerNode node : nodes.values()) {
-            try { if (node.server != null) node.server.close(); }
-            catch (RuntimeException failure) { original.addSuppressed(failure); }
-            try { node.catalog.close(); }
-            catch (RuntimeException failure) { original.addSuppressed(failure); }
+            try {
+                if (node.server != null) node.server.close();
+            } catch (RuntimeException failure) {
+                original.addSuppressed(failure);
+            }
+            try {
+                node.catalog.close();
+            } catch (RuntimeException failure) {
+                original.addSuppressed(failure);
+            }
         }
-        try { if (groups != null) groups.close(); }
-        catch (RuntimeException failure) { original.addSuppressed(failure); }
-        try { if (offsets != null) offsets.close(); }
-        catch (RuntimeException failure) { original.addSuppressed(failure); }
+        try {
+            if (groups != null) groups.close();
+        } catch (RuntimeException failure) {
+            original.addSuppressed(failure);
+        }
+        try {
+            if (offsets != null) offsets.close();
+        } catch (RuntimeException failure) {
+            original.addSuppressed(failure);
+        }
         closed = true;
     }
 
     private BrokerNode node(int brokerId) {
         BrokerNode node = nodes.get(brokerId);
-        if (node == null) throw new CourseException(ErrorCode.UNKNOWN_MEMBER, "unknown broker " + brokerId);
+        if (node == null)
+            throw new CourseException(ErrorCode.UNKNOWN_MEMBER, "unknown broker " + brokerId);
         return node;
     }
 
@@ -369,8 +464,12 @@ public final class ClusterHarness implements AutoCloseable {
         private final AtomicReference<BrokerHandler> handler;
         private final Map<TopicPartition, ReplicaState> replicaStates = new TreeMap<>();
 
-        private BrokerNode(int brokerId, BrokerServer server, Endpoint endpoint,
-                           PartitionCatalog catalog, AtomicReference<BrokerHandler> handler) {
+        private BrokerNode(
+                int brokerId,
+                BrokerServer server,
+                Endpoint endpoint,
+                PartitionCatalog catalog,
+                AtomicReference<BrokerHandler> handler) {
             this.brokerId = brokerId;
             this.server = server;
             this.endpoint = endpoint;

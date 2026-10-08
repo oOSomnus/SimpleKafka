@@ -7,6 +7,7 @@ import io.simplekafka.cluster.ClusterAuthority.PartitionState;
 import io.simplekafka.cluster.ReplicationSnapshot;
 import io.simplekafka.model.TopicPartition;
 import io.simplekafka.support.TimeSource;
+
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
@@ -20,39 +21,65 @@ public final class ReplicationTracker {
     private final long lagTimeoutMillis;
     private final PartitionState state;
 
-    public ReplicationTracker(ClusterAuthority authority, TopicPartition tp, int leaderId,
-                              Set<Integer> replicas, int minISR, TimeSource clock, long lagTimeoutMillis) {
+    public ReplicationTracker(
+            ClusterAuthority authority,
+            TopicPartition tp,
+            int leaderId,
+            Set<Integer> replicas,
+            int minISR,
+            TimeSource clock,
+            long lagTimeoutMillis) {
         this.authority = Objects.requireNonNull(authority);
         this.tp = Objects.requireNonNull(tp);
         Set<Integer> configuredReplicas = Set.copyOf(Objects.requireNonNull(replicas));
         this.minISR = minISR;
         this.clock = Objects.requireNonNull(clock);
-        if (lagTimeoutMillis < 0) throw new CourseException(ErrorCode.INVALID_REQUEST, "negative lag timeout");
+        if (lagTimeoutMillis < 0)
+            throw new CourseException(ErrorCode.INVALID_REQUEST, "negative lag timeout");
         this.lagTimeoutMillis = lagTimeoutMillis;
         this.state = authority.partitionState(tp);
-        if (minISR < 1 || minISR != state.minISR || !configuredReplicas.equals(state.replicas)
+        if (minISR < 1
+                || minISR != state.minISR
+                || !configuredReplicas.equals(state.replicas)
                 || leaderId != state.leaderId)
-            throw new CourseException(ErrorCode.INVALID_REQUEST, "tracker configuration differs from partition authority");
+            throw new CourseException(
+                    ErrorCode.INVALID_REQUEST,
+                    "tracker configuration differs from partition authority");
     }
 
     public void report(int brokerId, int epoch, long leo) {
         if (brokerId < 0 || epoch < 0 || leo < 0)
             throw new CourseException(ErrorCode.INVALID_REQUEST, "negative replica report field");
         boolean online = state.lock.isHeldByCurrentThread() || authority.isOnline(brokerId);
-        if (!online) throw new CourseException(ErrorCode.INVALID_REQUEST, "offline broker cannot report replica progress");
+        if (!online)
+            throw new CourseException(
+                    ErrorCode.INVALID_REQUEST, "offline broker cannot report replica progress");
         state.lock.lock();
         try {
-            if (epoch != state.epoch) throw new CourseException(ErrorCode.FENCED_EPOCH, "replica report has a stale epoch");
-            if (!state.assigned(brokerId)) throw new CourseException(ErrorCode.INVALID_REQUEST, "broker is not assigned to partition");
+            if (epoch != state.epoch)
+                throw new CourseException(
+                        ErrorCode.FENCED_EPOCH, "replica report has a stale epoch");
+            if (!state.assigned(brokerId))
+                throw new CourseException(
+                        ErrorCode.INVALID_REQUEST, "broker is not assigned to partition");
             Long oldValue = state.reportedLEO.get(brokerId);
-            if (oldValue == null) throw new CourseException(ErrorCode.INVALID_REQUEST, "assigned replica has no progress slot");
+            if (oldValue == null)
+                throw new CourseException(
+                        ErrorCode.INVALID_REQUEST, "assigned replica has no progress slot");
             long leaderLeo = state.reportedLEO.getOrDefault(state.leaderId, 0L);
             if (brokerId == state.leaderId) {
-                if (leo < oldValue) throw new CourseException(ErrorCode.INVALID_REQUEST, "leader LEO cannot move backwards");
+                if (leo < oldValue)
+                    throw new CourseException(
+                            ErrorCode.INVALID_REQUEST, "leader LEO cannot move backwards");
                 leaderLeo = leo;
             } else {
-                if (leo > leaderLeo) throw new CourseException(ErrorCode.INVALID_REQUEST, "follower LEO exceeds leader LEO");
-                if (leo < oldValue) throw new CourseException(ErrorCode.INVALID_REQUEST, "follower LEO cannot move backwards in one epoch");
+                if (leo > leaderLeo)
+                    throw new CourseException(
+                            ErrorCode.INVALID_REQUEST, "follower LEO exceeds leader LEO");
+                if (leo < oldValue)
+                    throw new CourseException(
+                            ErrorCode.INVALID_REQUEST,
+                            "follower LEO cannot move backwards in one epoch");
             }
             state.reportedLEO.put(brokerId, leo);
             if (leo == leaderLeo) state.lastCaughtUpMillis.put(brokerId, clock.nowMillis());
@@ -118,12 +145,50 @@ public final class ReplicationTracker {
         return now >= then + timeout;
     }
 
-    ClusterAuthority authority() { return authority; }
-    TopicPartition tp() { return tp; }
-    PartitionState state() { return state; }
-    public int minISR() { return minISR; }
-    public int epoch() { state.lock.lock(); try { return state.epoch; } finally { state.lock.unlock(); } }
-    public int leaderId() { state.lock.lock(); try { return state.leaderId; } finally { state.lock.unlock(); } }
-    public long highWatermark() { state.lock.lock(); try { return state.highWatermark; } finally { state.lock.unlock(); } }
-    public ReplicationSnapshot snapshot() { return authority.snapshot(tp); }
+    ClusterAuthority authority() {
+        return authority;
+    }
+
+    TopicPartition tp() {
+        return tp;
+    }
+
+    PartitionState state() {
+        return state;
+    }
+
+    public int minISR() {
+        return minISR;
+    }
+
+    public int epoch() {
+        state.lock.lock();
+        try {
+            return state.epoch;
+        } finally {
+            state.lock.unlock();
+        }
+    }
+
+    public int leaderId() {
+        state.lock.lock();
+        try {
+            return state.leaderId;
+        } finally {
+            state.lock.unlock();
+        }
+    }
+
+    public long highWatermark() {
+        state.lock.lock();
+        try {
+            return state.highWatermark;
+        } finally {
+            state.lock.unlock();
+        }
+    }
+
+    public ReplicationSnapshot snapshot() {
+        return authority.snapshot(tp);
+    }
 }

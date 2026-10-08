@@ -12,6 +12,7 @@ import io.simplekafka.model.OffsetKey;
 import io.simplekafka.model.PartitionMetadata;
 import io.simplekafka.model.RecordData;
 import io.simplekafka.model.TopicPartition;
+
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.charset.CharacterCodingException;
@@ -22,7 +23,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
-/** Encodes request and response bodies for the course protocol. Frame headers are handled by FrameCodec. */
+/**
+ * Encodes request and response bodies for the course protocol. Frame headers are handled by
+ * FrameCodec.
+ */
 public final class MessageCodec {
     private static final int MAX_FRAME_LENGTH = 8_388_608;
     private static final int FRAME_HEADER_LENGTH = 10;
@@ -58,22 +62,32 @@ public final class MessageCodec {
         Api.requireKnown(api);
         Reader input = new Reader(payload);
         try {
-            Messages.Request request = switch (api) {
-                case Api.METADATA -> new Messages.MetadataRequest(input.readTopic());
-                case Api.PRODUCE -> readProduceRequest(input);
-                case Api.FETCH -> readFetchRequest(input);
-                case Api.COMMIT_OFFSET -> readCommitOffsetRequest(input);
-                case Api.FETCH_OFFSET -> new Messages.FetchOffsetRequest(input.readOffsetKey());
-                case Api.JOIN_GROUP -> new Messages.JoinGroupRequest(input.readIdentifier("group"),
-                        input.readIdentifier("member"), input.readTopic());
-                case Api.HEARTBEAT -> new Messages.HeartbeatRequest(input.readOptionalToken());
-                case Api.LEAVE_GROUP -> new Messages.LeaveGroupRequest(input.readIdentifier("group"),
-                        input.readIdentifier("member"));
-                case Api.GROUP_ASSIGNMENT -> new Messages.GroupAssignmentRequest(input.readIdentifier("group"),
-                        input.readIdentifier("member"));
-                case Api.REPLICA_FETCH -> readReplicaFetchRequest(input);
-                default -> throw invalid("unknown API: " + api);
-            };
+            Messages.Request request =
+                    switch (api) {
+                        case Api.METADATA -> new Messages.MetadataRequest(input.readTopic());
+                        case Api.PRODUCE -> readProduceRequest(input);
+                        case Api.FETCH -> readFetchRequest(input);
+                        case Api.COMMIT_OFFSET -> readCommitOffsetRequest(input);
+                        case Api.FETCH_OFFSET ->
+                                new Messages.FetchOffsetRequest(input.readOffsetKey());
+                        case Api.JOIN_GROUP ->
+                                new Messages.JoinGroupRequest(
+                                        input.readIdentifier("group"),
+                                        input.readIdentifier("member"),
+                                        input.readTopic());
+                        case Api.HEARTBEAT ->
+                                new Messages.HeartbeatRequest(input.readOptionalToken());
+                        case Api.LEAVE_GROUP ->
+                                new Messages.LeaveGroupRequest(
+                                        input.readIdentifier("group"),
+                                        input.readIdentifier("member"));
+                        case Api.GROUP_ASSIGNMENT ->
+                                new Messages.GroupAssignmentRequest(
+                                        input.readIdentifier("group"),
+                                        input.readIdentifier("member"));
+                        case Api.REPLICA_FETCH -> readReplicaFetchRequest(input);
+                        default -> throw invalid("unknown API: " + api);
+                    };
             input.requireEnd();
             return request;
         } catch (CourseException exception) {
@@ -93,12 +107,22 @@ public final class MessageCodec {
     public static Messages.Request capFetchBudget(Messages.Request request) {
         if (request instanceof Messages.FetchRequest fetch
                 && fetch.maxBytes() > MAX_FETCH_BYTE_BUDGET)
-            return new Messages.FetchRequest(fetch.tp(), fetch.epoch(), fetch.offset(), fetch.maxRecords(),
-                    MAX_FETCH_BYTE_BUDGET, fetch.token());
+            return new Messages.FetchRequest(
+                    fetch.tp(),
+                    fetch.epoch(),
+                    fetch.offset(),
+                    fetch.maxRecords(),
+                    MAX_FETCH_BYTE_BUDGET,
+                    fetch.token());
         if (request instanceof Messages.ReplicaFetchRequest fetch
                 && fetch.maxBytes() > MAX_REPLICA_FETCH_BYTE_BUDGET)
-            return new Messages.ReplicaFetchRequest(fetch.tp(), fetch.brokerId(), fetch.epoch(),
-                    fetch.fetchOffset(), fetch.maxRecords(), MAX_REPLICA_FETCH_BYTE_BUDGET,
+            return new Messages.ReplicaFetchRequest(
+                    fetch.tp(),
+                    fetch.brokerId(),
+                    fetch.epoch(),
+                    fetch.fetchOffset(),
+                    fetch.maxRecords(),
+                    MAX_REPLICA_FETCH_BYTE_BUDGET,
                     fetch.recoveryRead());
         return request;
     }
@@ -119,22 +143,24 @@ public final class MessageCodec {
         if (frameError == null) throw invalid("frame error is null");
         return frameError == ErrorCode.NONE ? decodeReply(api, payload) : decodeErrorBody(payload);
     }
+
     /** Decodes a successful response body selected by API. */
     public static Messages.Response decodeReply(short api, byte[] payload) {
         Api.requireKnown(api);
         Reader input = new Reader(payload);
         try {
-            Messages.Response response = switch (api) {
-                case Api.METADATA -> new Messages.MetadataBody(input.readMetadataList());
-                case Api.PRODUCE -> new Messages.ProduceBody(input.readAppendResult());
-                case Api.FETCH -> readFetchBody(input);
-                case Api.COMMIT_OFFSET, Api.HEARTBEAT -> new Messages.EmptyBody();
-                case Api.FETCH_OFFSET -> new Messages.OffsetBody(input.readOptionalLong());
-                case Api.JOIN_GROUP, Api.LEAVE_GROUP, Api.GROUP_ASSIGNMENT ->
-                        new Messages.GroupBody(input.readGroupAssignment());
-                case Api.REPLICA_FETCH -> readReplicaFetchBody(input);
-                default -> throw invalid("unknown API: " + api);
-            };
+            Messages.Response response =
+                    switch (api) {
+                        case Api.METADATA -> new Messages.MetadataBody(input.readMetadataList());
+                        case Api.PRODUCE -> new Messages.ProduceBody(input.readAppendResult());
+                        case Api.FETCH -> readFetchBody(input);
+                        case Api.COMMIT_OFFSET, Api.HEARTBEAT -> new Messages.EmptyBody();
+                        case Api.FETCH_OFFSET -> new Messages.OffsetBody(input.readOptionalLong());
+                        case Api.JOIN_GROUP, Api.LEAVE_GROUP, Api.GROUP_ASSIGNMENT ->
+                                new Messages.GroupBody(input.readGroupAssignment());
+                        case Api.REPLICA_FETCH -> readReplicaFetchBody(input);
+                        default -> throw invalid("unknown API: " + api);
+                    };
             input.requireEnd();
             return response;
         } catch (CourseException exception) {
@@ -144,11 +170,15 @@ public final class MessageCodec {
         }
     }
 
-    /** Decodes the message carried in a failure frame; its error code remains in the frame header. */
+    /**
+     * Decodes the message carried in a failure frame; its error code remains in the frame header.
+     */
     public static Messages.ErrorBody decodeErrorBody(byte[] payload) {
         Reader input = new Reader(payload);
         try {
-            Messages.ErrorBody body = new Messages.ErrorBody(input.readString(MAX_PAYLOAD_LENGTH, true, "error message"));
+            Messages.ErrorBody body =
+                    new Messages.ErrorBody(
+                            input.readString(MAX_PAYLOAD_LENGTH, true, "error message"));
             input.requireEnd();
             return body;
         } catch (CourseException exception) {
@@ -256,7 +286,8 @@ public final class MessageCodec {
             output.putLong(value.highWatermark());
             output.putLong(value.leaderLogEndOffset());
         } else if (response instanceof Messages.ErrorBody value) {
-            output.putString(value.message(), MAX_PAYLOAD_LENGTH - Integer.BYTES, true, "error message");
+            output.putString(
+                    value.message(), MAX_PAYLOAD_LENGTH - Integer.BYTES, true, "error message");
         } else {
             throw invalid("unsupported response type: " + response.getClass().getName());
         }
@@ -267,31 +298,48 @@ public final class MessageCodec {
         int epoch = input.readInt();
         Acks acks = Acks.fromWireId(input.readShort());
         long timeoutMillis = input.readLong();
-        return new Messages.ProduceRequest(tp, epoch, acks, timeoutMillis, input.readRecordDataList());
+        return new Messages.ProduceRequest(
+                tp, epoch, acks, timeoutMillis, input.readRecordDataList());
     }
 
     private static Messages.FetchRequest readFetchRequest(Reader input) {
-        return new Messages.FetchRequest(input.readTopicPartition(), input.readInt(), input.readLong(),
-                input.readInt(), input.readInt(), input.readOptionalToken());
+        return new Messages.FetchRequest(
+                input.readTopicPartition(),
+                input.readInt(),
+                input.readLong(),
+                input.readInt(),
+                input.readInt(),
+                input.readOptionalToken());
     }
 
     private static Messages.CommitOffsetRequest readCommitOffsetRequest(Reader input) {
-        return new Messages.CommitOffsetRequest(input.readOffsetKey(), input.readLong(), input.readOptionalToken());
+        return new Messages.CommitOffsetRequest(
+                input.readOffsetKey(), input.readLong(), input.readOptionalToken());
     }
 
     private static Messages.ReplicaFetchRequest readReplicaFetchRequest(Reader input) {
-        return new Messages.ReplicaFetchRequest(input.readTopicPartition(), input.readInt(), input.readInt(),
-                input.readLong(), input.readInt(), input.readInt(), input.readBoolean());
+        return new Messages.ReplicaFetchRequest(
+                input.readTopicPartition(),
+                input.readInt(),
+                input.readInt(),
+                input.readLong(),
+                input.readInt(),
+                input.readInt(),
+                input.readBoolean());
     }
 
     private static Messages.FetchBody readFetchBody(Reader input) {
-        return new Messages.FetchBody(input.readLogRecordList(), input.readLong(), input.readLong(),
-                input.readLong(), input.readInt());
+        return new Messages.FetchBody(
+                input.readLogRecordList(),
+                input.readLong(),
+                input.readLong(),
+                input.readLong(),
+                input.readInt());
     }
 
     private static Messages.ReplicaFetchBody readReplicaFetchBody(Reader input) {
-        return new Messages.ReplicaFetchBody(input.readLogRecordList(), input.readInt(), input.readLong(),
-                input.readLong());
+        return new Messages.ReplicaFetchBody(
+                input.readLogRecordList(), input.readInt(), input.readLong(), input.readLong());
     }
 
     private static void requireValidTopic(String topic) {
@@ -299,9 +347,12 @@ public final class MessageCodec {
             throw invalid("invalid topic identifier");
         for (int i = 0; i < topic.length(); i++) {
             char value = topic.charAt(i);
-            if (!((value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z')
-                    || (value >= '0' && value <= '9') || value == '.' || value == '_' || value == '-'))
-                throw invalid("invalid topic identifier");
+            if (!((value >= 'A' && value <= 'Z')
+                    || (value >= 'a' && value <= 'z')
+                    || (value >= '0' && value <= '9')
+                    || value == '.'
+                    || value == '_'
+                    || value == '-')) throw invalid("invalid topic identifier");
         }
     }
 
@@ -313,12 +364,13 @@ public final class MessageCodec {
         return new CourseException(ErrorCode.INVALID_REQUEST, message, cause);
     }
 
-
     private static final class Writer {
         private final byte[] bytes;
         private int position;
 
-        private Writer(byte[] bytes) { this.bytes = bytes; }
+        private Writer(byte[] bytes) {
+            this.bytes = bytes;
+        }
 
         private int reserve(int length) {
             if (length < 0 || (long) position + length > MAX_PAYLOAD_LENGTH)
@@ -328,7 +380,9 @@ public final class MessageCodec {
             return start;
         }
 
-        private void putBoolean(boolean value) { putByte(value ? 1 : 0); }
+        private void putBoolean(boolean value) {
+            putByte(value ? 1 : 0);
+        }
 
         private void putByte(int value) {
             int start = reserve(1);
@@ -384,7 +438,6 @@ public final class MessageCodec {
             putIdentifier(topic, "topic");
         }
 
-
         private void putBytes(byte[] value, boolean nullable, String field) {
             if (value == null) {
                 if (!nullable) throw invalid(field + " is null");
@@ -393,7 +446,8 @@ public final class MessageCodec {
             }
             putInt(value.length);
             int start = reserve(value.length);
-            if (bytes != null && value.length != 0) System.arraycopy(value, 0, bytes, start, value.length);
+            if (bytes != null && value.length != 0)
+                System.arraycopy(value, 0, bytes, start, value.length);
         }
 
         private void writeTopicPartition(TopicPartition tp) {
@@ -420,7 +474,8 @@ public final class MessageCodec {
         }
 
         private void writeRecordData(RecordData data) {
-            if (data == null || data.value() == null) throw invalid("record data is null or has a null value");
+            if (data == null || data.value() == null)
+                throw invalid("record data is null or has a null value");
             long keyLength = data.key() == null ? 0 : data.key().length;
             if (RECORD_FIXED_LENGTH + keyLength + data.value().length > MAX_RECORD_LENGTH)
                 throw invalid("record exceeds maximum length");
@@ -505,14 +560,18 @@ public final class MessageCodec {
 
         private Reader(byte[] bytes) {
             if (bytes == null) throw invalid("message body is null");
-            if (bytes.length > MAX_PAYLOAD_LENGTH) throw invalid("message body exceeds frame limit");
+            if (bytes.length > MAX_PAYLOAD_LENGTH)
+                throw invalid("message body exceeds frame limit");
             this.bytes = bytes;
         }
 
-        private int remaining() { return bytes.length - position; }
+        private int remaining() {
+            return bytes.length - position;
+        }
 
         private void require(int length) {
-            if (length < 0 || length > remaining()) throw invalid("truncated or invalid message body");
+            if (length < 0 || length > remaining())
+                throw invalid("truncated or invalid message body");
         }
 
         private void requireEnd() {
@@ -532,31 +591,35 @@ public final class MessageCodec {
 
         private short readShort() {
             require(Short.BYTES);
-            int value = (Byte.toUnsignedInt(bytes[position]) << 8) | Byte.toUnsignedInt(bytes[position + 1]);
+            int value =
+                    (Byte.toUnsignedInt(bytes[position]) << 8)
+                            | Byte.toUnsignedInt(bytes[position + 1]);
             position += Short.BYTES;
             return (short) value;
         }
 
         private int readInt() {
             require(Integer.BYTES);
-            int value = (Byte.toUnsignedInt(bytes[position]) << 24)
-                    | (Byte.toUnsignedInt(bytes[position + 1]) << 16)
-                    | (Byte.toUnsignedInt(bytes[position + 2]) << 8)
-                    | Byte.toUnsignedInt(bytes[position + 3]);
+            int value =
+                    (Byte.toUnsignedInt(bytes[position]) << 24)
+                            | (Byte.toUnsignedInt(bytes[position + 1]) << 16)
+                            | (Byte.toUnsignedInt(bytes[position + 2]) << 8)
+                            | Byte.toUnsignedInt(bytes[position + 3]);
             position += Integer.BYTES;
             return value;
         }
 
         private long readLong() {
             require(Long.BYTES);
-            long value = ((long) Byte.toUnsignedInt(bytes[position]) << 56)
-                    | ((long) Byte.toUnsignedInt(bytes[position + 1]) << 48)
-                    | ((long) Byte.toUnsignedInt(bytes[position + 2]) << 40)
-                    | ((long) Byte.toUnsignedInt(bytes[position + 3]) << 32)
-                    | ((long) Byte.toUnsignedInt(bytes[position + 4]) << 24)
-                    | ((long) Byte.toUnsignedInt(bytes[position + 5]) << 16)
-                    | ((long) Byte.toUnsignedInt(bytes[position + 6]) << 8)
-                    | Byte.toUnsignedInt(bytes[position + 7]);
+            long value =
+                    ((long) Byte.toUnsignedInt(bytes[position]) << 56)
+                            | ((long) Byte.toUnsignedInt(bytes[position + 1]) << 48)
+                            | ((long) Byte.toUnsignedInt(bytes[position + 2]) << 40)
+                            | ((long) Byte.toUnsignedInt(bytes[position + 3]) << 32)
+                            | ((long) Byte.toUnsignedInt(bytes[position + 4]) << 24)
+                            | ((long) Byte.toUnsignedInt(bytes[position + 5]) << 16)
+                            | ((long) Byte.toUnsignedInt(bytes[position + 6]) << 8)
+                            | Byte.toUnsignedInt(bytes[position + 7]);
             position += Long.BYTES;
             return value;
         }
@@ -568,10 +631,12 @@ public final class MessageCodec {
             require(length);
             try {
                 ByteBuffer input = ByteBuffer.wrap(bytes, position, length);
-                CharBuffer decoded = StandardCharsets.UTF_8.newDecoder()
-                        .onMalformedInput(CodingErrorAction.REPORT)
-                        .onUnmappableCharacter(CodingErrorAction.REPORT)
-                        .decode(input);
+                CharBuffer decoded =
+                        StandardCharsets.UTF_8
+                                .newDecoder()
+                                .onMalformedInput(CodingErrorAction.REPORT)
+                                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                                .decode(input);
                 position += length;
                 return decoded.toString();
             } catch (CharacterCodingException exception) {
@@ -588,7 +653,6 @@ public final class MessageCodec {
             requireValidTopic(topic);
             return topic;
         }
-
 
         private byte[] readBytes(int length, String field) {
             require(length);
@@ -617,16 +681,21 @@ public final class MessageCodec {
             return new GroupToken(readIdentifier("group"), readIdentifier("member"), readInt());
         }
 
-        private GroupToken readOptionalToken() { return readBoolean() ? readToken() : null; }
+        private GroupToken readOptionalToken() {
+            return readBoolean() ? readToken() : null;
+        }
 
         private RecordData readRecordData() {
             int keyLength = readInt();
-            if (keyLength < -1 || (keyLength >= 0 && RECORD_FIXED_LENGTH + (long) keyLength > MAX_RECORD_LENGTH))
+            if (keyLength < -1
+                    || (keyLength >= 0
+                            && RECORD_FIXED_LENGTH + (long) keyLength > MAX_RECORD_LENGTH))
                 throw invalid("invalid record key length");
             byte[] key = keyLength == -1 ? null : readBytes(keyLength, "record key");
             int valueLength = readInt();
-            if (valueLength < 0 || RECORD_FIXED_LENGTH + (keyLength < 0 ? 0L : keyLength) + valueLength > MAX_RECORD_LENGTH)
-                throw invalid("invalid record value length");
+            if (valueLength < 0
+                    || RECORD_FIXED_LENGTH + (keyLength < 0 ? 0L : keyLength) + valueLength
+                            > MAX_RECORD_LENGTH) throw invalid("invalid record value length");
             byte[] value = readBytes(valueLength, "record value");
             long timestamp = readLong();
             return new RecordData(key, value, timestamp);
@@ -642,7 +711,8 @@ public final class MessageCodec {
         private List<LogRecord> readLogRecordList() {
             int count = readCount(24, "log record");
             List<LogRecord> records = new ArrayList<>(count);
-            for (int i = 0; i < count; i++) records.add(new LogRecord(readLong(), readRecordData()));
+            for (int i = 0; i < count; i++)
+                records.add(new LogRecord(readLong(), readRecordData()));
             return records;
         }
 
@@ -662,16 +732,23 @@ public final class MessageCodec {
                 int epoch = readInt();
                 List<Integer> replicas = readIntList("replica");
                 List<Integer> isr = readIntList("ISR");
-                Endpoint leader = new Endpoint(readString(MAX_IDENTIFIER_BYTES, false, "endpoint host"), readInt());
+                Endpoint leader =
+                        new Endpoint(
+                                readString(MAX_IDENTIFIER_BYTES, false, "endpoint host"),
+                                readInt());
                 partitions.add(new PartitionMetadata(tp, leaderId, epoch, replicas, isr, leader));
             }
             return partitions;
         }
 
-        private AppendResult readAppendResult() { return new AppendResult(readLong(), readLong()); }
+        private AppendResult readAppendResult() {
+            return new AppendResult(readLong(), readLong());
+        }
 
         private java.util.OptionalLong readOptionalLong() {
-            return readBoolean() ? java.util.OptionalLong.of(readLong()) : java.util.OptionalLong.empty();
+            return readBoolean()
+                    ? java.util.OptionalLong.of(readLong())
+                    : java.util.OptionalLong.empty();
         }
 
         private GroupAssignment readGroupAssignment() {

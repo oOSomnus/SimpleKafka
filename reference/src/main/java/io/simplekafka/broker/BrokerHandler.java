@@ -14,6 +14,7 @@ import io.simplekafka.model.PartitionMetadata;
 import io.simplekafka.model.TopicPartition;
 import io.simplekafka.protocol.Messages;
 import io.simplekafka.replication.ReplicaFetchBackend;
+
 import java.util.List;
 import java.util.Objects;
 
@@ -24,8 +25,11 @@ public final class BrokerHandler {
     private final GroupCoordinator groups;
     private final OffsetStore offsets;
 
-    public BrokerHandler(PartitionCatalog catalog, ClusterAuthority authority,
-                         GroupCoordinator groups, OffsetStore offsets) {
+    public BrokerHandler(
+            PartitionCatalog catalog,
+            ClusterAuthority authority,
+            GroupCoordinator groups,
+            OffsetStore offsets) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.authority = authority;
         this.groups = groups;
@@ -40,12 +44,15 @@ public final class BrokerHandler {
             if (request instanceof Messages.ProduceRequest produce) return produce(produce);
             if (request instanceof Messages.FetchRequest fetch) return fetch(fetch);
             if (request instanceof Messages.CommitOffsetRequest commit) return commit(commit);
-            if (request instanceof Messages.FetchOffsetRequest fetchOffset) return fetchOffset(fetchOffset);
+            if (request instanceof Messages.FetchOffsetRequest fetchOffset)
+                return fetchOffset(fetchOffset);
             if (request instanceof Messages.JoinGroupRequest join) return join(join);
             if (request instanceof Messages.HeartbeatRequest heartbeat) return heartbeat(heartbeat);
             if (request instanceof Messages.LeaveGroupRequest leave) return leave(leave);
-            if (request instanceof Messages.GroupAssignmentRequest assignment) return assignment(assignment);
-            if (request instanceof Messages.ReplicaFetchRequest replicaFetch) return replicaFetch(replicaFetch);
+            if (request instanceof Messages.GroupAssignmentRequest assignment)
+                return assignment(assignment);
+            if (request instanceof Messages.ReplicaFetchRequest replicaFetch)
+                return replicaFetch(replicaFetch);
             throw new CourseException(ErrorCode.INVALID_REQUEST, "unsupported request");
         } catch (ExerciseNotImplementedException exception) {
             throw exception;
@@ -60,8 +67,10 @@ public final class BrokerHandler {
 
     private Messages.Reply metadata(Messages.MetadataRequest request) {
         if (request.topic() == null) throw invalid("topic is required");
-        List<PartitionMetadata> result = authority == null
-                ? catalog.metadata(request.topic()) : authority.metadata(request.topic());
+        List<PartitionMetadata> result =
+                authority == null
+                        ? catalog.metadata(request.topic())
+                        : authority.metadata(request.topic());
         return Messages.Reply.success(new Messages.MetadataBody(result));
     }
 
@@ -72,7 +81,12 @@ public final class BrokerHandler {
         if (request.records().isEmpty()) throw invalid("produce batch must not be empty");
         PartitionBackend backend = catalog.backend(tp);
         requireLeader(tp, request.epoch(), backend);
-        AppendResult result = backend.produce(request.records(), request.acks(), request.epoch(), request.timeoutMillis());
+        AppendResult result =
+                backend.produce(
+                        request.records(),
+                        request.acks(),
+                        request.epoch(),
+                        request.timeoutMillis());
         return Messages.Reply.success(new Messages.ProduceBody(result));
     }
 
@@ -86,11 +100,20 @@ public final class BrokerHandler {
             requireGroups();
             groups.validate(request.token(), tp);
         }
-        List<LogRecord> records = backend.fetch(
-                request.offset(), request.maxRecords(), request.maxBytes(), request.epoch());
+        List<LogRecord> records =
+                backend.fetch(
+                        request.offset(),
+                        request.maxRecords(),
+                        request.maxBytes(),
+                        request.epoch());
         if (authority == null) {
-            return Messages.Reply.success(new Messages.FetchBody(records, backend.logStartOffset(),
-                    backend.logEndOffset(), backend.highWatermark(), backend.epoch()));
+            return Messages.Reply.success(
+                    new Messages.FetchBody(
+                            records,
+                            backend.logStartOffset(),
+                            backend.logEndOffset(),
+                            backend.highWatermark(),
+                            backend.epoch()));
         }
         ClusterAuthority.PartitionState state = authority.partitionState(tp);
         int leaderId;
@@ -110,8 +133,13 @@ public final class BrokerHandler {
         }
         if (!authority.isOnline(leaderId))
             throw new CourseException(ErrorCode.NOT_LEADER, "broker is not the current leader");
-        return Messages.Reply.success(new Messages.FetchBody(records, backend.logStartOffset(),
-                backend.logEndOffset(), highWatermark, currentEpoch));
+        return Messages.Reply.success(
+                new Messages.FetchBody(
+                        records,
+                        backend.logStartOffset(),
+                        backend.logEndOffset(),
+                        highWatermark,
+                        currentEpoch));
     }
 
     private Messages.Reply commit(Messages.CommitOffsetRequest request) {
@@ -133,7 +161,8 @@ public final class BrokerHandler {
 
     private Messages.Reply join(Messages.JoinGroupRequest request) {
         requireGroups();
-        GroupAssignment assignment = groups.join(request.group(), request.member(), request.topic());
+        GroupAssignment assignment =
+                groups.join(request.group(), request.member(), request.topic());
         return Messages.Reply.success(new Messages.GroupBody(assignment));
     }
 
@@ -145,12 +174,14 @@ public final class BrokerHandler {
 
     private Messages.Reply leave(Messages.LeaveGroupRequest request) {
         requireGroups();
-        return Messages.Reply.success(new Messages.GroupBody(groups.leave(request.group(), request.member())));
+        return Messages.Reply.success(
+                new Messages.GroupBody(groups.leave(request.group(), request.member())));
     }
 
     private Messages.Reply assignment(Messages.GroupAssignmentRequest request) {
         requireGroups();
-        return Messages.Reply.success(new Messages.GroupBody(groups.assignment(request.group(), request.member())));
+        return Messages.Reply.success(
+                new Messages.GroupBody(groups.assignment(request.group(), request.member())));
     }
 
     private Messages.Reply replicaFetch(Messages.ReplicaFetchRequest request) {
@@ -160,30 +191,40 @@ public final class BrokerHandler {
         state.lock.lock();
         try {
             if (request.epoch() != state.epoch)
-                throw new CourseException(ErrorCode.FENCED_EPOCH, "replica fetch uses a stale epoch");
+                throw new CourseException(
+                        ErrorCode.FENCED_EPOCH, "replica fetch uses a stale epoch");
             if (state.leaderId != catalog.brokerId())
-                throw new CourseException(ErrorCode.NOT_LEADER, "replica fetch must be served by the leader");
+                throw new CourseException(
+                        ErrorCode.NOT_LEADER, "replica fetch must be served by the leader");
         } finally {
             state.lock.unlock();
         }
         PartitionBackend backend = catalog.backend(tp);
         if (!(backend instanceof ReplicaFetchBackend replicaBackend))
             throw invalid("partition backend does not support replica fetch");
-        Messages.ReplicaFetchBody result = replicaBackend.fetchForReplica(request.brokerId(), request.epoch(),
-                request.fetchOffset(), request.maxRecords(), request.maxBytes(), request.recoveryRead());
+        Messages.ReplicaFetchBody result =
+                replicaBackend.fetchForReplica(
+                        request.brokerId(),
+                        request.epoch(),
+                        request.fetchOffset(),
+                        request.maxRecords(),
+                        request.maxBytes(),
+                        request.recoveryRead());
         return Messages.Reply.success(result);
     }
 
     private void requireLeader(TopicPartition tp, int epoch, PartitionBackend backend) {
         if (authority == null) {
-            if (epoch != backend.epoch()) throw new CourseException(ErrorCode.FENCED_EPOCH, "stale partition epoch");
+            if (epoch != backend.epoch())
+                throw new CourseException(ErrorCode.FENCED_EPOCH, "stale partition epoch");
             return;
         }
         ClusterAuthority.PartitionState state = authority.partitionState(tp);
         int leaderId;
         state.lock.lock();
         try {
-            if (epoch != state.epoch) throw new CourseException(ErrorCode.FENCED_EPOCH, "stale partition epoch");
+            if (epoch != state.epoch)
+                throw new CourseException(ErrorCode.FENCED_EPOCH, "stale partition epoch");
             leaderId = state.leaderId;
             if (leaderId != catalog.brokerId())
                 throw new CourseException(ErrorCode.NOT_LEADER, "broker is not the current leader");
@@ -193,6 +234,7 @@ public final class BrokerHandler {
         if (!authority.isOnline(leaderId))
             throw new CourseException(ErrorCode.NOT_LEADER, "broker is not the current leader");
     }
+
     private TopicPartition requirePartition(TopicPartition tp) {
         if (tp == null) throw invalid("topic partition is required");
         return tp;

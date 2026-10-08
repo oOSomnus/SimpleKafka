@@ -6,14 +6,17 @@ import io.simplekafka.cluster.ClusterAuthority;
 import io.simplekafka.cluster.ClusterAuthority.PartitionState;
 import io.simplekafka.model.PartitionMetadata;
 import io.simplekafka.model.TopicPartition;
-import java.util.Set;
+
 import java.util.Objects;
+import java.util.Set;
 
 /** Controlled clean election over the authority's previous ISR only. */
 public final class LeaderElection {
     private final ClusterAuthority authority;
 
-    public LeaderElection(ClusterAuthority authority) { this.authority = Objects.requireNonNull(authority); }
+    public LeaderElection(ClusterAuthority authority) {
+        this.authority = Objects.requireNonNull(authority);
+    }
 
     public PartitionMetadata elect(TopicPartition tp) {
         PartitionState state = authority.partitionState(tp);
@@ -54,7 +57,8 @@ public final class LeaderElection {
                         }
                     }
                     if (selected < 0)
-                        throw new CourseException(ErrorCode.NO_ELIGIBLE_LEADER,
+                        throw new CourseException(
+                                ErrorCode.NO_ELIGIBLE_LEADER,
                                 "no online ISR replica contains the committed prefix");
 
                     state.epoch++;
@@ -63,8 +67,11 @@ public final class LeaderElection {
                     state.isr.add(selected);
                     for (int brokerId : state.replicas) {
                         state.reportedLEO.put(brokerId, brokerId == selected ? selectedLeo : 0L);
-                        state.lastCaughtUpMillis.put(brokerId,
-                                brokerId == selected ? authority.clock().nowMillis() : Long.MIN_VALUE);
+                        state.lastCaughtUpMillis.put(
+                                brokerId,
+                                brokerId == selected
+                                        ? authority.clock().nowMillis()
+                                        : Long.MIN_VALUE);
                     }
                     state.changed.signalAll();
                 }
@@ -77,14 +84,17 @@ public final class LeaderElection {
     }
 
     public void checkLeader(int brokerId, TopicPartition tp, int epoch) {
-        if (brokerId < 0 || epoch < 0) throw new CourseException(ErrorCode.INVALID_REQUEST, "negative broker id or epoch");
+        if (brokerId < 0 || epoch < 0)
+            throw new CourseException(ErrorCode.INVALID_REQUEST, "negative broker id or epoch");
         PartitionState state = authority.partitionState(tp);
         boolean online = authority.isOnline(brokerId);
         state.lock.lock();
         try {
-            if (epoch != state.epoch) throw new CourseException(ErrorCode.FENCED_EPOCH, "request epoch is stale");
+            if (epoch != state.epoch)
+                throw new CourseException(ErrorCode.FENCED_EPOCH, "request epoch is stale");
             if (brokerId != state.leaderId || !online)
-                throw new CourseException(ErrorCode.NOT_LEADER, "broker is not the online partition leader");
+                throw new CourseException(
+                        ErrorCode.NOT_LEADER, "broker is not the online partition leader");
         } finally {
             state.lock.unlock();
         }

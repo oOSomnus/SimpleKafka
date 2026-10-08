@@ -17,6 +17,11 @@ import io.simplekafka.model.TopicPartition;
 import io.simplekafka.replication.AckPolicy;
 import io.simplekafka.replication.ReplicationTracker;
 import io.simplekafka.support.TimeSource;
+
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
@@ -26,9 +31,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.io.TempDir;
 
 class Step23Test {
     @TempDir Path root;
@@ -48,14 +50,15 @@ class Step23Test {
             now.set(2_000);
             assertEquals(Set.of(2, 3), tracker.expireLagging());
             ReplicationSnapshot beforeAll = tracker.snapshot();
-            CourseException insufficient = assertThrows(CourseException.class,
-                    () -> policy.validateBeforeAppend(Acks.ALL));
+            CourseException insufficient =
+                    assertThrows(
+                            CourseException.class, () -> policy.validateBeforeAppend(Acks.ALL));
             assertEquals(ErrorCode.NOT_ENOUGH_REPLICAS, insufficient.code());
             assertEquals(0, cluster.partitionLog(1, tp).logEndOffset());
             assertEquals(beforeAll, tracker.snapshot());
 
-            AppendResult leaderAcked = appendAsLeader(cluster, tp, 0, Acks.LEADER,
-                    List.of(record("leader-only", 2)));
+            AppendResult leaderAcked =
+                    appendAsLeader(cluster, tp, 0, Acks.LEADER, List.of(record("leader-only", 2)));
             assertEquals(new AppendResult(0, 1), leaderAcked);
             assertEquals(1, cluster.partitionLog(1, tp).logEndOffset());
             assertEquals(0, tracker.highWatermark());
@@ -73,13 +76,15 @@ class Step23Test {
             ReplicationTracker tracker = cluster.tracker(tp);
             AckPolicy policy = new AckPolicy(tracker);
 
-            AppendResult first = appendAsLeader(cluster, tp, 0, Acks.LEADER, List.of(record("first", 1)));
+            AppendResult first =
+                    appendAsLeader(cluster, tp, 0, Acks.LEADER, List.of(record("first", 1)));
             tracker.report(2, 0, 1);
             tracker.report(3, 0, 1);
             assertEquals(1, tracker.highWatermark());
             policy.await(first, Acks.ALL, 0, System.nanoTime() - TimeUnit.MILLISECONDS.toNanos(1));
 
-            AppendResult second = appendAsLeader(cluster, tp, 0, Acks.LEADER, List.of(record("second", 2)));
+            AppendResult second =
+                    appendAsLeader(cluster, tp, 0, Acks.LEADER, List.of(record("second", 2)));
             assertEquals(new AppendResult(1, 2), second);
             assertEquals(1, tracker.highWatermark());
             AckWaiter waiter = startWaiter(policy, second, 0, 5);
@@ -111,10 +116,13 @@ class Step23Test {
             AckPolicy policy = new AckPolicy(tracker);
 
             policy.validateBeforeAppend(Acks.ALL);
-            AppendResult pending = cluster.partitionLog(1, tp).append(List.of(record("retained", 1)));
+            AppendResult pending =
+                    cluster.partitionLog(1, tp).append(List.of(record("retained", 1)));
             tracker.report(1, 0, pending.nextOffset());
-            CourseException timeout = assertThrows(CourseException.class,
-                    () -> policy.await(pending, Acks.ALL, 0, System.nanoTime()));
+            CourseException timeout =
+                    assertThrows(
+                            CourseException.class,
+                            () -> policy.await(pending, Acks.ALL, 0, System.nanoTime()));
             assertEquals(ErrorCode.REQUEST_TIMEOUT, timeout.code());
             assertEquals(1, cluster.partitionLog(1, tp).logEndOffset());
             assertEquals(0, tracker.highWatermark());
@@ -132,7 +140,8 @@ class Step23Test {
             cluster.createTopic(tp.topic(), 1, 2);
             ReplicationTracker tracker = cluster.tracker(tp);
             AckPolicy policy = new AckPolicy(tracker);
-            AppendResult pending = appendAsLeader(cluster, tp, 0, Acks.LEADER, List.of(record("pending", 1)));
+            AppendResult pending =
+                    appendAsLeader(cluster, tp, 0, Acks.LEADER, List.of(record("pending", 1)));
             AckWaiter waiter = startWaiter(policy, pending, 0, 5);
             try {
                 awaitConditionWait(waiter.thread());
@@ -160,7 +169,8 @@ class Step23Test {
             cluster.createTopic(tp.topic(), 1, 2);
             ReplicationTracker tracker = cluster.tracker(tp);
             AckPolicy policy = new AckPolicy(tracker);
-            AppendResult pending = appendAsLeader(cluster, tp, 0, Acks.LEADER, List.of(record("pending", 1)));
+            AppendResult pending =
+                    appendAsLeader(cluster, tp, 0, Acks.LEADER, List.of(record("pending", 1)));
             AckWaiter waiter = startWaiter(policy, pending, 0, 5);
             try {
                 awaitConditionWait(waiter.thread());
@@ -184,8 +194,9 @@ class Step23Test {
             cluster.createTopic(interruptedTp.topic(), 1, 2);
             ReplicationTracker tracker = cluster.tracker(interruptedTp);
             AckPolicy policy = new AckPolicy(tracker);
-            AppendResult pending = appendAsLeader(cluster, interruptedTp, 0, Acks.LEADER,
-                    List.of(record("pending", 1)));
+            AppendResult pending =
+                    appendAsLeader(
+                            cluster, interruptedTp, 0, Acks.LEADER, List.of(record("pending", 1)));
             AckWaiter waiter = startWaiter(policy, pending, 0, 5);
             try {
                 awaitConditionWait(waiter.thread());
@@ -203,8 +214,12 @@ class Step23Test {
         }
     }
 
-    private static AppendResult appendAsLeader(ClusterHarness cluster, TopicPartition tp, int epoch,
-                                                Acks acks, List<RecordData> records) {
+    private static AppendResult appendAsLeader(
+            ClusterHarness cluster,
+            TopicPartition tp,
+            int epoch,
+            Acks acks,
+            List<RecordData> records) {
         ReplicationTracker tracker = cluster.tracker(tp);
         AckPolicy policy = new AckPolicy(tracker);
         policy.validateBeforeAppend(acks);
@@ -214,7 +229,8 @@ class Step23Test {
         return result;
     }
 
-    private static void advanceEpoch(io.simplekafka.cluster.ClusterAuthority authority, TopicPartition tp) {
+    private static void advanceEpoch(
+            io.simplekafka.cluster.ClusterAuthority authority, TopicPartition tp) {
         var state = authority.partitionState(tp);
         state.lock.lock();
         try {
@@ -225,24 +241,32 @@ class Step23Test {
         }
     }
 
-    private static AckWaiter startWaiter(AckPolicy policy, AppendResult result, int epoch, long timeoutSeconds)
+    private static AckWaiter startWaiter(
+            AckPolicy policy, AppendResult result, int epoch, long timeoutSeconds)
             throws InterruptedException {
         CountDownLatch started = new CountDownLatch(1);
         CountDownLatch completed = new CountDownLatch(1);
         AtomicReference<Throwable> failure = new AtomicReference<>();
         AtomicBoolean interruptPreserved = new AtomicBoolean();
-        Thread thread = new Thread(() -> {
-            started.countDown();
-            try {
-                policy.await(result, Acks.ALL, epoch,
-                        System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds));
-            } catch (Throwable thrown) {
-                failure.set(thrown);
-            } finally {
-                interruptPreserved.set(Thread.currentThread().isInterrupted());
-                completed.countDown();
-            }
-        }, "step23-all-ack-waiter");
+        Thread thread =
+                new Thread(
+                        () -> {
+                            started.countDown();
+                            try {
+                                policy.await(
+                                        result,
+                                        Acks.ALL,
+                                        epoch,
+                                        System.nanoTime()
+                                                + TimeUnit.SECONDS.toNanos(timeoutSeconds));
+                            } catch (Throwable thrown) {
+                                failure.set(thrown);
+                            } finally {
+                                interruptPreserved.set(Thread.currentThread().isInterrupted());
+                                completed.countDown();
+                            }
+                        },
+                        "step23-all-ack-waiter");
         thread.setDaemon(true);
         thread.start();
         assertTrue(started.await(2, TimeUnit.SECONDS));
@@ -253,7 +277,9 @@ class Step23Test {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
         while (thread.isAlive() && !isWaiting(thread.getState()) && System.nanoTime() < deadline)
             Thread.onSpinWait();
-        assertTrue(isWaiting(thread.getState()), "ALL acknowledgment did not wait for follower progress");
+        assertTrue(
+                isWaiting(thread.getState()),
+                "ALL acknowledgment did not wait for follower progress");
     }
 
     private static boolean isWaiting(Thread.State state) {
@@ -278,8 +304,11 @@ class Step23Test {
         assertFalse(waiter.thread().isAlive(), "acknowledgement worker did not terminate");
     }
 
-    private record AckWaiter(Thread thread, CountDownLatch completed, AtomicReference<Throwable> failure,
-                             AtomicBoolean interruptPreserved) {}
+    private record AckWaiter(
+            Thread thread,
+            CountDownLatch completed,
+            AtomicReference<Throwable> failure,
+            AtomicBoolean interruptPreserved) {}
 
     private static RecordData record(String value, long timestamp) {
         return new RecordData(null, value.getBytes(StandardCharsets.UTF_8), timestamp);

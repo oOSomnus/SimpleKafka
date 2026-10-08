@@ -1,5 +1,9 @@
 package io.simplekafka.support;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
 import io.simplekafka.CourseException;
 import io.simplekafka.ErrorCode;
 import io.simplekafka.model.Acks;
@@ -9,13 +13,12 @@ import io.simplekafka.model.RecordData;
 import io.simplekafka.model.TopicPartition;
 import io.simplekafka.protocol.Messages;
 import io.simplekafka.transport.RpcClient;
+
+import org.junit.jupiter.api.function.Executable;
+
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import org.junit.jupiter.api.function.Executable;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /** Domain fixtures and assertions shared by the permanent behavior tests. */
 public final class TestSupport {
@@ -45,20 +48,25 @@ public final class TestSupport {
         return List.copyOf(records);
     }
 
-    public static AppendResult append(RpcClient client, TopicPartition tp, List<RecordData> records) {
-        Messages.Reply reply = client.call(new Messages.ProduceRequest(tp, 0, Acks.LEADER, 5_000, records));
+    public static AppendResult append(
+            RpcClient client, TopicPartition tp, List<RecordData> records) {
+        Messages.Reply reply =
+                client.call(new Messages.ProduceRequest(tp, 0, Acks.LEADER, 5_000, records));
         assertEquals(ErrorCode.NONE, reply.error(), "produce reply: " + reply.body());
         return assertInstanceOf(Messages.ProduceBody.class, reply.body()).result();
     }
 
-    public static Messages.FetchBody fetch(RpcClient client, TopicPartition tp, long offset,
-                                           int maxRecords, int maxBytes) {
-        Messages.Reply reply = client.call(new Messages.FetchRequest(tp, 0, offset, maxRecords, maxBytes, null));
+    public static Messages.FetchBody fetch(
+            RpcClient client, TopicPartition tp, long offset, int maxRecords, int maxBytes) {
+        Messages.Reply reply =
+                client.call(new Messages.FetchRequest(tp, 0, offset, maxRecords, maxBytes, null));
         assertEquals(ErrorCode.NONE, reply.error(), "fetch reply: " + reply.body());
         return assertInstanceOf(Messages.FetchBody.class, reply.body());
     }
 
     public static List<String> values(List<LogRecord> records) {
-        return records.stream().map(record -> new String(record.data().value(), StandardCharsets.UTF_8)).toList();
+        return records.stream()
+                .map(record -> new String(record.data().value(), StandardCharsets.UTF_8))
+                .toList();
     }
 }

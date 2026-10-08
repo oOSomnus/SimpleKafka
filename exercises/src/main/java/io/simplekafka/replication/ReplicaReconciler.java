@@ -6,6 +6,7 @@ import io.simplekafka.cluster.RecoveryProof;
 import io.simplekafka.model.TopicPartition;
 import io.simplekafka.storage.PartitionLog;
 import io.simplekafka.transport.RpcClient;
+
 import java.util.Objects;
 import java.util.Optional;
 
@@ -17,8 +18,12 @@ public final class ReplicaReconciler {
     private final RpcClient client;
     private final ClusterAuthority authority;
 
-    public ReplicaReconciler(int brokerId, TopicPartition tp, PartitionLog log,
-                             RpcClient client, ClusterAuthority authority) {
+    public ReplicaReconciler(
+            int brokerId,
+            TopicPartition tp,
+            PartitionLog log,
+            RpcClient client,
+            ClusterAuthority authority) {
         this.brokerId = brokerId;
         this.tp = Objects.requireNonNull(tp);
         this.log = Objects.requireNonNull(log);
@@ -26,7 +31,10 @@ public final class ReplicaReconciler {
         this.authority = Objects.requireNonNull(authority);
     }
 
-    /** Step 26: capture log version before scanning, then check, repair and publish proof under authority-state and local-log monitors. See Step26Test and book step 26. */
+    /**
+     * Step 26: capture log version before scanning, then check, repair and publish proof under
+     * authority-state and local-log monitors. See Step26Test and book step 26.
+     */
     public long reconcile(int expectedEpoch) {
         throw new ExerciseNotImplementedException(26, "ReplicaReconciler.reconcile");
     }

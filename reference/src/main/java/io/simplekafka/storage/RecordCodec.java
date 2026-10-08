@@ -16,7 +16,7 @@ public final class RecordCodec {
     static final int MAX_LENGTH = 1_048_576;
     static final int FIXED_RECORD_BYTES = 32;
 
-    private RecordCodec() { }
+    private RecordCodec() {}
 
     public static ByteBuffer encode(LogRecord record) {
         if (record == null || record.offset() < 0 || record.data().timestamp() < 0)
@@ -52,7 +52,8 @@ public final class RecordCodec {
             throw new CourseException(ErrorCode.INVALID_REQUEST, "incomplete record length prefix");
         int length = input.getInt();
         if (length < MIN_LENGTH || length > MAX_LENGTH)
-            throw new CourseException(ErrorCode.CORRUPT_RECORD, "record length is outside the supported range");
+            throw new CourseException(
+                    ErrorCode.CORRUPT_RECORD, "record length is outside the supported range");
         long totalBytesLong = Integer.BYTES + (long) length;
         if (input.remaining() < length)
             throw new CourseException(ErrorCode.INVALID_REQUEST, "incomplete record body");
@@ -74,10 +75,12 @@ public final class RecordCodec {
         int keyLength = body.getInt();
         int valueLength = body.getInt();
         if (keyLength < -1 || valueLength < 0)
-            throw new CourseException(ErrorCode.CORRUPT_RECORD, "record contains an invalid byte-array length");
+            throw new CourseException(
+                    ErrorCode.CORRUPT_RECORD, "record contains an invalid byte-array length");
         long expectedPayloadBytes = (keyLength < 0 ? 0L : keyLength) + (long) valueLength;
         if (expectedPayloadBytes != body.remaining())
-            throw new CourseException(ErrorCode.CORRUPT_RECORD, "record byte-array lengths do not match its body");
+            throw new CourseException(
+                    ErrorCode.CORRUPT_RECORD, "record byte-array lengths do not match its body");
         byte[] key = null;
         if (keyLength >= 0) {
             key = new byte[keyLength];
@@ -90,7 +93,10 @@ public final class RecordCodec {
             source.position(end);
             return decoded;
         } catch (IllegalArgumentException exception) {
-            throw new CourseException(ErrorCode.CORRUPT_RECORD, "record contains an invalid offset or timestamp", exception);
+            throw new CourseException(
+                    ErrorCode.CORRUPT_RECORD,
+                    "record contains an invalid offset or timestamp",
+                    exception);
         }
     }
 
@@ -101,7 +107,8 @@ public final class RecordCodec {
         byte[] value = data.value();
         long length = MIN_LENGTH + (key == null ? 0L : key.length) + (long) value.length;
         if (length > MAX_LENGTH)
-            throw new CourseException(ErrorCode.INVALID_REQUEST, "encoded record exceeds the 1 MiB limit");
+            throw new CourseException(
+                    ErrorCode.INVALID_REQUEST, "encoded record exceeds the 1 MiB limit");
         return Math.toIntExact(length + Integer.BYTES);
     }
 }

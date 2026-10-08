@@ -2,9 +2,9 @@ package io.simplekafka.course;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.assertNull;
 
 import io.simplekafka.CourseException;
 import io.simplekafka.ErrorCode;
@@ -21,23 +21,26 @@ import io.simplekafka.protocol.Messages;
 import io.simplekafka.replication.LeaderElection;
 import io.simplekafka.support.TimeSource;
 import io.simplekafka.transport.RpcClient;
+
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicLong;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.io.TempDir;
+import java.util.concurrent.atomic.AtomicReference;
 
 class Step25Test {
     @TempDir Path root;
 
     @Test
-    @DisplayName("Elects the lowest eligible ISR and fences old epoch without losing committed prefix")
+    @DisplayName(
+            "Elects the lowest eligible ISR and fences old epoch without losing committed prefix")
     void electsTheLowestEligibleIsrAndFencesOldEpochWithoutLosingCommittedPrefix() {
         AtomicLong now = new AtomicLong(0);
         TimeSource clock = now::get;
@@ -56,7 +59,8 @@ class Step25Test {
             assertEquals(Map.of(1, 2L, 2, 2L, 3, 2L), cluster.snapshot(tp).perReplicaLEO());
 
             ReplicationSnapshot beforeOnlineElections = cluster.snapshot(tp);
-            Map<Integer, Long> caughtUpBeforeOnlineElections = caughtUpTimes(cluster.authority(), tp);
+            Map<Integer, Long> caughtUpBeforeOnlineElections =
+                    caughtUpTimes(cluster.authority(), tp);
             var metadataBeforeOnlineElections = cluster.authority().metadata(tp);
             now.set(10);
             var firstOnlineElection = cluster.elect(tp);
@@ -68,7 +72,8 @@ class Step25Test {
             assertEquals(beforeOnlineElections, cluster.snapshot(tp));
             assertEquals(caughtUpBeforeOnlineElections, caughtUpTimes(cluster.authority(), tp));
 
-            assertCode(ErrorCode.NOT_LEADER,
+            assertCode(
+                    ErrorCode.NOT_LEADER,
                     () -> new LeaderElection(cluster.authority()).checkLeader(2, tp, 0));
             cluster.stopBroker(1);
             cluster.stopBroker(2);
@@ -78,19 +83,25 @@ class Step25Test {
             assertEquals(List.of(3), elected.isr());
             assertEquals(2, cluster.snapshot(tp).highWatermark());
             assertEquals(Map.of(1, 0L, 2, 0L, 3, 2L), cluster.snapshot(tp).perReplicaLEO());
-            assertEquals(committedRecords(committed), cluster.partitionLog(3, tp).read(0, 10, 65_536));
+            assertEquals(
+                    committedRecords(committed), cluster.partitionLog(3, tp).read(0, 10, 65_536));
 
-            Messages.Reply staleProduce = produce(cluster, tp, 3, 0, Acks.LEADER, List.of(record("stale", 12)));
+            Messages.Reply staleProduce =
+                    produce(cluster, tp, 3, 0, Acks.LEADER, List.of(record("stale", 12)));
             assertEquals(ErrorCode.FENCED_EPOCH, staleProduce.error());
             assertEquals(2, cluster.partitionLog(3, tp).logEndOffset());
-            assertCode(ErrorCode.FENCED_EPOCH, () -> new LeaderElection(cluster.authority()).checkLeader(3, tp, 0));
+            assertCode(
+                    ErrorCode.FENCED_EPOCH,
+                    () -> new LeaderElection(cluster.authority()).checkLeader(3, tp, 0));
 
             cluster.restartBroker(1);
             assertTrue(cluster.authority().isOnline(1));
-            assertCode(ErrorCode.NOT_LEADER,
+            assertCode(
+                    ErrorCode.NOT_LEADER,
                     () -> new LeaderElection(cluster.authority()).checkLeader(1, tp, 1));
             ReplicationSnapshot beforeFailedElection = cluster.snapshot(tp);
-            Map<Integer, Long> caughtUpBeforeFailedElection = caughtUpTimes(cluster.authority(), tp);
+            Map<Integer, Long> caughtUpBeforeFailedElection =
+                    caughtUpTimes(cluster.authority(), tp);
             var metadataBeforeFailedElection = cluster.authority().metadata(tp);
             assertEquals(List.of(3), beforeFailedElection.isr());
             assertFalse(beforeFailedElection.isr().contains(1));
@@ -104,7 +115,6 @@ class Step25Test {
         }
     }
 
-
     @Test
     @DisplayName("Election fences an outstanding all ack without rolling back append")
     void electionFencesAnOutstandingAllAckWithoutRollingBackAppend() throws Exception {
@@ -116,26 +126,39 @@ class Step25Test {
             CountDownLatch completed = new CountDownLatch(1);
             AtomicReference<Messages.Reply> reply = new AtomicReference<>();
             AtomicReference<Throwable> failure = new AtomicReference<>();
-            Thread producer = new Thread(() -> {
-                started.countDown();
-                try (RpcClient client = new RpcClient(cluster.endpoint(1), 10_000)) {
-                    reply.set(client.call(new Messages.ProduceRequest(
-                            tp, 0, Acks.ALL, 5_000, List.of(record("pending", 10)))));
-                } catch (Throwable thrown) {
-                    failure.set(thrown);
-                } finally {
-                    completed.countDown();
-                }
-            }, "step25-pending-all-producer");
+            Thread producer =
+                    new Thread(
+                            () -> {
+                                started.countDown();
+                                try (RpcClient client =
+                                        new RpcClient(cluster.endpoint(1), 10_000)) {
+                                    reply.set(
+                                            client.call(
+                                                    new Messages.ProduceRequest(
+                                                            tp,
+                                                            0,
+                                                            Acks.ALL,
+                                                            5_000,
+                                                            List.of(record("pending", 10)))));
+                                } catch (Throwable thrown) {
+                                    failure.set(thrown);
+                                } finally {
+                                    completed.countDown();
+                                }
+                            },
+                            "step25-pending-all-producer");
             producer.setDaemon(true);
             producer.start();
 
             try {
                 assertTrue(started.await(2, TimeUnit.SECONDS));
                 long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-                while (producer.isAlive() && cluster.partitionLog(1, tp).logEndOffset() < 1
+                while (producer.isAlive()
+                        && cluster.partitionLog(1, tp).logEndOffset() < 1
                         && System.nanoTime() < deadline) Thread.onSpinWait();
-                assertEquals(1, cluster.partitionLog(1, tp).logEndOffset(),
+                assertEquals(
+                        1,
+                        cluster.partitionLog(1, tp).logEndOffset(),
                         "the append must reach disk before election");
                 assertEquals(0, cluster.tracker(tp).highWatermark());
                 ClusterAuthority.PartitionState state = cluster.authority().partitionState(tp);
@@ -158,7 +181,8 @@ class Step25Test {
                 assertFalse(producer.isAlive());
                 assertNull(failure.get());
                 assertEquals(ErrorCode.FENCED_EPOCH, reply.get().error());
-                assertEquals(List.of(new LogRecord(0, record("pending", 10))),
+                assertEquals(
+                        List.of(new LogRecord(0, record("pending", 10))),
                         cluster.partitionLog(1, tp).read(0, 10, 4_096));
                 assertEquals(List.of(), cluster.partitionLog(2, tp).read(0, 10, 4_096));
             } finally {
@@ -171,7 +195,8 @@ class Step25Test {
         }
     }
 
-    private static void awaitConditionWaiter(ClusterAuthority.PartitionState state, Thread producer) {
+    private static void awaitConditionWaiter(
+            ClusterAuthority.PartitionState state, Thread producer) {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
         boolean waiting = false;
         while (!waiting && producer.isAlive() && System.nanoTime() < deadline) {
@@ -194,7 +219,8 @@ class Step25Test {
         for (int brokerId : List.of(1, 2, 3))
             authority.registerBroker(brokerId, new Endpoint("127.0.0.1", 12_000 + brokerId));
         TopicPartition tp = new TopicPartition("step25-qualification", 0);
-        ClusterAuthority.PartitionState state = authority.createPartition(tp, 1, List.of(1, 2, 3), 1);
+        ClusterAuthority.PartitionState state =
+                authority.createPartition(tp, 1, List.of(1, 2, 3), 1);
         state.lock.lock();
         try {
             state.reportedLEO.put(1, 3L);
@@ -208,7 +234,6 @@ class Step25Test {
         assertFalse(authority.isOnline(1));
         assertEquals(Map.of(1, 3L, 2, 1L, 3, 3L), authority.snapshot(tp).perReplicaLEO());
         assertEquals(3, authority.snapshot(tp).highWatermark());
-
 
         var elected = new LeaderElection(authority).elect(tp);
         assertEquals(3, elected.leaderId());
@@ -227,8 +252,13 @@ class Step25Test {
         }
     }
 
-    private static Messages.Reply produce(ClusterHarness cluster, TopicPartition tp, int brokerId, int epoch,
-                                          Acks acks, List<RecordData> records) {
+    private static Messages.Reply produce(
+            ClusterHarness cluster,
+            TopicPartition tp,
+            int brokerId,
+            int epoch,
+            Acks acks,
+            List<RecordData> records) {
         try (RpcClient client = new RpcClient(cluster.endpoint(brokerId), 3_000)) {
             return client.call(new Messages.ProduceRequest(tp, epoch, acks, 2_000, records));
         }
@@ -242,7 +272,8 @@ class Step25Test {
         return new RecordData(null, value.getBytes(StandardCharsets.UTF_8), timestamp);
     }
 
-    private static void assertCode(ErrorCode expected, org.junit.jupiter.api.function.Executable action) {
+    private static void assertCode(
+            ErrorCode expected, org.junit.jupiter.api.function.Executable action) {
         CourseException exception = assertThrows(CourseException.class, action);
         assertEquals(expected, exception.code());
     }

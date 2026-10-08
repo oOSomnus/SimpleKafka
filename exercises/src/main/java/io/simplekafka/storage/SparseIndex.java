@@ -1,8 +1,8 @@
 package io.simplekafka.storage;
 
-import io.simplekafka.ExerciseNotImplementedException;
-import io.simplekafka.ErrorCode;
 import io.simplekafka.CourseException;
+import io.simplekafka.ErrorCode;
+import io.simplekafka.ExerciseNotImplementedException;
 import io.simplekafka.model.IndexEntry;
 
 import java.io.IOException;
@@ -30,34 +30,53 @@ public final class SparseIndex implements AutoCloseable {
 
     public SparseIndex(Path path, long baseOffset, int intervalRecords) {
         if (path == null || baseOffset < 0 || intervalRecords <= 0)
-            throw new CourseException(ErrorCode.INVALID_REQUEST, "invalid sparse index configuration");
+            throw new CourseException(
+                    ErrorCode.INVALID_REQUEST, "invalid sparse index configuration");
         this.path = path;
         this.baseOffset = baseOffset;
         this.intervalRecords = intervalRecords;
         try {
             Path parent = path.getParent();
             if (parent != null) Files.createDirectories(parent);
-            channel = FileChannel.open(path, StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE);
+            channel =
+                    FileChannel.open(
+                            path,
+                            StandardOpenOption.CREATE,
+                            StandardOpenOption.READ,
+                            StandardOpenOption.WRITE);
             loadIfValid();
         } catch (IOException exception) {
             if (channel != null) {
-                try { channel.close(); } catch (IOException closeFailure) { exception.addSuppressed(closeFailure); }
+                try {
+                    channel.close();
+                } catch (IOException closeFailure) {
+                    exception.addSuppressed(closeFailure);
+                }
             }
             throw storageError("open sparse index", exception);
         }
     }
 
-    /** Step 5: persist the first and each interval-th offset/byte position in increasing order. See Step05Test and book step 5. */
+    /**
+     * Step 5: persist the first and each interval-th offset/byte position in increasing order. See
+     * Step05Test and book step 5.
+     */
     public synchronized void add(long offset, long position) {
         throw new ExerciseNotImplementedException(5, "SparseIndex.add");
     }
 
-    /** Step 5: return the greatest indexed offset at or before the target, or the base/zero fallback. See Step05Test and book step 5. */
+    /**
+     * Step 5: return the greatest indexed offset at or before the target, or the base/zero
+     * fallback. See Step05Test and book step 5.
+     */
     public synchronized IndexEntry floor(long offset) {
         throw new ExerciseNotImplementedException(5, "SparseIndex.floor");
     }
 
-    /** Step 5: rebuild ordered hints from every validated record in the segment; the log remains the source of truth. See Step05Test and book step 5. */
+    /**
+     * Step 5: rebuild ordered hints from every validated record in the segment; the log remains the
+     * source of truth. See Step05Test and book step 5.
+     */
     public synchronized void rebuild(Path logFile, long baseOffset) {
         throw new ExerciseNotImplementedException(5, "SparseIndex.rebuild");
     }
@@ -87,10 +106,12 @@ public final class SparseIndex implements AutoCloseable {
                 long offset = entry.getLong();
                 long bytePosition = entry.getLong();
                 boolean first = entries.isEmpty();
-                if (offset < baseOffset || bytePosition < 0
+                if (offset < baseOffset
+                        || bytePosition < 0
                         || (first && (offset != baseOffset || bytePosition != 0))
-                        || (!first && (offset - previousOffset != intervalRecords
-                        || bytePosition <= previousPosition))) {
+                        || (!first
+                                && (offset - previousOffset != intervalRecords
+                                        || bytePosition <= previousPosition))) {
                     valid = false;
                     break;
                 }
@@ -109,8 +130,13 @@ public final class SparseIndex implements AutoCloseable {
         }
     }
 
-    Path path() { return path; }
-    long baseOffset() { return baseOffset; }
+    Path path() {
+        return path;
+    }
+
+    long baseOffset() {
+        return baseOffset;
+    }
 
     private void ensureOpen() {
         if (closed) throw new CourseException(ErrorCode.STORAGE_ERROR, "sparse index is closed");
@@ -120,7 +146,8 @@ public final class SparseIndex implements AutoCloseable {
         return new CourseException(ErrorCode.STORAGE_ERROR, "failed to " + action, cause);
     }
 
-    @Override public synchronized void close() {
+    @Override
+    public synchronized void close() {
         if (closed) return;
         closed = true;
         try {

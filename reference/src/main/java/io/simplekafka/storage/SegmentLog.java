@@ -39,11 +39,16 @@ public final class SegmentLog implements AutoCloseable {
         try {
             Path parent = path.getParent();
             if (parent != null) Files.createDirectories(parent);
-            FileChannel channel = FileChannel.open(path, StandardOpenOption.CREATE_NEW,
-                    StandardOpenOption.READ, StandardOpenOption.WRITE);
+            FileChannel channel =
+                    FileChannel.open(
+                            path,
+                            StandardOpenOption.CREATE_NEW,
+                            StandardOpenOption.READ,
+                            StandardOpenOption.WRITE);
             return new SegmentLog(path, channel, baseOffset);
         } catch (FileAlreadyExistsException exception) {
-            throw new CourseException(ErrorCode.INVALID_REQUEST, "segment already exists: " + path, exception);
+            throw new CourseException(
+                    ErrorCode.INVALID_REQUEST, "segment already exists: " + path, exception);
         } catch (IOException exception) {
             throw storageError("create segment " + path, exception);
         }
@@ -62,7 +67,11 @@ public final class SegmentLog implements AutoCloseable {
             segment.recover();
             return segment;
         } catch (RuntimeException exception) {
-            try { segment.close(); } catch (RuntimeException closeFailure) { exception.addSuppressed(closeFailure); }
+            try {
+                segment.close();
+            } catch (RuntimeException closeFailure) {
+                exception.addSuppressed(closeFailure);
+            }
             throw exception;
         }
     }
@@ -83,7 +92,8 @@ public final class SegmentLog implements AutoCloseable {
                 try {
                     candidateNext = Math.addExact(candidateNext, 1L);
                 } catch (ArithmeticException exception) {
-                    throw new CourseException(ErrorCode.INVALID_REQUEST, "log end offset overflow", exception);
+                    throw new CourseException(
+                            ErrorCode.INVALID_REQUEST, "log end offset overflow", exception);
                 }
             }
             long position = channel.size();
@@ -106,16 +116,19 @@ public final class SegmentLog implements AutoCloseable {
         return readFrom(offset, 0, maxRecords, maxBytes);
     }
 
-    public List<LogRecord> readFrom(long offset, long bytePositionHint, int maxRecords, int maxBytes) {
+    public List<LogRecord> readFrom(
+            long offset, long bytePositionHint, int maxRecords, int maxBytes) {
         if (maxRecords <= 0 || maxBytes <= 0)
             throw new CourseException(ErrorCode.INVALID_REQUEST, "read limits must be positive");
         lock.lock();
         try {
             ensureOpen();
             if (offset < baseOffset || offset > nextOffset)
-                throw new CourseException(ErrorCode.OFFSET_OUT_OF_RANGE, "offset is outside this segment");
+                throw new CourseException(
+                        ErrorCode.OFFSET_OUT_OF_RANGE, "offset is outside this segment");
             if (bytePositionHint < 0)
-                throw new CourseException(ErrorCode.INVALID_REQUEST, "byte-position hint must be nonnegative");
+                throw new CourseException(
+                        ErrorCode.INVALID_REQUEST, "byte-position hint must be nonnegative");
             long fileSize = channel.size();
             Hint hint = validateHint(bytePositionHint, offset, fileSize);
             long position = hint.position();
@@ -128,14 +141,17 @@ public final class SegmentLog implements AutoCloseable {
                 RecordAt found = readRecordAt(position, fileSize);
                 long recordOffset = found.record().offset();
                 if (recordOffset != expectedOffset)
-                    throw new CourseException(ErrorCode.CORRUPT_RECORD, "segment offsets are not contiguous");
+                    throw new CourseException(
+                            ErrorCode.CORRUPT_RECORD, "segment offsets are not contiguous");
                 expectedOffset++;
                 if (recordOffset < offset) {
                     position += found.bytes();
                     continue;
                 }
                 if (recordOffset > offset && result.isEmpty())
-                    throw new CourseException(ErrorCode.INVALID_REQUEST, "byte-position hint skipped the requested offset");
+                    throw new CourseException(
+                            ErrorCode.INVALID_REQUEST,
+                            "byte-position hint skipped the requested offset");
                 long nextBytes = totalBytes + found.bytes();
                 if (nextBytes > maxBytes) break;
                 result.add(found.record());
@@ -163,12 +179,14 @@ public final class SegmentLog implements AutoCloseable {
                     truncateTail(position);
                     break;
                 }
-                ByteBuffer lengthBuffer = ByteBuffer.allocate(Integer.BYTES).order(ByteOrder.BIG_ENDIAN);
+                ByteBuffer lengthBuffer =
+                        ByteBuffer.allocate(Integer.BYTES).order(ByteOrder.BIG_ENDIAN);
                 ChannelIO.readFully(channel, lengthBuffer, position);
                 lengthBuffer.flip();
                 int length = lengthBuffer.getInt();
                 if (length < RecordCodec.MIN_LENGTH || length > RecordCodec.MAX_LENGTH)
-                    throw new CourseException(ErrorCode.CORRUPT_RECORD, "segment contains an invalid record length");
+                    throw new CourseException(
+                            ErrorCode.CORRUPT_RECORD, "segment contains an invalid record length");
                 long recordBytes = Integer.BYTES + (long) length;
                 if (remaining < recordBytes) {
                     truncateTail(position);
@@ -176,12 +194,14 @@ public final class SegmentLog implements AutoCloseable {
                 }
                 RecordAt found = readRecordAt(position, fileSize);
                 if (found.record().offset() != expectedOffset)
-                    throw new CourseException(ErrorCode.CORRUPT_RECORD, "segment offsets are not contiguous");
+                    throw new CourseException(
+                            ErrorCode.CORRUPT_RECORD, "segment offsets are not contiguous");
                 position += found.bytes();
                 try {
                     expectedOffset = Math.addExact(expectedOffset, 1L);
                 } catch (ArithmeticException exception) {
-                    throw new CourseException(ErrorCode.CORRUPT_RECORD, "segment offset overflow", exception);
+                    throw new CourseException(
+                            ErrorCode.CORRUPT_RECORD, "segment offset overflow", exception);
                 }
             }
             nextOffset = expectedOffset;
@@ -193,7 +213,9 @@ public final class SegmentLog implements AutoCloseable {
         }
     }
 
-    public long baseOffset() { return baseOffset; }
+    public long baseOffset() {
+        return baseOffset;
+    }
 
     public long logEndOffset() {
         lock.lock();
@@ -217,14 +239,17 @@ public final class SegmentLog implements AutoCloseable {
         }
     }
 
-    public Path path() { return path; }
+    public Path path() {
+        return path;
+    }
 
     void truncateToOffset(long offset) {
         lock.lock();
         try {
             ensureOpen();
             if (offset < baseOffset || offset > nextOffset)
-                throw new CourseException(ErrorCode.OFFSET_OUT_OF_RANGE, "truncate offset is outside this segment");
+                throw new CourseException(
+                        ErrorCode.OFFSET_OUT_OF_RANGE, "truncate offset is outside this segment");
             if (offset == nextOffset) return;
             long fileSize = channel.size();
             long position = 0;
@@ -233,12 +258,14 @@ public final class SegmentLog implements AutoCloseable {
                 if (expectedOffset == offset) break;
                 RecordAt found = readRecordAt(position, fileSize);
                 if (found.record().offset() != expectedOffset)
-                    throw new CourseException(ErrorCode.CORRUPT_RECORD, "segment offsets are not contiguous");
+                    throw new CourseException(
+                            ErrorCode.CORRUPT_RECORD, "segment offsets are not contiguous");
                 position += found.bytes();
                 expectedOffset++;
             }
             if (expectedOffset != offset)
-                throw new CourseException(ErrorCode.CORRUPT_RECORD, "truncate offset is not a record boundary");
+                throw new CourseException(
+                        ErrorCode.CORRUPT_RECORD, "truncate offset is not a record boundary");
             channel.truncate(position);
             channel.force(false);
             nextOffset = offset;
@@ -251,35 +278,42 @@ public final class SegmentLog implements AutoCloseable {
 
     private Hint validateHint(long hint, long requestedOffset, long fileSize) throws IOException {
         if (hint > fileSize)
-            throw new CourseException(ErrorCode.INVALID_REQUEST, "byte-position hint exceeds segment size");
+            throw new CourseException(
+                    ErrorCode.INVALID_REQUEST, "byte-position hint exceeds segment size");
         long position = 0;
         long expectedOffset = baseOffset;
         while (position < hint) {
             RecordAt found = readRecordAt(position, fileSize);
             if (found.record().offset() != expectedOffset)
-                throw new CourseException(ErrorCode.CORRUPT_RECORD, "segment offsets are not contiguous");
+                throw new CourseException(
+                        ErrorCode.CORRUPT_RECORD, "segment offsets are not contiguous");
             position += found.bytes();
             expectedOffset++;
             if (position > hint)
-                throw new CourseException(ErrorCode.INVALID_REQUEST, "byte-position hint is not a record boundary");
+                throw new CourseException(
+                        ErrorCode.INVALID_REQUEST, "byte-position hint is not a record boundary");
         }
         if (position != hint || expectedOffset > requestedOffset)
-            throw new CourseException(ErrorCode.INVALID_REQUEST, "byte-position hint skips the requested offset");
+            throw new CourseException(
+                    ErrorCode.INVALID_REQUEST, "byte-position hint skips the requested offset");
         return new Hint(position, expectedOffset);
     }
 
     private RecordAt readRecordAt(long position, long fileSize) throws IOException {
         if (position < 0 || position >= fileSize || fileSize - position < Integer.BYTES)
-            throw new CourseException(ErrorCode.CORRUPT_RECORD, "segment ends in an incomplete record header");
+            throw new CourseException(
+                    ErrorCode.CORRUPT_RECORD, "segment ends in an incomplete record header");
         ByteBuffer lengthBuffer = ByteBuffer.allocate(Integer.BYTES).order(ByteOrder.BIG_ENDIAN);
         ChannelIO.readFully(channel, lengthBuffer, position);
         lengthBuffer.flip();
         int length = lengthBuffer.getInt();
         if (length < RecordCodec.MIN_LENGTH || length > RecordCodec.MAX_LENGTH)
-            throw new CourseException(ErrorCode.CORRUPT_RECORD, "segment contains an invalid record length");
+            throw new CourseException(
+                    ErrorCode.CORRUPT_RECORD, "segment contains an invalid record length");
         int totalBytes = Integer.BYTES + length;
         if (fileSize - position < totalBytes)
-            throw new CourseException(ErrorCode.CORRUPT_RECORD, "segment ends in an incomplete record body");
+            throw new CourseException(
+                    ErrorCode.CORRUPT_RECORD, "segment ends in an incomplete record body");
         ByteBuffer encoded = ByteBuffer.allocate(totalBytes).order(ByteOrder.BIG_ENDIAN);
         encoded.putInt(length);
         ChannelIO.readFully(channel, encoded, position + Integer.BYTES);
@@ -294,19 +328,22 @@ public final class SegmentLog implements AutoCloseable {
     }
 
     private void ensureOpen() {
-        if (closed) throw new CourseException(ErrorCode.STORAGE_ERROR, "segment is closed: " + path);
+        if (closed)
+            throw new CourseException(ErrorCode.STORAGE_ERROR, "segment is closed: " + path);
     }
 
     private static void validatePathAndBase(Path path, long baseOffset) {
         if (path == null || baseOffset < 0)
-            throw new CourseException(ErrorCode.INVALID_REQUEST, "segment path and base offset must be valid");
+            throw new CourseException(
+                    ErrorCode.INVALID_REQUEST, "segment path and base offset must be valid");
     }
 
     private static CourseException storageError(String action, IOException cause) {
         return new CourseException(ErrorCode.STORAGE_ERROR, "failed to " + action, cause);
     }
 
-    @Override public void close() {
+    @Override
+    public void close() {
         lock.lock();
         try {
             if (closed) return;
@@ -319,6 +356,7 @@ public final class SegmentLog implements AutoCloseable {
         }
     }
 
-    private record RecordAt(LogRecord record, int bytes) { }
-    private record Hint(long position, long offset) { }
+    private record RecordAt(LogRecord record, int bytes) {}
+
+    private record Hint(long position, long offset) {}
 }

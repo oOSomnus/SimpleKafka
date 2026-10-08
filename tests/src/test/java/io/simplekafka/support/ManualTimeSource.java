@@ -7,7 +7,8 @@ public final class ManualTimeSource implements TimeSource {
     private final AtomicLong nowMillis;
 
     public ManualTimeSource(long initialMillis) {
-        if (initialMillis < 0) throw new IllegalArgumentException("initialMillis must be nonnegative");
+        if (initialMillis < 0)
+            throw new IllegalArgumentException("initialMillis must be nonnegative");
         nowMillis = new AtomicLong(initialMillis);
     }
 

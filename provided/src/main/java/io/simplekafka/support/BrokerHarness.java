@@ -10,6 +10,7 @@ import io.simplekafka.group.RoundRobinAssignor;
 import io.simplekafka.model.Endpoint;
 import io.simplekafka.protocol.Messages;
 import io.simplekafka.transport.BrokerServer;
+
 import java.nio.file.Path;
 import java.util.Objects;
 import java.util.concurrent.Executors;
@@ -34,12 +35,19 @@ public final class BrokerHarness implements AutoCloseable {
     private Endpoint endpoint;
     private boolean closed;
 
-    private BrokerHarness(Path root, int brokerId, int port, String initialTopic, int initialPartitions) {
+    private BrokerHarness(
+            Path root, int brokerId, int port, String initialTopic, int initialPartitions) {
         this(root, brokerId, port, initialTopic, initialPartitions, null, 0);
     }
 
-    private BrokerHarness(Path root, int brokerId, int port, String initialTopic, int initialPartitions,
-                          TimeSource groupClock, long groupSessionTimeoutMillis) {
+    private BrokerHarness(
+            Path root,
+            int brokerId,
+            int port,
+            String initialTopic,
+            int initialPartitions,
+            TimeSource groupClock,
+            long groupSessionTimeoutMillis) {
         this.root = Objects.requireNonNull(root, "root").toAbsolutePath().normalize();
         if (brokerId < 0) throw new IllegalArgumentException("brokerId must be nonnegative");
         if (port < 0 || port > 65535) throw new IllegalArgumentException("invalid port");
@@ -62,14 +70,25 @@ public final class BrokerHarness implements AutoCloseable {
     }
 
     /** Starts a broker and creates/reopens the requested fixed-partition topic. */
-    public static BrokerHarness single(Path root, int brokerId, int port, String topic, int partitions) {
-        return new BrokerHarness(root, brokerId, port, Objects.requireNonNull(topic, "topic"), partitions).startAndReturn();
+    public static BrokerHarness single(
+            Path root, int brokerId, int port, String topic, int partitions) {
+        return new BrokerHarness(
+                        root, brokerId, port, Objects.requireNonNull(topic, "topic"), partitions)
+                .startAndReturn();
     }
+
     /** Starts a single broker with durable offsets and group coordination enabled. */
-    public static BrokerHarness single(Path root, int brokerId, int port,
-                                       TimeSource clock, long sessionTimeoutMillis) {
-        return new BrokerHarness(root, brokerId, port, null, 0,
-                Objects.requireNonNull(clock, "clock"), sessionTimeoutMillis).startAndReturn();
+    public static BrokerHarness single(
+            Path root, int brokerId, int port, TimeSource clock, long sessionTimeoutMillis) {
+        return new BrokerHarness(
+                        root,
+                        brokerId,
+                        port,
+                        null,
+                        0,
+                        Objects.requireNonNull(clock, "clock"),
+                        sessionTimeoutMillis)
+                .startAndReturn();
     }
 
     /** Starts the full replicated teaching harness using the shared authority. */
@@ -87,6 +106,7 @@ public final class BrokerHarness implements AutoCloseable {
     public static ClusterHarness replicated(Path root) {
         return replicated(root, SystemTimeSource.INSTANCE);
     }
+
     private BrokerHarness startAndReturn() {
         try {
             start();
@@ -107,17 +127,30 @@ public final class BrokerHarness implements AutoCloseable {
             if (initialTopic != null) catalog.createTopic(initialTopic, initialPartitions);
             if (groupClock != null) {
                 offsets = new OffsetStore(root.resolve("offsets.log"));
-                groups = new GroupCoordinator(catalog, new RoundRobinAssignor(), groupClock, groupSessionTimeoutMillis);
-                groupExpiry = Executors.newSingleThreadScheduledExecutor(task -> {
-                    Thread thread = new Thread(task, "simple-kafka-group-expiry-" + brokerId);
-                    thread.setDaemon(true);
-                    return thread;
-                });
+                groups =
+                        new GroupCoordinator(
+                                catalog,
+                                new RoundRobinAssignor(),
+                                groupClock,
+                                groupSessionTimeoutMillis);
+                groupExpiry =
+                        Executors.newSingleThreadScheduledExecutor(
+                                task -> {
+                                    Thread thread =
+                                            new Thread(
+                                                    task, "simple-kafka-group-expiry-" + brokerId);
+                                    thread.setDaemon(true);
+                                    return thread;
+                                });
                 long periodMillis = Math.max(1, Math.min(groupSessionTimeoutMillis / 2, 250));
-                groupExpiry.scheduleAtFixedRate(() -> {
-                    GroupCoordinator current = groups;
-                    if (current != null) current.expire();
-                }, periodMillis, periodMillis, TimeUnit.MILLISECONDS);
+                groupExpiry.scheduleAtFixedRate(
+                        () -> {
+                            GroupCoordinator current = groups;
+                            if (current != null) current.expire();
+                        },
+                        periodMillis,
+                        periodMillis,
+                        TimeUnit.MILLISECONDS);
             }
             handler = new BrokerHandler(catalog, null, groups, offsets);
             return endpoint;
@@ -138,25 +171,32 @@ public final class BrokerHarness implements AutoCloseable {
         return catalog;
     }
 
-    public int brokerId() { return brokerId; }
+    public int brokerId() {
+        return brokerId;
+    }
 
     /** Runs deterministic group expiry for tests using an injected clock. */
     public java.util.Set<String> expireGroups() {
         GroupCoordinator current;
-        synchronized (this) { current = groups; }
+        synchronized (this) {
+            current = groups;
+        }
         if (current == null) throw new IllegalStateException("group coordination is disabled");
         return current.expire();
     }
 
     private Messages.Reply dispatch(Messages.Request request) {
         BrokerHandler current;
-        synchronized (this) { current = handler; }
+        synchronized (this) {
+            current = handler;
+        }
         if (current == null)
             return Messages.Reply.failure(ErrorCode.INVALID_REQUEST, "broker is not ready");
         return current.handle(request);
     }
 
-    @Override public synchronized void close() {
+    @Override
+    public synchronized void close() {
         if (closed) return;
         closed = true;
         server.close();
@@ -171,18 +211,26 @@ public final class BrokerHarness implements AutoCloseable {
         handler = null;
         RuntimeException failure = null;
         if (groups != null) {
-            try { groups.close(); } catch (RuntimeException exception) { failure = exception; }
+            try {
+                groups.close();
+            } catch (RuntimeException exception) {
+                failure = exception;
+            }
             groups = null;
         }
         if (offsets != null) {
-            try { offsets.close(); } catch (RuntimeException exception) {
+            try {
+                offsets.close();
+            } catch (RuntimeException exception) {
                 if (failure == null) failure = exception;
                 else failure.addSuppressed(exception);
             }
             offsets = null;
         }
         if (catalog != null) {
-            try { catalog.close(); } catch (RuntimeException exception) {
+            try {
+                catalog.close();
+            } catch (RuntimeException exception) {
                 if (failure == null) failure = exception;
                 else failure.addSuppressed(exception);
             }

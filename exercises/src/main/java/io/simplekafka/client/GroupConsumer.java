@@ -8,11 +8,15 @@ import io.simplekafka.model.LogRecord;
 import io.simplekafka.model.TopicPartition;
 import io.simplekafka.protocol.Messages;
 import io.simplekafka.transport.RpcClient;
+
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-/** Same-topic group consumer with heartbeat fencing; owns a direct RpcClient and borrows a shared MetadataRouter. */
+/**
+ * Same-topic group consumer with heartbeat fencing; owns a direct RpcClient and borrows a shared
+ * MetadataRouter.
+ */
 public final class GroupConsumer implements AutoCloseable {
     private final MetadataRouter router;
     private final String group;
@@ -37,18 +41,18 @@ public final class GroupConsumer implements AutoCloseable {
     }
 
     /**
-     * Step 20: join this same-topic group and establish the member's assignment/token.
-     * Contract: subscribe is the explicit way to rejoin after UNKNOWN_MEMBER. Test: Step20Test.
-     * Lesson: docs/book/chapters/05-consumer-groups.tex, Step 20.
+     * Step 20: join this same-topic group and establish the member's assignment/token. Contract:
+     * subscribe is the explicit way to rejoin after UNKNOWN_MEMBER. Test: Step20Test. Lesson:
+     * docs/book/chapters/05-consumer-groups.tex, Step 20.
      */
     public void subscribe(String topic) {
         throw new ExerciseNotImplementedException(20, "subscribe");
     }
 
     /**
-     * Step 20: heartbeat, recover stale generations from the current assignment, then fetch with token.
-     * Contract: do not auto-rejoin an UNKNOWN_MEMBER; discard revoked positions and resume new ones.
-     * Test: Step20Test. Lesson: docs/book/chapters/05-consumer-groups.tex, Step 20.
+     * Step 20: heartbeat, recover stale generations from the current assignment, then fetch with
+     * token. Contract: do not auto-rejoin an UNKNOWN_MEMBER; discard revoked positions and resume
+     * new ones. Test: Step20Test. Lesson: docs/book/chapters/05-consumer-groups.tex, Step 20.
      */
     public Map<TopicPartition, List<LogRecord>> poll(int maxRecords, int maxBytes) {
         throw new ExerciseNotImplementedException(20, "poll");
@@ -56,8 +60,8 @@ public final class GroupConsumer implements AutoCloseable {
 
     /**
      * Step 20: commit positions with the current group token and server-side ownership fence.
-     * Contract: a stale generation/non-owner commit leaves stored offsets unchanged.
-     * Test: Step20Test. Lesson: docs/book/chapters/05-consumer-groups.tex, Step 20.
+     * Contract: a stale generation/non-owner commit leaves stored offsets unchanged. Test:
+     * Step20Test. Lesson: docs/book/chapters/05-consumer-groups.tex, Step 20.
      */
     public void commitSync() {
         throw new ExerciseNotImplementedException(20, "commitSync");
@@ -71,7 +75,8 @@ public final class GroupConsumer implements AutoCloseable {
         try {
             return new GroupToken(group, member, 0);
         } catch (RuntimeException exception) {
-            throw new CourseException(ErrorCode.INVALID_REQUEST, "invalid group/member identifier", exception);
+            throw new CourseException(
+                    ErrorCode.INVALID_REQUEST, "invalid group/member identifier", exception);
         }
     }
 
@@ -79,7 +84,8 @@ public final class GroupConsumer implements AutoCloseable {
         if (closed) throw new IllegalStateException("group consumer is closed");
     }
 
-    @Override public void close() {
+    @Override
+    public void close() {
         if (closed) return;
         closed = true;
         consumer.close();

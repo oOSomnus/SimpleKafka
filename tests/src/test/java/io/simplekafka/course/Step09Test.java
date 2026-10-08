@@ -1,13 +1,17 @@
 package io.simplekafka.course;
 
+import static io.simplekafka.support.TestSupport.assertCode;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
 import io.simplekafka.ErrorCode;
 import io.simplekafka.client.Partitioner;
+
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
 import java.nio.charset.StandardCharsets;
 import java.util.zip.CRC32C;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.DisplayName;
-import static io.simplekafka.support.TestSupport.assertCode;
-import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class Step09Test {
     @Test
@@ -75,8 +79,7 @@ class Step09Test {
     void requiresAPositivePartitionCount() {
         Partitioner partitioner = new Partitioner();
         assertCode(ErrorCode.INVALID_REQUEST, () -> partitioner.choose(null, 0));
-        assertCode(ErrorCode.INVALID_REQUEST,
-                () -> partitioner.choose(new byte[]{1}, -1));
+        assertCode(ErrorCode.INVALID_REQUEST, () -> partitioner.choose(new byte[] {1}, -1));
         assertEquals(0, partitioner.choose(null, 3));
         assertEquals(1, partitioner.choose(null, 3));
     }

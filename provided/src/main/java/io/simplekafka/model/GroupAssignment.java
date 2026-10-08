@@ -11,7 +11,9 @@ public record GroupAssignment(int generation, Map<String, List<TopicPartition>> 
         if (generation < 0) throw new IllegalArgumentException("generation must be nonnegative");
         Objects.requireNonNull(assignments, "assignments");
         TreeMap<String, List<TopicPartition>> copy = new TreeMap<>();
-        assignments.forEach((member, partitions) -> copy.put(Objects.requireNonNull(member), List.copyOf(partitions)));
+        assignments.forEach(
+                (member, partitions) ->
+                        copy.put(Objects.requireNonNull(member), List.copyOf(partitions)));
         assignments = Collections.unmodifiableMap(copy);
     }
 }

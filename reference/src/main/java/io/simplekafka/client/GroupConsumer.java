@@ -8,11 +8,15 @@ import io.simplekafka.model.LogRecord;
 import io.simplekafka.model.TopicPartition;
 import io.simplekafka.protocol.Messages;
 import io.simplekafka.transport.RpcClient;
+
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-/** Same-topic group consumer with heartbeat fencing; owns a direct RpcClient and borrows a shared MetadataRouter. */
+/**
+ * Same-topic group consumer with heartbeat fencing; owns a direct RpcClient and borrows a shared
+ * MetadataRouter.
+ */
 public final class GroupConsumer implements AutoCloseable {
     private final MetadataRouter router;
     private final String group;
@@ -41,13 +45,18 @@ public final class GroupConsumer implements AutoCloseable {
         try {
             new TopicPartition(topic, 0);
         } catch (RuntimeException exception) {
-            throw new CourseException(ErrorCode.INVALID_REQUEST, "invalid subscription topic", exception);
+            throw new CourseException(
+                    ErrorCode.INVALID_REQUEST, "invalid subscription topic", exception);
         }
         if (router != null) router.refresh(topic);
         Messages.JoinGroupRequest request = new Messages.JoinGroupRequest(group, member, topic);
-        GroupAssignment assignment = ClientSupport.requireBody(controlCall(request), Messages.GroupBody.class).assignment();
+        GroupAssignment assignment =
+                ClientSupport.requireBody(controlCall(request), Messages.GroupBody.class)
+                        .assignment();
         List<TopicPartition> assigned = assignment.assignments().get(member);
-        if (assigned == null) throw new CourseException(ErrorCode.UNKNOWN_MEMBER, "member is not present in returned group assignment");
+        if (assigned == null)
+            throw new CourseException(
+                    ErrorCode.UNKNOWN_MEMBER, "member is not present in returned group assignment");
         this.topic = topic;
         this.token = new GroupToken(group, member, assignment.generation());
         consumer.setGroupToken(token);
@@ -73,10 +82,15 @@ public final class GroupConsumer implements AutoCloseable {
     }
 
     private void refreshAssignment() {
-        Messages.GroupAssignmentRequest request = new Messages.GroupAssignmentRequest(group, member);
-        GroupAssignment assignment = ClientSupport.requireBody(controlCall(request), Messages.GroupBody.class).assignment();
+        Messages.GroupAssignmentRequest request =
+                new Messages.GroupAssignmentRequest(group, member);
+        GroupAssignment assignment =
+                ClientSupport.requireBody(controlCall(request), Messages.GroupBody.class)
+                        .assignment();
         List<TopicPartition> assigned = assignment.assignments().get(member);
-        if (assigned == null) throw new CourseException(ErrorCode.UNKNOWN_MEMBER, "member is not present in current group assignment");
+        if (assigned == null)
+            throw new CourseException(
+                    ErrorCode.UNKNOWN_MEMBER, "member is not present in current group assignment");
         token = new GroupToken(group, member, assignment.generation());
         consumer.applyGroupAssignment(assigned);
         consumer.setGroupToken(token);
@@ -90,20 +104,23 @@ public final class GroupConsumer implements AutoCloseable {
         try {
             return new GroupToken(group, member, 0);
         } catch (RuntimeException exception) {
-            throw new CourseException(ErrorCode.INVALID_REQUEST, "invalid group/member identifier", exception);
+            throw new CourseException(
+                    ErrorCode.INVALID_REQUEST, "invalid group/member identifier", exception);
         }
     }
 
     private void ensureSubscribed() {
         ensureOpen();
-        if (token == null || topic == null) throw new CourseException(ErrorCode.INVALID_REQUEST, "subscribe must be called first");
+        if (token == null || topic == null)
+            throw new CourseException(ErrorCode.INVALID_REQUEST, "subscribe must be called first");
     }
 
     private void ensureOpen() {
         if (closed) throw new IllegalStateException("group consumer is closed");
     }
 
-    @Override public void close() {
+    @Override
+    public void close() {
         if (closed) return;
         closed = true;
         consumer.close();

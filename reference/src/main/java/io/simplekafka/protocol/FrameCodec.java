@@ -2,6 +2,7 @@ package io.simplekafka.protocol;
 
 import io.simplekafka.CourseException;
 import io.simplekafka.ErrorCode;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -33,7 +34,11 @@ public final class FrameCodec {
         if (input == null) throw invalid("input is required");
         int first = input.read();
         if (first < 0) return null;
-        int length = (first << 24) | (readRequired(input) << 16) | (readRequired(input) << 8) | readRequired(input);
+        int length =
+                (first << 24)
+                        | (readRequired(input) << 16)
+                        | (readRequired(input) << 8)
+                        | readRequired(input);
         if (length < MIN_FRAME_LENGTH || length > MAX_FRAME_LENGTH)
             throw invalid("invalid frame length: " + Integer.toUnsignedString(length));
 
@@ -67,8 +72,10 @@ public final class FrameCodec {
     }
 
     private static int readInt(InputStream input) throws IOException {
-        return (readRequired(input) << 24) | (readRequired(input) << 16)
-                | (readRequired(input) << 8) | readRequired(input);
+        return (readRequired(input) << 24)
+                | (readRequired(input) << 16)
+                | (readRequired(input) << 8)
+                | readRequired(input);
     }
 
     private static int readRequired(InputStream input) throws IOException {
@@ -77,7 +84,8 @@ public final class FrameCodec {
         return value;
     }
 
-    private static void readFully(InputStream input, byte[] destination, int offset, int length) throws IOException {
+    private static void readFully(InputStream input, byte[] destination, int offset, int length)
+            throws IOException {
         int end = offset + length;
         while (offset < end) {
             int count = input.read(destination, offset, end - offset);

@@ -30,7 +30,8 @@ public final class PartitionLog implements AutoCloseable {
 
     public PartitionLog(Path directory, long segmentBytes, int indexInterval) {
         if (directory == null || segmentBytes <= 0 || indexInterval <= 0)
-            throw new CourseException(ErrorCode.INVALID_REQUEST, "invalid partition log configuration");
+            throw new CourseException(
+                    ErrorCode.INVALID_REQUEST, "invalid partition log configuration");
         this.directory = directory;
         this.segmentBytes = segmentBytes;
         this.indexInterval = indexInterval;
@@ -51,7 +52,8 @@ public final class PartitionLog implements AutoCloseable {
                 try {
                     candidateNext = Math.addExact(candidateNext, 1L);
                 } catch (ArithmeticException exception) {
-                    throw new CourseException(ErrorCode.INVALID_REQUEST, "log end offset overflow", exception);
+                    throw new CourseException(
+                            ErrorCode.INVALID_REQUEST, "log end offset overflow", exception);
                 }
             }
             markMutation();
@@ -70,8 +72,12 @@ public final class PartitionLog implements AutoCloseable {
                 int end = index;
                 while (end < records.size()) {
                     int recordBytes = recordSizes[end];
-                    if (end > index && (plannedBytes >= segmentBytes || recordBytes > segmentBytes - plannedBytes)) break;
-                    if (end == index && plannedBytes > 0 && recordBytes > segmentBytes - plannedBytes) break;
+                    if (end > index
+                            && (plannedBytes >= segmentBytes
+                                    || recordBytes > segmentBytes - plannedBytes)) break;
+                    if (end == index
+                            && plannedBytes > 0
+                            && recordBytes > segmentBytes - plannedBytes) break;
                     plannedBytes += recordBytes;
                     end++;
                     if (plannedBytes > segmentBytes) break;
@@ -83,7 +89,9 @@ public final class PartitionLog implements AutoCloseable {
 
                 AppendResult segmentResult = active.log.append(records.subList(index, end));
                 if (segmentResult.firstOffset() != nextOffset)
-                    throw new CourseException(ErrorCode.CORRUPT_RECORD, "segment append returned a discontinuous offset");
+                    throw new CourseException(
+                            ErrorCode.CORRUPT_RECORD,
+                            "segment append returned a discontinuous offset");
                 long bytePosition = startPosition;
                 for (int recordIndex = index; recordIndex < end; recordIndex++) {
                     active.index.add(nextOffset, bytePosition);
@@ -91,11 +99,15 @@ public final class PartitionLog implements AutoCloseable {
                     nextOffset++;
                 }
                 if (segmentResult.nextOffset() != nextOffset)
-                    throw new CourseException(ErrorCode.CORRUPT_RECORD, "segment append returned an invalid next offset");
+                    throw new CourseException(
+                            ErrorCode.CORRUPT_RECORD,
+                            "segment append returned an invalid next offset");
                 index = end;
             }
             if (nextOffset != candidateNext)
-                throw new CourseException(ErrorCode.CORRUPT_RECORD, "partition append returned an invalid next offset");
+                throw new CourseException(
+                        ErrorCode.CORRUPT_RECORD,
+                        "partition append returned an invalid next offset");
             return new AppendResult(firstOffset, nextOffset);
         } finally {
             lock.unlock();
@@ -111,7 +123,9 @@ public final class PartitionLog implements AutoCloseable {
             long startOffset = logStartOffsetLocked();
             long endOffset = logEndOffsetLocked();
             if (offset < startOffset || offset > endOffset)
-                throw new CourseException(ErrorCode.OFFSET_OUT_OF_RANGE, "offset is outside the retained partition log");
+                throw new CourseException(
+                        ErrorCode.OFFSET_OUT_OF_RANGE,
+                        "offset is outside the retained partition log");
             if (offset == endOffset) return List.of();
 
             ArrayList<LogRecord> records = new ArrayList<>(Math.min(maxRecords, 16));
@@ -122,12 +136,15 @@ public final class PartitionLog implements AutoCloseable {
                 long segmentEnd = entry.log.logEndOffset();
                 if (nextOffset >= segmentEnd) continue;
                 if (nextOffset < segmentStart)
-                    throw new CourseException(ErrorCode.CORRUPT_RECORD, "partition segments contain an offset gap");
+                    throw new CourseException(
+                            ErrorCode.CORRUPT_RECORD, "partition segments contain an offset gap");
                 int remainingRecords = maxRecords - records.size();
                 int remainingBytes = (int) Math.min(Integer.MAX_VALUE, maxBytes - bytesRead);
                 if (remainingRecords <= 0 || remainingBytes <= 0) break;
                 IndexEntry hint = entry.index.floor(nextOffset);
-                List<LogRecord> part = entry.log.readFrom(nextOffset, hint.position(), remainingRecords, remainingBytes);
+                List<LogRecord> part =
+                        entry.log.readFrom(
+                                nextOffset, hint.position(), remainingRecords, remainingBytes);
                 if (part.isEmpty()) {
                     if (nextOffset < segmentEnd) break;
                     continue;
@@ -137,7 +154,9 @@ public final class PartitionLog implements AutoCloseable {
                     bytesRead += RecordCodec.encodedSize(record.data());
                     nextOffset = record.offset() + 1;
                 }
-                if (records.size() >= maxRecords || bytesRead >= maxBytes || nextOffset < segmentEnd) break;
+                if (records.size() >= maxRecords
+                        || bytesRead >= maxBytes
+                        || nextOffset < segmentEnd) break;
             }
             return List.copyOf(records);
         } finally {
@@ -146,7 +165,9 @@ public final class PartitionLog implements AutoCloseable {
     }
 
     public synchronized long deleteBefore(long offset) {
-        if (offset < 0) throw new CourseException(ErrorCode.INVALID_REQUEST, "retention offset must be nonnegative");
+        if (offset < 0)
+            throw new CourseException(
+                    ErrorCode.INVALID_REQUEST, "retention offset must be nonnegative");
         lock.lock();
         try {
             ensureOpen();
@@ -176,20 +197,24 @@ public final class PartitionLog implements AutoCloseable {
             long startOffset = logStartOffsetLocked();
             long endOffset = logEndOffsetLocked();
             if (nextOffset < startOffset || nextOffset > endOffset)
-                throw new CourseException(ErrorCode.OFFSET_OUT_OF_RANGE, "truncate offset is outside the retained partition log");
+                throw new CourseException(
+                        ErrorCode.OFFSET_OUT_OF_RANGE,
+                        "truncate offset is outside the retained partition log");
             if (nextOffset == endOffset) return;
             Map.Entry<Long, SegmentEntry> targetEntry = segments.floorEntry(nextOffset);
             if (targetEntry == null)
-                throw new CourseException(ErrorCode.CORRUPT_RECORD, "no segment contains the truncate offset");
+                throw new CourseException(
+                        ErrorCode.CORRUPT_RECORD, "no segment contains the truncate offset");
             SegmentEntry target = targetEntry.getValue();
             if (nextOffset > target.log.logEndOffset())
-                throw new CourseException(ErrorCode.CORRUPT_RECORD, "partition segments contain an offset gap");
+                throw new CourseException(
+                        ErrorCode.CORRUPT_RECORD, "partition segments contain an offset gap");
             markMutation();
-
 
             target.log.truncateToOffset(nextOffset);
             target.index.rebuild(target.log.path(), target.log.baseOffset());
-            List<Map.Entry<Long, SegmentEntry>> removed = new ArrayList<>(segments.tailMap(nextOffset, false).entrySet());
+            List<Map.Entry<Long, SegmentEntry>> removed =
+                    new ArrayList<>(segments.tailMap(nextOffset, false).entrySet());
             for (Map.Entry<Long, SegmentEntry> entry : removed) {
                 closeEntry(entry.getValue());
                 deleteEntryFiles(entry.getValue());
@@ -202,30 +227,48 @@ public final class PartitionLog implements AutoCloseable {
 
     public long logStartOffset() {
         lock.lock();
-        try { ensureOpen(); return logStartOffsetLocked(); }
-        finally { lock.unlock(); }
+        try {
+            ensureOpen();
+            return logStartOffsetLocked();
+        } finally {
+            lock.unlock();
+        }
     }
 
     public long logEndOffset() {
         lock.lock();
-        try { ensureOpen(); return logEndOffsetLocked(); }
-        finally { lock.unlock(); }
-    }
-    public long mutationVersion() {
-        lock.lock();
-        try { ensureOpen(); return mutationVersion; }
-        finally { lock.unlock(); }
+        try {
+            ensureOpen();
+            return logEndOffsetLocked();
+        } finally {
+            lock.unlock();
+        }
     }
 
+    public long mutationVersion() {
+        lock.lock();
+        try {
+            ensureOpen();
+            return mutationVersion;
+        } finally {
+            lock.unlock();
+        }
+    }
 
     private void initialize() {
         try {
             Files.createDirectories(directory);
             List<Path> logFiles;
             try (Stream<Path> children = Files.list(directory)) {
-                logFiles = children.filter(Files::isRegularFile)
-                        .filter(path -> path.getFileName().toString().matches("[0-9]{20}\\.log"))
-                        .sorted().toList();
+                logFiles =
+                        children.filter(Files::isRegularFile)
+                                .filter(
+                                        path ->
+                                                path.getFileName()
+                                                        .toString()
+                                                        .matches("[0-9]{20}\\.log"))
+                                .sorted()
+                                .toList();
             }
             if (logFiles.isEmpty()) {
                 createSegment(0);
@@ -238,7 +281,10 @@ public final class PartitionLog implements AutoCloseable {
                 try {
                     baseOffset = Long.parseLong(name.substring(0, 20));
                 } catch (NumberFormatException exception) {
-                    throw new CourseException(ErrorCode.STORAGE_ERROR, "invalid segment filename: " + name, exception);
+                    throw new CourseException(
+                            ErrorCode.STORAGE_ERROR,
+                            "invalid segment filename: " + name,
+                            exception);
                 }
                 SegmentLog log = SegmentLog.open(logFile, baseOffset);
                 SparseIndex index = null;
@@ -246,14 +292,26 @@ public final class PartitionLog implements AutoCloseable {
                     index = new SparseIndex(indexPath(logFile), baseOffset, indexInterval);
                     index.rebuild(logFile, baseOffset);
                     if (expectedBase >= 0 && baseOffset != expectedBase)
-                        throw new CourseException(ErrorCode.CORRUPT_RECORD, "partition segments are not offset-contiguous");
+                        throw new CourseException(
+                                ErrorCode.CORRUPT_RECORD,
+                                "partition segments are not offset-contiguous");
                     if (segments.putIfAbsent(baseOffset, new SegmentEntry(log, index)) != null)
-                        throw new CourseException(ErrorCode.STORAGE_ERROR, "duplicate segment base offset " + baseOffset);
+                        throw new CourseException(
+                                ErrorCode.STORAGE_ERROR,
+                                "duplicate segment base offset " + baseOffset);
                     expectedBase = log.logEndOffset();
                 } catch (RuntimeException exception) {
-                    try { log.close(); } catch (RuntimeException closeFailure) { exception.addSuppressed(closeFailure); }
+                    try {
+                        log.close();
+                    } catch (RuntimeException closeFailure) {
+                        exception.addSuppressed(closeFailure);
+                    }
                     if (index != null) {
-                        try { index.close(); } catch (RuntimeException closeFailure) { exception.addSuppressed(closeFailure); }
+                        try {
+                            index.close();
+                        } catch (RuntimeException closeFailure) {
+                            exception.addSuppressed(closeFailure);
+                        }
                     }
                     throw exception;
                 }
@@ -279,22 +337,42 @@ public final class PartitionLog implements AutoCloseable {
             segments.put(baseOffset, entry);
             return entry;
         } catch (RuntimeException exception) {
-            try { log.close(); } catch (RuntimeException closeFailure) { exception.addSuppressed(closeFailure); }
+            try {
+                log.close();
+            } catch (RuntimeException closeFailure) {
+                exception.addSuppressed(closeFailure);
+            }
             if (index != null) {
-                try { index.close(); } catch (RuntimeException closeFailure) { exception.addSuppressed(closeFailure); }
+                try {
+                    index.close();
+                } catch (RuntimeException closeFailure) {
+                    exception.addSuppressed(closeFailure);
+                }
             }
             throw exception;
         }
     }
 
-    private long logStartOffsetLocked() { return segments.firstKey(); }
-    private long logEndOffsetLocked() { return segments.lastEntry().getValue().log.logEndOffset(); }
+    private long logStartOffsetLocked() {
+        return segments.firstKey();
+    }
+
+    private long logEndOffsetLocked() {
+        return segments.lastEntry().getValue().log.logEndOffset();
+    }
 
     private void closeEntry(SegmentEntry entry) {
         RuntimeException failure = null;
-        try { entry.log.close(); } catch (RuntimeException exception) { failure = exception; }
-        try { entry.index.close(); } catch (RuntimeException exception) {
-            if (failure == null) failure = exception; else failure.addSuppressed(exception);
+        try {
+            entry.log.close();
+        } catch (RuntimeException exception) {
+            failure = exception;
+        }
+        try {
+            entry.index.close();
+        } catch (RuntimeException exception) {
+            if (failure == null) failure = exception;
+            else failure.addSuppressed(exception);
         }
         if (failure != null) throw failure;
     }
@@ -310,41 +388,59 @@ public final class PartitionLog implements AutoCloseable {
 
     private void closeAfterInitializationFailure(Throwable failure) {
         for (SegmentEntry entry : segments.values()) {
-            try { entry.log.close(); } catch (RuntimeException closeFailure) { failure.addSuppressed(closeFailure); }
-            try { entry.index.close(); } catch (RuntimeException closeFailure) { failure.addSuppressed(closeFailure); }
+            try {
+                entry.log.close();
+            } catch (RuntimeException closeFailure) {
+                failure.addSuppressed(closeFailure);
+            }
+            try {
+                entry.index.close();
+            } catch (RuntimeException closeFailure) {
+                failure.addSuppressed(closeFailure);
+            }
         }
         segments.clear();
     }
 
     private void ensureOpen() {
-        if (closed) throw new CourseException(ErrorCode.STORAGE_ERROR, "partition log is closed: " + directory);
+        if (closed)
+            throw new CourseException(
+                    ErrorCode.STORAGE_ERROR, "partition log is closed: " + directory);
     }
+
     private void markMutation() {
         mutationVersion++;
     }
 
-
     private static Path indexPath(Path logFile) {
         String name = logFile.getFileName().toString();
-        return logFile.resolveSibling(name.substring(0, name.length() - ".log".length()) + ".index");
+        return logFile.resolveSibling(
+                name.substring(0, name.length() - ".log".length()) + ".index");
     }
 
     private static CourseException storageError(String action, IOException cause) {
         return new CourseException(ErrorCode.STORAGE_ERROR, "failed to " + action, cause);
     }
 
-    @Override public synchronized void close() {
+    @Override
+    public synchronized void close() {
         lock.lock();
         try {
             if (closed) return;
             closed = true;
             RuntimeException failure = null;
             for (SegmentEntry entry : segments.values()) {
-                try { entry.log.close(); } catch (RuntimeException exception) {
-                    if (failure == null) failure = exception; else failure.addSuppressed(exception);
+                try {
+                    entry.log.close();
+                } catch (RuntimeException exception) {
+                    if (failure == null) failure = exception;
+                    else failure.addSuppressed(exception);
                 }
-                try { entry.index.close(); } catch (RuntimeException exception) {
-                    if (failure == null) failure = exception; else failure.addSuppressed(exception);
+                try {
+                    entry.index.close();
+                } catch (RuntimeException exception) {
+                    if (failure == null) failure = exception;
+                    else failure.addSuppressed(exception);
                 }
             }
             if (failure != null) throw failure;
@@ -356,6 +452,10 @@ public final class PartitionLog implements AutoCloseable {
     private static final class SegmentEntry {
         private final SegmentLog log;
         private final SparseIndex index;
-        private SegmentEntry(SegmentLog log, SparseIndex index) { this.log = log; this.index = index; }
+
+        private SegmentEntry(SegmentLog log, SparseIndex index) {
+            this.log = log;
+            this.index = index;
+        }
     }
 }

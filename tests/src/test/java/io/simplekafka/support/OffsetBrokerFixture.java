@@ -8,6 +8,7 @@ import io.simplekafka.model.Endpoint;
 import io.simplekafka.protocol.Messages;
 import io.simplekafka.transport.BrokerServer;
 import io.simplekafka.transport.RpcClient;
+
 import java.nio.file.Path;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
@@ -51,7 +52,8 @@ public final class OffsetBrokerFixture implements AutoCloseable {
 
     private Messages.Reply dispatch(Messages.Request request) {
         BrokerHandler current = handler.get();
-        if (current == null) return Messages.Reply.failure(ErrorCode.INVALID_REQUEST, "offset broker is not ready");
+        if (current == null)
+            return Messages.Reply.failure(ErrorCode.INVALID_REQUEST, "offset broker is not ready");
         return current.handle(request);
     }
 

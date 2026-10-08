@@ -7,9 +7,10 @@ import java.nio.channels.FileChannel;
 
 /** Positional channel operations that tolerate partial reads and writes. */
 public final class ChannelIO {
-    private ChannelIO() { }
+    private ChannelIO() {}
 
-    public static void readFully(FileChannel channel, ByteBuffer destination, long position) throws IOException {
+    public static void readFully(FileChannel channel, ByteBuffer destination, long position)
+            throws IOException {
         if (position < 0) throw new IllegalArgumentException("position must be nonnegative");
         long current = position;
         while (destination.hasRemaining()) {
@@ -23,7 +24,8 @@ public final class ChannelIO {
         }
     }
 
-    public static void writeFully(FileChannel channel, ByteBuffer source, long position) throws IOException {
+    public static void writeFully(FileChannel channel, ByteBuffer source, long position)
+            throws IOException {
         if (position < 0) throw new IllegalArgumentException("position must be nonnegative");
         long current = position;
         while (source.hasRemaining()) {

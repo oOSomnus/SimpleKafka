@@ -1,8 +1,8 @@
 package io.simplekafka.storage;
 
-import io.simplekafka.ExerciseNotImplementedException;
-import io.simplekafka.ErrorCode;
 import io.simplekafka.CourseException;
+import io.simplekafka.ErrorCode;
+import io.simplekafka.ExerciseNotImplementedException;
 import io.simplekafka.model.LogRecord;
 import io.simplekafka.model.RecordData;
 
@@ -14,14 +14,20 @@ public final class RecordCodec {
     static final int MAX_LENGTH = 1_048_576;
     static final int FIXED_RECORD_BYTES = 32;
 
-    private RecordCodec() { }
+    private RecordCodec() {}
 
-    /** Step 1: encode one big-endian record with CRC32C; return a flipped buffer containing exactly that record. See Step01Test and book step 1. */
+    /**
+     * Step 1: encode one big-endian record with CRC32C; return a flipped buffer containing exactly
+     * that record. See Step01Test and book step 1.
+     */
     public static ByteBuffer encode(LogRecord record) {
         throw new ExerciseNotImplementedException(1, "RecordCodec.encode");
     }
 
-    /** Step 1: decode exactly one record, preserve following bytes, and distinguish incomplete input from corrupt data. See Step01Test and book step 1. */
+    /**
+     * Step 1: decode exactly one record, preserve following bytes, and distinguish incomplete input
+     * from corrupt data. See Step01Test and book step 1.
+     */
     public static LogRecord decode(ByteBuffer source) {
         throw new ExerciseNotImplementedException(1, "RecordCodec.decode");
     }
@@ -33,7 +39,8 @@ public final class RecordCodec {
         byte[] value = data.value();
         long length = MIN_LENGTH + (key == null ? 0L : key.length) + (long) value.length;
         if (length > MAX_LENGTH)
-            throw new CourseException(ErrorCode.INVALID_REQUEST, "encoded record exceeds the 1 MiB limit");
+            throw new CourseException(
+                    ErrorCode.INVALID_REQUEST, "encoded record exceeds the 1 MiB limit");
         return Math.toIntExact(length + Integer.BYTES);
     }
 }

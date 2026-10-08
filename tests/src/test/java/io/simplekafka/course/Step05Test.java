@@ -1,5 +1,10 @@
 package io.simplekafka.course;
 
+import static io.simplekafka.support.TestSupport.assertCode;
+
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
 import io.simplekafka.ErrorCode;
 import io.simplekafka.model.IndexEntry;
 import io.simplekafka.model.RecordData;
@@ -7,27 +12,27 @@ import io.simplekafka.storage.SegmentLog;
 import io.simplekafka.storage.SparseIndex;
 import io.simplekafka.support.RecordBytes;
 import io.simplekafka.support.TempDirectory;
+
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.DisplayName;
-import static io.simplekafka.support.TestSupport.assertCode;
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
-import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class Step05Test {
     @Test
     @DisplayName("Writes big endian entries at interval and floors safely")
     void writesBigEndianEntriesAtIntervalAndFloorsSafely() throws Exception {
         try (TempDirectory temp = new TempDirectory();
-             SparseIndex index = new SparseIndex(temp.root().resolve("segment.index"), 0, 4)) {
+                SparseIndex index = new SparseIndex(temp.root().resolve("segment.index"), 0, 4)) {
             for (int offset = 0; offset <= 8; offset++) index.add(offset, 33L * offset);
 
-            assertArrayEquals(indexBytes(0, 0, 4, 132, 8, 264),
+            assertArrayEquals(
+                    indexBytes(0, 0, 4, 132, 8, 264),
                     Files.readAllBytes(temp.root().resolve("segment.index")));
             assertEquals(new IndexEntry(0, 0), index.floor(-1));
             assertEquals(new IndexEntry(0, 0), index.floor(0));
@@ -96,8 +101,7 @@ class Step05Test {
                 index.add(6, 66);
                 index.add(7, 99);
                 index.add(8, 132);
-                assertArrayEquals(indexBytes(4, 0, 6, 66, 8, 132),
-                        Files.readAllBytes(indexFile));
+                assertArrayEquals(indexBytes(4, 0, 6, 66, 8, 132), Files.readAllBytes(indexFile));
             }
         }
     }
@@ -109,12 +113,20 @@ class Step05Test {
             Path logFile = temp.root().resolve("segment.log");
             Path indexFile = temp.root().resolve("segment.index");
             try (SegmentLog log = SegmentLog.create(logFile, 0)) {
-                log.append(java.util.stream.IntStream.range(0, 9)
-                        .mapToObj(i -> new RecordData(null, new byte[]{(byte) i}, i)).toList());
+                log.append(
+                        java.util.stream.IntStream.range(0, 9)
+                                .mapToObj(i -> new RecordData(null, new byte[] {(byte) i}, i))
+                                .toList());
             }
             List<Long> fullPositions = RecordBytes.positions(logFile);
-            byte[] fullIndex = indexBytes(0, fullPositions.get(0),
-                    4, fullPositions.get(4), 8, fullPositions.get(8));
+            byte[] fullIndex =
+                    indexBytes(
+                            0,
+                            fullPositions.get(0),
+                            4,
+                            fullPositions.get(4),
+                            8,
+                            fullPositions.get(8));
 
             try (SparseIndex missing = new SparseIndex(indexFile, 0, 4)) {
                 missing.rebuild(logFile, 0);
@@ -123,11 +135,13 @@ class Step05Test {
             Files.delete(indexFile);
             try (SparseIndex deleted = new SparseIndex(indexFile, 0, 4)) {
                 deleted.rebuild(logFile, 0);
-                assertArrayEquals(fullIndex, Files.readAllBytes(indexFile),
+                assertArrayEquals(
+                        fullIndex,
+                        Files.readAllBytes(indexFile),
                         "a deleted persisted index must be reconstructed from the complete log");
             }
 
-            Files.write(indexFile, new byte[]{1, 2, 3});
+            Files.write(indexFile, new byte[] {1, 2, 3});
             try (SparseIndex truncated = new SparseIndex(indexFile, 0, 4)) {
                 truncated.rebuild(logFile, 0);
                 assertArrayEquals(fullIndex, Files.readAllBytes(indexFile));
@@ -146,8 +160,11 @@ class Step05Test {
                 assertEquals(new IndexEntry(4, shortPositions.get(4)), stale.floor(8));
             }
 
-            ByteBuffer malformed = ByteBuffer.allocate(Long.BYTES * 2).order(ByteOrder.BIG_ENDIAN)
-                    .putLong(-1).putLong(-1);
+            ByteBuffer malformed =
+                    ByteBuffer.allocate(Long.BYTES * 2)
+                            .order(ByteOrder.BIG_ENDIAN)
+                            .putLong(-1)
+                            .putLong(-1);
             Files.write(indexFile, malformed.array());
             try (SparseIndex invalid = new SparseIndex(indexFile, 0, 4)) {
                 invalid.rebuild(logFile, 0);
@@ -160,14 +177,18 @@ class Step05Test {
     @Test
     @DisplayName("Rebuild rejects malformed logs without changing their bytes")
     void rebuildRejectsMalformedLogsWithoutChangingTheirBytes() throws Exception {
-        byte[] valid = RecordBytes.record(0, null, new byte[]{7}, 0);
-        List<InvalidLog> invalidLogs = List.of(
-                new InvalidLog("truncated", Arrays.copyOf(valid, valid.length - 1)),
-                new InvalidLog("malformed", RecordBytes.record(0, null, new byte[]{7}, 0, -2, 1)),
-                new InvalidLog("bad-crc", RecordBytes.withField(valid, 32, 8, 1, false)),
-                new InvalidLog("illegal-length", RecordBytes.withLengthPrefix(valid, -1)),
-                new InvalidLog("gapped", RecordBytes.concat(valid,
-                        RecordBytes.record(2, null, new byte[]{9}, 2))));
+        byte[] valid = RecordBytes.record(0, null, new byte[] {7}, 0);
+        List<InvalidLog> invalidLogs =
+                List.of(
+                        new InvalidLog("truncated", Arrays.copyOf(valid, valid.length - 1)),
+                        new InvalidLog(
+                                "malformed", RecordBytes.record(0, null, new byte[] {7}, 0, -2, 1)),
+                        new InvalidLog("bad-crc", RecordBytes.withField(valid, 32, 8, 1, false)),
+                        new InvalidLog("illegal-length", RecordBytes.withLengthPrefix(valid, -1)),
+                        new InvalidLog(
+                                "gapped",
+                                RecordBytes.concat(
+                                        valid, RecordBytes.record(2, null, new byte[] {9}, 2))));
 
         try (TempDirectory temp = new TempDirectory()) {
             for (InvalidLog invalid : invalidLogs) {
@@ -183,20 +204,25 @@ class Step05Test {
 
                     Files.write(logFile, valid);
                     index.rebuild(logFile, 0);
-                    assertArrayEquals(indexBytes(0, 0), Files.readAllBytes(indexFile),
-                            invalid.name() + " must permit a successful rebuild after the source log is repaired");
+                    assertArrayEquals(
+                            indexBytes(0, 0),
+                            Files.readAllBytes(indexFile),
+                            invalid.name()
+                                    + " must permit a successful rebuild after the source log is repaired");
                 }
             }
         }
     }
 
     private static byte[] indexBytes(long... offsetPositionPairs) {
-        if (offsetPositionPairs.length % 2 != 0) throw new IllegalArgumentException("expected pairs");
-        ByteBuffer bytes = ByteBuffer.allocate(Long.BYTES * offsetPositionPairs.length)
-                .order(ByteOrder.BIG_ENDIAN);
+        if (offsetPositionPairs.length % 2 != 0)
+            throw new IllegalArgumentException("expected pairs");
+        ByteBuffer bytes =
+                ByteBuffer.allocate(Long.BYTES * offsetPositionPairs.length)
+                        .order(ByteOrder.BIG_ENDIAN);
         for (long value : offsetPositionPairs) bytes.putLong(value);
         return bytes.array();
     }
 
-    private record InvalidLog(String name, byte[] bytes) { }
+    private record InvalidLog(String name, byte[] bytes) {}
 }

@@ -1,23 +1,27 @@
 package io.simplekafka.course;
 
+import static io.simplekafka.support.TestSupport.assertCode;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import io.simplekafka.ErrorCode;
 import io.simplekafka.model.AppendResult;
 import io.simplekafka.model.LogRecord;
 import io.simplekafka.model.RecordData;
 import io.simplekafka.storage.PartitionLog;
 import io.simplekafka.support.TempDirectory;
+
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.DisplayName;
-import static io.simplekafka.support.TestSupport.assertCode;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class Step07Test {
     @Test
@@ -33,7 +37,10 @@ class Step07Test {
                 assertEquals(List.of(0L, 3L, 6L), segmentBases(directory));
 
                 assertEquals(3, log.deleteBefore(4));
-                assertEquals(2, log.mutationVersion(), "an actual segment deletion bumps the version once");
+                assertEquals(
+                        2,
+                        log.mutationVersion(),
+                        "an actual segment deletion bumps the version once");
                 assertEquals(3, log.logStartOffset());
                 assertEquals(9, log.logEndOffset());
                 assertEquals(List.of(3L, 6L), segmentBases(directory));
@@ -49,11 +56,15 @@ class Step07Test {
 
                 var afterFirstDeletion = directorySnapshot(directory);
                 assertEquals(3, log.deleteBefore(2));
-                assertEquals(2, log.mutationVersion(), "no-op thresholds do not invalidate a proof");
+                assertEquals(
+                        2, log.mutationVersion(), "no-op thresholds do not invalidate a proof");
                 assertEquals(afterFirstDeletion, directorySnapshot(directory));
                 assertEquals(3, log.deleteBefore(3));
                 assertEquals(afterFirstDeletion, directorySnapshot(directory));
-                assertEquals(2, log.mutationVersion(), "threshold equal to the retained start is a no-op");
+                assertEquals(
+                        2,
+                        log.mutationVersion(),
+                        "threshold equal to the retained start is a no-op");
 
                 assertEquals(6, log.deleteBefore(9));
                 assertEquals(3, log.mutationVersion());
@@ -64,10 +75,14 @@ class Step07Test {
                 assertTrue(Files.exists(logFile(directory, 6)));
                 assertTrue(Files.exists(indexFile(directory, 6)));
                 assertEquals(6, log.deleteBefore(1_000));
-                assertEquals(3, log.mutationVersion(), "the final active segment is retained without a version bump");
+                assertEquals(
+                        3,
+                        log.mutationVersion(),
+                        "the final active segment is retained without a version bump");
                 assertEquals(List.of(6L), segmentBases(directory));
 
-                assertEquals(new AppendResult(9, 10),
+                assertEquals(
+                        new AppendResult(9, 10),
                         log.append(List.of(new RecordData(null, new byte[0], 9))));
                 assertEquals(records(6, 4), log.read(6, 10, 1_024));
             }
@@ -92,7 +107,10 @@ class Step07Test {
                 assertEquals(0, empty.mutationVersion());
                 assertEquals(0, empty.deleteBefore(1_000));
                 assertCode(ErrorCode.INVALID_REQUEST, () -> empty.deleteBefore(-1));
-                assertEquals(0, empty.mutationVersion(), "invalid retention does not change the version");
+                assertEquals(
+                        0,
+                        empty.mutationVersion(),
+                        "invalid retention does not change the version");
                 assertEquals(0, empty.logStartOffset());
                 assertEquals(0, empty.logEndOffset());
                 assertEquals(List.of(0L), segmentBases(emptyDirectory));
@@ -106,7 +124,10 @@ class Step07Test {
                 assertEquals(1, oneSegment.mutationVersion());
                 var before = directorySnapshot(oneSegmentDirectory);
                 assertEquals(0, oneSegment.deleteBefore(1_000));
-                assertEquals(1, oneSegment.mutationVersion(), "retaining the only active segment is a no-op");
+                assertEquals(
+                        1,
+                        oneSegment.mutationVersion(),
+                        "retaining the only active segment is a no-op");
                 assertEquals(0, oneSegment.logStartOffset());
                 assertEquals(2, oneSegment.logEndOffset());
                 assertEquals(List.of(0L), segmentBases(oneSegmentDirectory));
@@ -146,7 +167,8 @@ class Step07Test {
 
     private static List<LogRecord> records(long firstOffset, int count) {
         return LongStream.range(firstOffset, firstOffset + count)
-                .mapToObj(offset -> new LogRecord(offset, new RecordData(null, new byte[0], offset)))
+                .mapToObj(
+                        offset -> new LogRecord(offset, new RecordData(null, new byte[0], offset)))
                 .toList();
     }
 
@@ -168,12 +190,15 @@ class Step07Test {
         return directory.resolve(String.format(java.util.Locale.ROOT, "%020d.index", base));
     }
 
-    private static java.util.Map<String, String> directorySnapshot(Path directory) throws IOException {
+    private static java.util.Map<String, String> directorySnapshot(Path directory)
+            throws IOException {
         java.util.Map<String, String> snapshot = new java.util.TreeMap<>();
         try (Stream<Path> paths = Files.list(directory)) {
             for (Path path : paths.toList()) {
-                String contents = Files.isDirectory(path) ? "<directory>"
-                        : java.util.HexFormat.of().formatHex(Files.readAllBytes(path));
+                String contents =
+                        Files.isDirectory(path)
+                                ? "<directory>"
+                                : java.util.HexFormat.of().formatHex(Files.readAllBytes(path));
                 snapshot.put(path.getFileName().toString(), contents);
             }
         }

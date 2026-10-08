@@ -9,6 +9,7 @@ import io.simplekafka.model.OffsetKey;
 import io.simplekafka.model.PartitionMetadata;
 import io.simplekafka.model.TopicPartition;
 import io.simplekafka.support.TimeSource;
+
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -29,12 +30,17 @@ public final class GroupCoordinator implements AutoCloseable {
     private final Map<String, GroupState> groups = new TreeMap<>();
     private boolean closed;
 
-    public GroupCoordinator(PartitionCatalog catalog, RoundRobinAssignor assignor,
-                            TimeSource time, long sessionTimeoutMillis) {
+    public GroupCoordinator(
+            PartitionCatalog catalog,
+            RoundRobinAssignor assignor,
+            TimeSource time,
+            long sessionTimeoutMillis) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.assignor = Objects.requireNonNull(assignor, "assignor");
         this.time = Objects.requireNonNull(time, "time");
-        if (sessionTimeoutMillis <= 0) throw new CourseException(ErrorCode.INVALID_REQUEST, "sessionTimeoutMillis must be positive");
+        if (sessionTimeoutMillis <= 0)
+            throw new CourseException(
+                    ErrorCode.INVALID_REQUEST, "sessionTimeoutMillis must be positive");
         this.sessionTimeoutMillis = sessionTimeoutMillis;
     }
 
@@ -45,7 +51,9 @@ public final class GroupCoordinator implements AutoCloseable {
             validateIdentifiers(group, member, topic);
             GroupState state = groups.get(group);
             if (state != null && !state.topic.equals(topic)) {
-                throw new CourseException(ErrorCode.INVALID_REQUEST, "all members of a group must subscribe to the same topic");
+                throw new CourseException(
+                        ErrorCode.INVALID_REQUEST,
+                        "all members of a group must subscribe to the same topic");
             }
             MemberState existing = state == null ? null : state.members.get(member);
             if (existing != null) {
@@ -54,7 +62,8 @@ public final class GroupCoordinator implements AutoCloseable {
             }
 
             List<TopicPartition> partitions = topicPartitions(topic);
-            TreeMap<String, MemberState> nextMembers = state == null ? new TreeMap<>() : new TreeMap<>(state.members);
+            TreeMap<String, MemberState> nextMembers =
+                    state == null ? new TreeMap<>() : new TreeMap<>(state.members);
             nextMembers.put(member, new MemberState(time.nowMillis()));
             int generation = nextGeneration(state == null ? 0 : state.generation);
             GroupAssignment nextAssignment = assign(generation, nextMembers, partitions);
@@ -78,10 +87,12 @@ public final class GroupCoordinator implements AutoCloseable {
             ensureOpen();
             validateGroupMember(group, member);
             GroupState state = groups.get(group);
-            if (state == null || !state.members.containsKey(member)) throw unknownMember(group, member);
+            if (state == null || !state.members.containsKey(member))
+                throw unknownMember(group, member);
             TreeMap<String, MemberState> nextMembers = new TreeMap<>(state.members);
             nextMembers.remove(member);
-            List<TopicPartition> partitions = nextMembers.isEmpty() ? List.of() : topicPartitions(state.topic);
+            List<TopicPartition> partitions =
+                    nextMembers.isEmpty() ? List.of() : topicPartitions(state.topic);
             int generation = nextGeneration(state.generation);
             GroupAssignment nextAssignment = assign(generation, nextMembers, partitions);
             state.members.clear();
@@ -100,7 +111,8 @@ public final class GroupCoordinator implements AutoCloseable {
             ensureOpen();
             validateGroupMember(group, member);
             GroupState state = groups.get(group);
-            if (state == null || !state.members.containsKey(member)) throw unknownMember(group, member);
+            if (state == null || !state.members.containsKey(member))
+                throw unknownMember(group, member);
             return state.assignment;
         } finally {
             lock.unlock();
@@ -136,7 +148,8 @@ public final class GroupCoordinator implements AutoCloseable {
                     }
                 }
                 if (nextMembers.size() == state.members.size()) continue;
-                List<TopicPartition> partitions = nextMembers.isEmpty() ? List.of() : topicPartitions(state.topic);
+                List<TopicPartition> partitions =
+                        nextMembers.isEmpty() ? List.of() : topicPartitions(state.topic);
                 int generation = nextGeneration(state.generation);
                 GroupAssignment nextAssignment = assign(generation, nextMembers, partitions);
                 state.members.clear();
@@ -154,7 +167,9 @@ public final class GroupCoordinator implements AutoCloseable {
         lock.lock();
         try {
             ensureOpen();
-            if (tp == null) throw new CourseException(ErrorCode.INVALID_REQUEST, "topic-partition must not be null");
+            if (tp == null)
+                throw new CourseException(
+                        ErrorCode.INVALID_REQUEST, "topic-partition must not be null");
             requireCurrentMember(token);
             GroupState state = groups.get(token.group());
             List<TopicPartition> owned = state.assignment.assignments().get(token.member());
@@ -167,15 +182,22 @@ public final class GroupCoordinator implements AutoCloseable {
     }
 
     /** Atomically fences a group commit with generation and ownership validation. */
-    public void commitOffset(GroupToken token, TopicPartition tp, OffsetKey key,
-                             long nextOffset, OffsetStore store) {
+    public void commitOffset(
+            GroupToken token,
+            TopicPartition tp,
+            OffsetKey key,
+            long nextOffset,
+            OffsetStore store) {
         lock.lock();
         try {
             ensureOpen();
             if (tp == null || key == null || store == null)
-                throw new CourseException(ErrorCode.INVALID_REQUEST, "topic-partition, offset key, and store are required");
+                throw new CourseException(
+                        ErrorCode.INVALID_REQUEST,
+                        "topic-partition, offset key, and store are required");
             if (token == null || !token.group().equals(key.group()) || !tp.equals(key.tp())) {
-                throw new CourseException(ErrorCode.INVALID_REQUEST, "commit token and offset key do not match");
+                throw new CourseException(
+                        ErrorCode.INVALID_REQUEST, "commit token and offset key do not match");
             }
             validate(token, tp);
             store.commit(key, nextOffset);
@@ -185,11 +207,14 @@ public final class GroupCoordinator implements AutoCloseable {
     }
 
     private MemberState requireCurrentMember(GroupToken token) {
-        if (token == null) throw new CourseException(ErrorCode.INVALID_REQUEST, "group token must not be null");
+        if (token == null)
+            throw new CourseException(ErrorCode.INVALID_REQUEST, "group token must not be null");
         GroupState state = groups.get(token.group());
-        if (state == null || !state.members.containsKey(token.member())) throw unknownMember(token.group(), token.member());
+        if (state == null || !state.members.containsKey(token.member()))
+            throw unknownMember(token.group(), token.member());
         if (token.generation() != state.generation) {
-            throw new CourseException(ErrorCode.ILLEGAL_GENERATION, "stale generation " + token.generation());
+            throw new CourseException(
+                    ErrorCode.ILLEGAL_GENERATION, "stale generation " + token.generation());
         }
         return state.members.get(token.member());
     }
@@ -198,15 +223,17 @@ public final class GroupCoordinator implements AutoCloseable {
         List<PartitionMetadata> metadata = catalog.metadata(topic);
         TreeSet<TopicPartition> partitions = new TreeSet<>();
         for (PartitionMetadata partition : metadata) partitions.add(partition.tp());
-        if (partitions.isEmpty()) throw new CourseException(ErrorCode.UNKNOWN_TOPIC_OR_PARTITION, "topic has no partitions: " + topic);
+        if (partitions.isEmpty())
+            throw new CourseException(
+                    ErrorCode.UNKNOWN_TOPIC_OR_PARTITION, "topic has no partitions: " + topic);
         return List.copyOf(partitions);
     }
 
-    private GroupAssignment assign(int generation, Map<String, MemberState> members,
-                                   List<TopicPartition> partitions) {
+    private GroupAssignment assign(
+            int generation, Map<String, MemberState> members, List<TopicPartition> partitions) {
         List<String> memberIds = new ArrayList<>(members.keySet());
-        Map<String, List<TopicPartition>> assignments = memberIds.isEmpty()
-                ? Map.of() : assignor.assign(partitions, memberIds);
+        Map<String, List<TopicPartition>> assignments =
+                memberIds.isEmpty() ? Map.of() : assignor.assign(partitions, memberIds);
         return new GroupAssignment(generation, assignments);
     }
 
@@ -214,7 +241,8 @@ public final class GroupCoordinator implements AutoCloseable {
         try {
             return Math.incrementExact(generation);
         } catch (ArithmeticException exception) {
-            throw new CourseException(ErrorCode.INVALID_REQUEST, "group generation overflow", exception);
+            throw new CourseException(
+                    ErrorCode.INVALID_REQUEST, "group generation overflow", exception);
         }
     }
 
@@ -231,19 +259,22 @@ public final class GroupCoordinator implements AutoCloseable {
         try {
             new GroupToken(group, member, 0);
         } catch (RuntimeException exception) {
-            throw new CourseException(ErrorCode.INVALID_REQUEST, "invalid group/member identifier", exception);
+            throw new CourseException(
+                    ErrorCode.INVALID_REQUEST, "invalid group/member identifier", exception);
         }
     }
 
     private static CourseException unknownMember(String group, String member) {
-        return new CourseException(ErrorCode.UNKNOWN_MEMBER, "unknown group member: " + group + "/" + member);
+        return new CourseException(
+                ErrorCode.UNKNOWN_MEMBER, "unknown group member: " + group + "/" + member);
     }
 
     private void ensureOpen() {
         if (closed) throw new IllegalStateException("group coordinator is closed");
     }
 
-    @Override public void close() {
+    @Override
+    public void close() {
         lock.lock();
         try {
             if (closed) return;
@@ -260,11 +291,16 @@ public final class GroupCoordinator implements AutoCloseable {
         private int generation;
         private GroupAssignment assignment = new GroupAssignment(0, Map.of());
 
-        private GroupState(String topic) { this.topic = topic; }
+        private GroupState(String topic) {
+            this.topic = topic;
+        }
     }
 
     private static final class MemberState {
         private long lastHeartbeat;
-        private MemberState(long lastHeartbeat) { this.lastHeartbeat = lastHeartbeat; }
+
+        private MemberState(long lastHeartbeat) {
+            this.lastHeartbeat = lastHeartbeat;
+        }
     }
 }
