@@ -39,12 +39,12 @@
 
 \lessonsection{19}{心跳与过期}
 \goals{在可控时间下检测成员超时，并把同组过期成员作为一个拓扑变化原子处理。}{理解心跳时间与过期阈值。}
-\background{每个 member 保存 lastHeartbeat，心跳成功刷新它。若 \pathcode{now-lastHeartbeat >= sessionTimeoutMillis}，成员到期。时间来自注入的 TimeSource，所以测试不需要真实 sleep。过期调用可能同时发现多个成员；同一个 group 一次 expire 应一起移除到期成员，只增加一次 generation 并重新分配一次，避免一次心跳 tick 产生无意义的多代状态。未知 member 错误先于刷新；旧 generation 错误也不能延长生命期。周期调度由提供设施触发，但行为测试可直接调用 expire。}
+\background{每个 member 保存 lastHeartbeat，心跳成功刷新它。若 \pathcode{now-lastHeartbeat >= sessionTimeoutMillis}，成员到期。时间来自注入的 TimeSource，因此边界测试不需要真实 sleep。一次 expire 可能同时发现多个过期成员；同一 group 应一次移除所有到期成员，只增加一次 generation 并重分配一次，避免一次心跳 tick 产生无意义的多代状态。先检查未知 member；旧 generation 错误也不能延长生命期。单机与复制 harness 都运行周期过期 worker；复制 harness 还提供 \pathcode{expireGroups()} 供确定性测试使用。}
 \providededit{注入式 TimeSource、组锁、session timeout 与调度生命周期已提供；测试可用确定性 clock。}{\pathcode{exercises/src/main/java/io/simplekafka/group/GroupCoordinator.java}：\method{heartbeat(GroupToken)}、\method{expire()}；\pathcode{exercises/src/main/java/io/simplekafka/broker/BrokerHandler.java}：\method{HEARTBEAT} 分支。}
 \lessoncontract{边界采用 >=。有效当前 token 的 heartbeat 更新时间；未知成员报 \method{UNKNOWN_MEMBER}，generation 过期报 \method{ILLEGAL_GENERATION}，失败不刷新。expire 返回被移除的 \pathcode{group/member} 标识；同组多成员到期一次只增加一次 generation。leader/partition 概念不进入此状态。}
 \lessonhints{把时钟读取、超时判断和成员移除放在一致的状态观察中。}{返回值应能精确区分被哪个 group 删除的 member，而非只有数量。}{用 1099 与 1100 两个时刻测试 timeout=100 的边界，并让 B 刷新后与 A 同时比较。}
-\expected{初始时间 1000、timeout=100，时刻 1099 时 A 保留，1100 时 A 删除；B 在 1099 心跳后到 1100 仍保留。若 A 与 C 同组同一时刻过期，generation 只增一次。对应 \method{Step19Test}；Heartbeat 经真实 TCP API，过期由注入时钟确定触发，不使用 sleep。}
-\pitfalls{使用真实系统时间和 sleep 会让测试受调度抖动影响；先改 lastHeartbeat 再验证 token 会让旧成员非法续命。真实 Kafka 的 session timeout/heartbeat 与协议、消费者配置及网络调度更复杂；课程只验证 coordinator 内的确定性状态转换。}
+\expected{初始时间 1000、timeout=100，时刻 1099 时 A 保留，1100 时 A 删除；B 在 1099 心跳后到 1100 仍保留。若 A 与 C 同组同一时刻过期，generation 只增一次。对应 \method{Step19Test}：Heartbeat 使用真实 TCP，边界由确定性 hook 验证，另有复制集群场景验证 worker 会在无心跳时过期成员。}
+\pitfalls{用真实系统时间和 sleep 做精确边界测试会受调度抖动影响；边界断言应使用注入 clock 和显式过期 hook，并单独保留周期 worker 的集成验证。未验证 token 就先改 lastHeartbeat 会让旧 member 非法续命。真实 Kafka 的 session timeout/heartbeat 还受协议、消费者配置与网络调度影响。}
 \lessoncommand{19}
 \lessonquestions{为什么过期判断的等号边界必须写进契约？}{一批同组成员在同一次 expire 过期，为何不应多次 generation++？}
 

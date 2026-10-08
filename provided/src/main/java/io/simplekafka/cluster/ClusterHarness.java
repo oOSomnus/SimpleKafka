@@ -30,6 +30,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 /** Three loopback TCP brokers sharing one intentionally single-JVM cluster authority. */
@@ -47,6 +50,7 @@ public final class ClusterHarness implements AutoCloseable {
     private final Map<String, TopicSpec> topics = new TreeMap<>();
     private OffsetStore offsets;
     private GroupCoordinator groups;
+    private ScheduledExecutorService groupExpiry;
     private boolean started;
     private boolean closed;
 
@@ -91,6 +95,15 @@ public final class ClusterHarness implements AutoCloseable {
             PartitionCatalog coordinatorCatalog = nodes.get(2).catalog;
             groups = new GroupCoordinator(coordinatorCatalog, new RoundRobinAssignor(), clock,
                     DEFAULT_GROUP_TIMEOUT_MILLIS);
+            GroupCoordinator coordinator = groups;
+            groupExpiry = Executors.newSingleThreadScheduledExecutor(task -> {
+                Thread worker = new Thread(task, "simple-kafka-cluster-group-expiry");
+                worker.setDaemon(true);
+                return worker;
+            });
+            long expiryPeriodMillis = Math.max(1, Math.min(DEFAULT_GROUP_TIMEOUT_MILLIS / 2, 250));
+            groupExpiry.scheduleAtFixedRate(coordinator::expire, expiryPeriodMillis, expiryPeriodMillis,
+                    TimeUnit.MILLISECONDS);
             for (BrokerNode node : nodes.values())
                 node.handler.set(new BrokerHandler(node.catalog, authority, groups, offsets));
             started = true;
@@ -98,6 +111,12 @@ public final class ClusterHarness implements AutoCloseable {
             closeAfterFailedStart(failure);
             throw failure;
         }
+    }
+
+    /** Runs deterministic group expiry for tests using an injected clock. */
+    public synchronized Set<String> expireGroups() {
+        requireStarted();
+        return groups.expire();
     }
 
     /** Creates fixed RF3 partitions: leaders rotate 1,2,3 and every replica starts in the ISR. */
@@ -267,6 +286,7 @@ public final class ClusterHarness implements AutoCloseable {
     @Override public synchronized void close() {
         if (closed) return;
         closed = true;
+        stopGroupExpiry();
         RuntimeException failure = null;
         for (BrokerNode node : nodes.values()) {
             try {
@@ -289,6 +309,7 @@ public final class ClusterHarness implements AutoCloseable {
     }
 
     private synchronized void closeAfterFailedStart(RuntimeException original) {
+        stopGroupExpiry();
         for (BrokerNode node : nodes.values()) {
             try { if (node.server != null) node.server.close(); }
             catch (RuntimeException failure) { original.addSuppressed(failure); }
@@ -315,6 +336,17 @@ public final class ClusterHarness implements AutoCloseable {
     private void requireStarted() {
         ensureNotClosed();
         if (!started) throw new IllegalStateException("cluster harness has not been started");
+    }
+
+    private void stopGroupExpiry() {
+        if (groupExpiry == null) return;
+        groupExpiry.shutdownNow();
+        try {
+            groupExpiry.awaitTermination(2, TimeUnit.SECONDS);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+        }
+        groupExpiry = null;
     }
 
     private static CourseException unknownPartition(TopicPartition tp) {

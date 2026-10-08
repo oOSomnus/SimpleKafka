@@ -1,6 +1,7 @@
 package io.simplekafka.course;
 
 import io.simplekafka.ErrorCode;
+import io.simplekafka.cluster.ClusterHarness;
 import io.simplekafka.model.GroupAssignment;
 import io.simplekafka.model.GroupToken;
 import io.simplekafka.model.TopicPartition;
@@ -13,10 +14,88 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class Step19Test {
+    @Test
+    void replicatedClusterExpiresIdleMembersWithoutIncomingRequests() throws Exception {
+        try (TempDirectory temp = new TempDirectory()) {
+            ManualTimeSource clock = new ManualTimeSource(0);
+            try (ClusterHarness cluster = new ClusterHarness(temp.root(), clock)) {
+                cluster.start();
+                cluster.createTopic("orders", 1, 2);
+                try (RpcClient client = new RpcClient(cluster.endpoint(1), 3_000)) {
+                    GroupAssignment joined = join(client, "workers", "a");
+                    assertEquals(1, joined.generation());
+                    assertEquals(Map.of("a", List.of(new TopicPartition("orders", 0))),
+                            joined.assignments());
+
+                    clock.setMillis(20_000);
+                    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                    ErrorCode assignmentError;
+                    do {
+                        Messages.Reply reply = client.call(
+                                new Messages.GroupAssignmentRequest("workers", "a"));
+                        assignmentError = reply.error();
+                        if (assignmentError == ErrorCode.UNKNOWN_MEMBER) break;
+                        assertEquals(ErrorCode.NONE, assignmentError);
+                        Thread.sleep(10);
+                    } while (System.nanoTime() < deadline);
+                    assertEquals(ErrorCode.UNKNOWN_MEMBER, assignmentError,
+                            "the background worker must expire idle members without a hook or heartbeat");
+
+                    GroupAssignment replacement = join(client, "workers", "b");
+                    assertEquals(3, replacement.generation());
+                    assertEquals(Map.of("b", List.of(new TopicPartition("orders", 0))),
+                            replacement.assignments());
+                    assertEquals(ErrorCode.UNKNOWN_MEMBER,
+                            client.call(new Messages.HeartbeatRequest(new GroupToken("workers", "a", 3))).error());
+                }
+            }
+        }
+    }
+
+    @Test
+    void expireGroupsProvidesDeterministicClusterExpiryAndChecksLifecycle() throws Exception {
+        try (TempDirectory temp = new TempDirectory()) {
+            ManualTimeSource clock = new ManualTimeSource(0);
+            ClusterHarness cluster = new ClusterHarness(temp.root(), clock);
+            try {
+                cluster.start();
+                cluster.createTopic("orders", 1, 2);
+                try (RpcClient client = new RpcClient(cluster.endpoint(1), 3_000)) {
+                    GroupAssignment joined = join(client, "workers", "a");
+                    assertEquals(1, joined.generation());
+                    assertEquals(Set.of(), cluster.expireGroups());
+                    assertEquals(Map.of("a", List.of(new TopicPartition("orders", 0))),
+                            assignment(client, "workers", "a").assignments());
+
+                    clock.setMillis(9_999);
+                    assertEquals(Set.of(), cluster.expireGroups());
+                    assertEquals(Map.of("a", List.of(new TopicPartition("orders", 0))),
+                            assignment(client, "workers", "a").assignments());
+
+                    clock.setMillis(10_000);
+                    cluster.expireGroups();
+                    assertEquals(ErrorCode.UNKNOWN_MEMBER,
+                            client.call(new Messages.HeartbeatRequest(new GroupToken("workers", "a", 1))).error());
+                    GroupAssignment replacement = join(client, "workers", "b");
+                    assertEquals(3, replacement.generation());
+                    assertEquals(Map.of("b", List.of(new TopicPartition("orders", 0))),
+                            replacement.assignments());
+                    assertEquals(Set.of(), cluster.expireGroups());
+                }
+            } finally {
+                cluster.close();
+            }
+            assertThrows(IllegalStateException.class, cluster::expireGroups);
+            cluster.close();
+        }
+    }
+
     @Test
     void rejectsStaleAndFutureHeartbeatsAndExpiresOnlyTheUnrefreshedMemberAtTheBoundary() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
