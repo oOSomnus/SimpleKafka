@@ -7,34 +7,17 @@ source "$ROOT/scripts/tools.sh"
 validate_course_lang || exit $?
 cd "$ROOT"
 
-mode=${1:-course}
+mode=${1:-book}
 if (( $# > 1 )); then
-  printf 'usage: scripts/setup.sh [course|book]\n' >&2
+  printf 'usage: scripts/setup.sh [book]\n' >&2
   exit 2
 fi
-case "$mode" in
-  course|book) ;;
-  *) printf 'setup: unknown mode: %s (expected course or book)\n' "$mode" >&2; exit 2 ;;
-esac
+if [[ "$mode" != book ]]; then
+  printf 'setup: unknown mode: %s (expected book)\n' "$mode" >&2
+  exit 2
+fi
 
 TOOLS="$ROOT/.tools"
-JAVA=${JAVA_HOME:+$JAVA_HOME/bin/java}
-JAVA=${JAVA:-java}
-JAVAC=${JAVA_HOME:+$JAVA_HOME/bin/javac}
-JAVAC=${JAVAC:-javac}
-
-check_jdk() {
-  command -v "$JAVA" >/dev/null 2>&1 && command -v "$JAVAC" >/dev/null 2>&1 || {
-    printf 'setup: Java 21+ JDK required; set JAVA_HOME or put java and javac on PATH\n' >&2
-    return 2
-  }
-  local version
-  version=$("$JAVA" -XshowSettings:properties -version 2>&1 | awk -F'= ' '/java.specification.version/{print $2; exit}')
-  [[ "$version" =~ ^[0-9]+$ ]] && (( version >= 21 )) || {
-    printf 'setup: Java 21 or newer required (found %s)\n' "${version:-unknown}" >&2
-    return 2
-  }
-}
 
 fetch_verified() {
   local url=$1 expected=$2 dest=$3 tmp="$3.part.$$" actual
@@ -139,51 +122,35 @@ install_tectonic() {
   "$destination/tectonic" --version
 }
 
-if [[ "$mode" == course ]]; then
-  check_jdk
-  for cmd in curl; do
-    command -v "$cmd" >/dev/null 2>&1 || { printf 'setup: required command not found: %s\n' "$cmd" >&2; exit 2; }
-  done
-  if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
-    printf 'setup: required command not found: sha256sum or shasum\n' >&2
-    exit 2
-  fi
-  mkdir -p "$TOOLS"
-  JUNIT_URL='https://repo1.maven.org/maven2/org/junit/platform/junit-platform-console-standalone/1.11.4/junit-platform-console-standalone-1.11.4.jar'
-  JUNIT_SHA='b016ef6b1c3454d6d7c2c88ce081dabf289699686af6622d6e4e2e1b54b4a2fc'
-  fetch_verified "$JUNIT_URL" "$JUNIT_SHA" "$TOOLS/junit-platform-console-standalone-1.11.4.jar"
-  printf 'Course tools ready. PDF tools are separate; run make setup-book when needed.\n'
-else
-  if [[ ${TECTONIC+x} ]]; then
-    TECTONIC_BIN=$(resolve_tectonic "$ROOT" "$caller_dir") || exit $?
-    "$TECTONIC_BIN" --version
-    printf 'Using the TECTONIC override; no repository tool was downloaded.\n'
-    exit 0
-  fi
-
-  target=$(tectonic_target) || exit $?
-  TECTONIC_BIN="$TOOLS/tectonic-0.17.0/$target/tectonic"
-  if [[ -x "$TECTONIC_BIN" ]] && version=$("$TECTONIC_BIN" --version 2>&1) && [[ "$version" == *0.17.0* ]]; then
-    printf 'verified: %s\n' "${TECTONIC_BIN#$ROOT/}"
-    "$TECTONIC_BIN" --version
-    exit 0
-  fi
-  for cmd in curl tar install find; do
-    command -v "$cmd" >/dev/null 2>&1 || { printf 'setup: required command not found: %s\n' "$cmd" >&2; exit 2; }
-  done
-  if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
-    printf 'setup: required command not found: sha256sum or shasum\n' >&2
-    exit 2
-  fi
-  rm -rf -- "$TOOLS/tectonic-0.17.0/$target"
-  mkdir -p "$TOOLS"
-  if install_tectonic "$target"; then
-    :
-  elif [[ "$target" == x86_64-unknown-linux-musl ]]; then
-    printf 'Pinned Linux musl Tectonic unavailable; trying the pinned glibc build.\n' >&2
-    install_tectonic x86_64-unknown-linux-gnu
-  else
-    exit 2
-  fi
-  printf 'PDF tool ready. The first book build downloads the TeX bundle; warm both languages before BOOK_OFFLINE=1.\n'
+if [[ ${TECTONIC+x} ]]; then
+  TECTONIC_BIN=$(resolve_tectonic "$ROOT" "$caller_dir") || exit $?
+  "$TECTONIC_BIN" --version
+  printf 'Using the TECTONIC override; no repository tool was downloaded.\n'
+  exit 0
 fi
+
+target=$(tectonic_target) || exit $?
+TECTONIC_BIN="$TOOLS/tectonic-0.17.0/$target/tectonic"
+if [[ -x "$TECTONIC_BIN" ]] && version=$("$TECTONIC_BIN" --version 2>&1) && [[ "$version" == *0.17.0* ]]; then
+  printf 'verified: %s\n' "${TECTONIC_BIN#$ROOT/}"
+  "$TECTONIC_BIN" --version
+  exit 0
+fi
+for cmd in curl tar install find; do
+  command -v "$cmd" >/dev/null 2>&1 || { printf 'setup: required command not found: %s\n' "$cmd" >&2; exit 2; }
+done
+if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
+  printf 'setup: required command not found: sha256sum or shasum\n' >&2
+  exit 2
+fi
+rm -rf -- "$TOOLS/tectonic-0.17.0/$target"
+mkdir -p "$TOOLS"
+if install_tectonic "$target"; then
+  :
+elif [[ "$target" == x86_64-unknown-linux-musl ]]; then
+  printf 'Pinned Linux musl Tectonic unavailable; trying the pinned glibc build.\n' >&2
+  install_tectonic x86_64-unknown-linux-gnu
+else
+  exit 2
+fi
+printf 'PDF tool ready. The first book build downloads the TeX bundle; warm both languages before BOOK_OFFLINE=1.\n'

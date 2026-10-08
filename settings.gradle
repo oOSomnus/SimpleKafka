@@ -1,0 +1,3 @@
+rootProject.name = 'simpleKafka'
+
+include 'exercises', 'reference'

@@ -6,39 +6,39 @@
 
 ## 环境
 
-支持 Linux、macOS 与 Windows WSL2，x86_64 和 arm64；不支持原生 Windows。课程需要 Java 21+ JDK、GNU Make、Bash 3.2+、`find`、`awk`、`curl` 以及 `sha256sum` 或 `shasum`。SDKMAN 是可选的 Java 管理器；项目不会自动切换 JDK、安装系统软件或依赖作者本机路径。
+支持 Linux、macOS 与 Windows WSL2，x86_64 和 arm64；不支持原生 Windows。Gradle 9.8.1 Wrapper 需要 Java 17+；Java 编译、测试和 demo 任务需要 Java 21+ JDK。脚本使用 Bash 3.2+、`find`、`awk`、`curl` 与 `sha256sum` 或 `shasum`；准备 Tectonic 还需要 `tar` 和 `install`。无需安装系统 Gradle。SDKMAN 是可选的 Java 管理器；项目不会自动切换 JDK、安装系统软件或依赖作者本机路径。
 
 ```sh
-make setup       # 只准备经过校验的 JUnit
-make setup-book  # 单独准备平台对应的 Tectonic PDF 引擎
-make doctor
-make list        # 默认显示英文
-make compile
+./gradlew :setup       # 通过 Gradle 解析并校验 JUnit
+./gradlew :setupBook   # 单独准备固定版本的 Tectonic PDF 引擎
+./gradlew :doctor
+./gradlew :list        # 默认显示英文
+./gradlew :compile
 ```
 
-课程测试不需要 PDF 引擎或系统字体。首次准备依赖需要联网；PDF 首次编译还会下载 TeX bundle 与其中的 Latin Modern/Fandol 字体。`tar` 和 `install` 仅用于准备 PDF 引擎。Noto、fontconfig、xelatex、latexmk、Maven、Gradle、Docker 与 Kafka 均不是项目依赖。
+课程测试不需要 PDF 引擎或系统字体。`./gradlew :setup` 通过 Gradle 依赖校验解析 JUnit 1.11.4；首次解析需要联网。`./gradlew --offline` 控制 Gradle 依赖访问。PDF 首次编译还会下载 TeX bundle 与其中的 Latin Modern/Fandol 字体。只有准备 PDF 引擎时才使用 `curl`、`tar`、`install` 和 checksum 工具。Noto、fontconfig、xelatex、latexmk、Maven 命令行工具、Docker 与 Kafka 均不是项目依赖。
 
 ## 渐进式步骤
 
-课程共 7 章、28 步。`exercises/` 是唯一默认学习源码；`reference/` 保存隔离的完整答案，默认 classpath 不会加载它。每步测试以前置步骤累计运行；章节末步骤为 4、8、12、16、20、24、28。README 与课程清单默认英文，也可查看中文步骤列表：
+课程共 7 章、28 步。`exercises/` 是唯一默认学习源码；`reference/` 保存隔离的完整答案，默认学生 classpath 不会加载它。在支持 Gradle 的 IDE/LSP 中，从仓库根目录导入 Wrapper 项目，以 `exercises` 作为学习项目，不要把 `reference` 加入学生 classpath。每步测试以前置步骤累计运行；章节末步骤为 4、8、12、16、20、24、28。README 与课程清单默认英文，也可查看中文步骤列表：
 
 ```sh
-make list COURSE_LANG=zh
+COURSE_LANG=zh ./gradlew :list
 ```
 
 ```sh
-make test 1          # 累计检查第 1 步；骨架尚未填写时预期失败
-make test STEP=12    # 累计检查第 1–12 步
-make step-test 12    # 只定位第 12 步，不代表整章通过
-make reference-test 28
-make reference-demo
-make book             # 英文 PDF: build/book/en/simpleKafka.pdf
-make book COURSE_LANG=zh  # 中文 PDF: build/book/zh/simpleKafka-zh.pdf
+./gradlew :test -Pstep=1        # 累计检查第 1 步；骨架尚未填写时预期失败
+./gradlew :test -Pstep=12       # 累计检查第 1–12 步
+./gradlew :stepTest -Pstep=12   # 只定位第 12 步，不代表整章通过
+./gradlew :referenceTest -Pstep=28
+./gradlew :referenceDemo
+./gradlew :book                 # 英文 PDF: build/book/en/simpleKafka.pdf
+COURSE_LANG=zh ./gradlew :book  # 中文 PDF: build/book/zh/simpleKafka-zh.pdf
 ```
 
-测试报告始终使用英文，与 `COURSE_LANG` 无关。输出按步骤分组显示测试名称、各步和总计数；失败时展示断言、步骤/方法定位和重跑命令。JUnit XML 保存在 `build/student/reports/` 或 `build/reference/reports/`；重定向输出、设置 `NO_COLOR` 或 `TERM=dumb` 时不输出颜色。
+测试报告始终使用英文，与 `COURSE_LANG` 无关。课程任务通过 `JavaExec` 运行自定义 runner，输出纯文本，JUnit XML 保存在 `build/student/reports/` 或 `build/reference/reports/`。标准 `:exercises:test` 与 `:reference:test` 支持 IDE 和 `--tests` 调试；其 XML/HTML 报告位于 `build/<mode>/gradle-test-results/` 与 `build/<mode>/gradle-test-reports/`。runner 保留 `NO_COLOR` / `TERM=dumb` 颜色门禁。
 
-`docs/book/simpleKafka.tex` 是默认英文教材入口，`docs/book/simpleKafka-zh.tex` 是完整中文教材入口。分别构建两种语言后，可用 `make book BOOK_OFFLINE=1` 与 `make book COURSE_LANG=zh BOOK_OFFLINE=1` 离线编译。
+`docs/book/simpleKafka.tex` 是默认英文教材入口，`docs/book/simpleKafka-zh.tex` 是完整中文教材入口。两种语言都在线构建后，可用 `BOOK_OFFLINE=1 ./gradlew :book --offline` 与 `COURSE_LANG=zh BOOK_OFFLINE=1 ./gradlew :book --offline` 离线编译。`BOOK_OFFLINE=1` 控制 TeX bundle cache；Gradle `--offline` 独立控制 Gradle 依赖。Wrapper 启动 PDF 任务仍需要 Java 17+，但 `:book` 不编译 Java，也不解析 JUnit。
 
 ## 严格行为覆盖
 
@@ -54,7 +54,7 @@ make book COURSE_LANG=zh  # 中文 PDF: build/book/zh/simpleKafka-zh.pdf
 | 复制与确认，21–24 | 真实 TCP 拉取、保留起点/离线 requester 拒绝、坏响应和飞行中角色/epoch 变化；ISR/HW 单调与精确超时边界（含负超时拒绝）；ACK 等待/中断；并发追加、HW 可见性和跨 broker 进度。 |
 | 选举与修复，25–28 | 干净候选资格与无候选状态不变；HW 冲突、分批修复与失败 proof；metadata 刷新不重放、topic/partition 路由隔离；proof 绑定日志身份/version，截短或同 LEO 改写不能 admission，保留清理后 proof 失效、重新 admission deadline 初始化，以及 minISR/HW/waiter 恢复。 |
 
-该矩阵覆盖 simpleKafka 明确教学契约中的代表性边界，不是对所有输入的穷举、模糊测试、Kafka 生产实现认证或 100% 代码覆盖率声明。执行完整答案验收：`make reference-test 28`；学生完成相应步骤后可运行示例 `make test 28`，将 28 替换为当前要验收的步骤号。
+该矩阵覆盖 simpleKafka 明确教学契约中的代表性边界，不是对所有输入的穷举、模糊测试、Kafka 生产实现认证或 100% 代码覆盖率声明。执行完整答案验收：`./gradlew :referenceTest -Pstep=28`；学生完成相应步骤后运行 `./gradlew :test -Pstep=N`，将 `N` 替换为当前要验收的步骤号。
 
 ## 边界
 

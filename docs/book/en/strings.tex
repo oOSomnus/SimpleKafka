@@ -7,7 +7,7 @@
 \hypersetup{pdftitle={Understanding simpleKafka from Scratch},pdfauthor={simpleKafka teaching project}}
 
 \newenvironment{contract}{\begin{quote}\small\noindent\textbf{Behavioral contract and invariants.}\ }{\end{quote}}
-\newcommand{\lessoncommand}[1]{\par\noindent\textbf{Commands and progression.} Use \coursecmd{make step-test #1} to diagnose this step; \coursecmd{make test #1} runs cumulatively from Step 1 through this step. A chapter is complete only when the cumulative tests through its final step (4, 8, 12, 16, 20, 24, or 28) all pass.}
+\newcommand{\lessoncommand}[1]{\par\noindent\textbf{Commands and progression.} Use \coursecmd{./gradlew :stepTest -Pstep=#1} to diagnose this step; \coursecmd{./gradlew :test -Pstep=#1} runs cumulatively from Step 1 through this step. A chapter is complete only when the cumulative tests through its final step (4, 8, 12, 16, 20, 24, or 28) all pass.}
 \newcommand{\lessonquestions}[2]{\subsubsection*{Check your understanding}\begin{enumerate}\item #1\item #2\end{enumerate}}
 \newcommand{\lessonhints}[3]{\subsubsection*{Tiered hints (not the answer)}\begin{hintlevels}\item[Level 1] #1\item[Level 2] #2\item[Level 3] #3\end{hintlevels}}
 \newcommand{\lessonsection}[2]{\section{Step #1: #2}\label{step:#1}}

@@ -32,15 +32,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          make setup
-          make setup-book
-          make doctor
-          make compile
-          make list
-          make list COURSE_LANG=zh
-          make reference-test 28
-          make reference-demo
-          make book
-          make book COURSE_LANG=zh
-          make book BOOK_OFFLINE=1
-          make book COURSE_LANG=zh BOOK_OFFLINE=1
+          ./gradlew :setup
+          ./gradlew :setupBook
+          ./gradlew :doctor
+          ./gradlew :compile
+          ./gradlew :list
+          COURSE_LANG=zh ./gradlew :list
+          ./gradlew :referenceTest -Pstep=28
+          ./gradlew :referenceDemo
+          ./gradlew :book
+          COURSE_LANG=zh ./gradlew :book
+          BOOK_OFFLINE=1 ./gradlew :book --offline
+          COURSE_LANG=zh BOOK_OFFLINE=1 ./gradlew :book --offline

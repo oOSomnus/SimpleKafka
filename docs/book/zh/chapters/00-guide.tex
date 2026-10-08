@@ -8,11 +8,9 @@
 项目并非生产级 Kafka：没有 Kafka 线协议兼容、事务、压缩、compaction、幂等生产者、完整控制器共识或 controller HA。其 authority 是单 JVM 内的可信教学控制面；三台 broker 虽各有 TCP server、线程和磁盘目录，副本仍共享这个 authority。它可展示有控制的故障切换，不可用来声称任意网络分区下具备共识或生产级可用性。具体差异在附录和相关步骤反复标出。
 
 \section{准备 Java 21 与课程命令}
-课程使用任意 Java 21 或更高版本的 JDK，并以 \pathcode{javac --release 21} 编译；不需要 Maven、Gradle、Docker 或已启动的 Kafka。GNU Make、Bash 3.2+、\pathcode{find}、\pathcode{awk}、\pathcode{curl} 与 \pathcode{sha256sum} 或 \pathcode{shasum} 提供课程命令和经过校验的依赖下载；\pathcode{tar} 与 \pathcode{install} 仅用于 \coursecmd{make setup-book}。SDKMAN 是可选的 JDK 管理器；项目不会读取作者本机路径、切换 SDKMAN Java 或修改 shell 配置。可以通过 \pathcode{JAVA_HOME} 指定任意符合要求的 JDK，或把 \pathcode{java} 与 \pathcode{javac} 放入 \pathcode{PATH}。
+项目使用 Gradle Wrapper \coursecmd{./gradlew}；Gradle 9.8.1 可运行于 Java 17+，Java 编译、测试和 demo 任务需要 Java 21+ JDK，并以 \pathcode{--release 21} 编译。不需要 Maven、Docker 或已启动的 Kafka。脚本使用 Bash 3.2+、\pathcode{find}、\pathcode{awk}、\pathcode{curl} 与 \pathcode{sha256sum} 或 \pathcode{shasum}；仅准备 Tectonic 时需要 \pathcode{tar} 和 \pathcode{install}。先检查 \coursecmd{java -version}、\coursecmd{javac -version} 与 \coursecmd{./gradlew --version}。可通过 \pathcode{JAVA_HOME} 或 \pathcode{PATH} 使用任意符合要求的 JDK；SDKMAN 可选，项目不会静默修改 SDKMAN、系统软件或 shell 配置。
 
-\coursecmd{make setup} 只准备固定版本的 JUnit；\coursecmd{make setup-book} 单独准备平台对应的 Tectonic PDF 引擎，不要求先有 Java。两者都把工具放在仓库忽略的 \pathcode{.tools/}，不安装系统软件。\coursecmd{make doctor} 检查 JDK、JUnit 与可选 PDF 工具。骨架与测试可用 \coursecmd{make compile} 编译，编译成功不表示练习已经实现。课程清单与教材的默认语言为英文；\coursecmd{make list COURSE_LANG=zh} 显示中文步骤标题。
-
-\coursecmd{make book} 编译英文版到 \pathcode{build/book/en/simpleKafka.pdf}；\coursecmd{make book COURSE_LANG=zh} 编译中文版到 \pathcode{build/book/zh/simpleKafka-zh.pdf}。字体来自 Tectonic TeX bundle，不扫描系统 Noto 字体。首次构建需要网络下载 LaTeX bundle 和字体；两种语言都预热后，可分别用 \coursecmd{make book BOOK_OFFLINE=1} 与 \coursecmd{make book COURSE_LANG=zh BOOK_OFFLINE=1} 离线构建。
+\coursecmd{./gradlew :setup} 通过 Gradle 解析固定版本 JUnit 1.11.4 并验证 checksum，不再把 JUnit 放入 \pathcode{.tools/}。\coursecmd{./gradlew :setupBook} 单独准备 Tectonic PDF 引擎；两者都不安装系统软件。\coursecmd{./gradlew :doctor} 检查 Gradle、Java、Gradle 管理的 JUnit 和可选 PDF 工具。\coursecmd{./gradlew :compile} 编译学生骨架与测试；编译成功不表示练习已经实现。课程清单与教材默认英文；设置 \pathcode{COURSE_LANG=zh} 后运行 \coursecmd{./gradlew :list} 可显示中文步骤标题。\coursecmd{./gradlew :book} 编译英文版到 \pathcode{build/book/en/simpleKafka.pdf}；设置 \pathcode{COURSE_LANG=zh} 后运行同一命令可编译中文版到 \pathcode{build/book/zh/simpleKafka-zh.pdf}。book 任务需要启动 Wrapper JVM，但不编译 Java 或解析 JUnit。首次构建需联网获取 TeX bundle；两种语言都预热后，设置 \pathcode{BOOK_OFFLINE=1} 并用 \coursecmd{./gradlew :book --offline} 离线构建。Gradle \pathcode{--offline} 控制 Gradle 依赖；\pathcode{BOOK_OFFLINE=1} 控制 Tectonic only-cached 模式。
 
 \section{读懂二进制与文件 I/O}
 \method{ByteBuffer} 是一块带 position/limit 的字节视图。读取前通常要把写入完成的 buffer \method{flip()}；写出后是否清理取决于是否继续复用。协议和磁盘布局规定大端序，因此编码端与解码端都必须遵守相同字节次序。逻辑 offset 表示第几条记录；position 表示文件中的第几个字节，两者数值碰巧相同也毫无含义。
@@ -21,23 +19,24 @@
 
 \section{测试失败的阅读法}
 先读失败的 Step 测试名和断言，再回到本章契约。测试报告中的第一处异常通常比最后一段堆栈更有用：未实现方法给出步骤和方法名；课程错误应保留 \method{ErrorCode}；意外 IOException 可能被包装为 \method{STORAGE_ERROR} 并保留 cause。不要把错误映射成空列表或成功默认值来让测试变绿。一个单步定位命令只运行该步，不代表累计依赖都满足；累计命令会再次评估之前每步。
-课程 runner 按步骤分组输出测试名称、各步和总计数；失败时显示断言、精确方法定位与重跑命令。报告始终为英文；JUnit XML 保存到 \pathcode{build/student/reports/} 或 \pathcode{build/reference/reports/}。重定向输出、设置 \pathcode{NO_COLOR} 或 \pathcode{TERM=dumb} 时关闭颜色。
+课程 runner 按步骤分组输出测试名称、各步和总计数；失败时显示断言、精确方法定位与重跑命令。报告始终为英文；legacy JUnit XML 保存到 \pathcode{build/student/reports/} 或 \pathcode{build/reference/reports/}。自定义 JavaExec 课程任务输出纯文本。标准 Gradle \pathcode{:exercises:test} 与 \pathcode{:reference:test} 支持 IDE 调试及精确 \pathcode{--tests} 选择；其 XML/HTML 报告位于 \pathcode{build/<mode>/gradle-test-results/} 与 \pathcode{build/<mode>/gradle-test-reports/}。runner 保留 \pathcode{NO_COLOR} 与 \pathcode{TERM=dumb} 颜色门禁。
 
 \begin{center}
-\begin{tabular}{p{.23\textwidth}p{.68\textwidth}}
+\small
+\begin{tabular}{p{.48\textwidth}p{.43\textwidth}}
 \toprule
 命令 & 意义 \\
 \midrule
-\coursecmd{make list} & 显示 28 步、编辑方法与前置关系。\\
-\coursecmd{make step-test 12} & 只定位第 12 步；失败时辅助找当前问题。\\
-\coursecmd{make test 12} & 累计运行 Step01Test 至 Step12Test。\\
-\coursecmd{make test STEP=12} & 与位置参数形式等价。\\
-\coursecmd{make reference-test 28} & 对隔离参考实现运行完整 28 步契约。\\
+\coursecmd{./gradlew :list} & 显示 28 步、编辑方法与前置关系。\\
+\coursecmd{./gradlew :stepTest -Pstep=12} & 只定位第 12 步；失败时辅助找当前问题。\\
+\coursecmd{./gradlew :test -Pstep=12} & 累计运行 Step01Test 至 Step12Test。\\
+\coursecmd{./gradlew :referenceTest -Pstep=28} & 对隔离参考实现运行完整 28 步契约。\\
+\coursecmd{./gradlew :referenceDemo} & 运行完整参考 TCP/failover 场景。\\
 \bottomrule
 \end{tabular}
 \end{center}
 
-步骤编号支持单数字和前导零形式（例如 1 与 01），也可用 \pathcode{STEP=}。章节边界是第 4、8、12、16、20、24、28 步：只有该边界累计测试全绿，才算章节完成。\coursecmd{make test 8} 通过意味着第 1–8 步全部通过；\coursecmd{make step-test 8} 通过仅表示这一次第 8 步测试通过，不授予晋级。全课程测试不应把参考源放进学生 classpath，参考模式也不能拿来代替自己的练习进度。
+步骤编号接受 1–28 的十进制数字，可有前导零（例如 \pathcode{-Pstep=1} 或 \pathcode{-Pstep=01}）。章节边界是第 4、8、12、16、20、24、28 步：只有该边界累计测试全绿，才算章节完成。\coursecmd{./gradlew :test -Pstep=8} 通过意味着第 1–8 步全部通过；\coursecmd{./gradlew :stepTest -Pstep=8} 仅定位第 8 步，不授予晋级。全课程测试不应把参考源放进学生 classpath，参考模式也不能代替自己的练习进度。
 
 \section{系统不变量先行}
 阅读后续章节时牢记以下四条边界：一，日志保留范围内 offset 连续，LEO 是下一条写入位点，fetch 使用左闭右开区间；二，普通消费者可见范围不能越过 HW，group committed offset 是另一个状态量；三，锁按 authority partition lock 到本地 log lock 的顺序获取，网络 I/O 不在该锁内等待；四，错误必须有意义，尤其 epoch 或 generation 失效时不以静默重试伪造 exactly-once。每章都会说明它新引入了什么不变量以及由谁验证。

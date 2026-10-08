@@ -424,9 +424,9 @@ public final class CourseTestRunner {
                 System.err.println("    Editable: " + info.editableMethods());
                 System.err.println("    Prerequisites: " + info.prerequisites());
                 if (mode.equals("student")) {
-                    System.err.printf(Locale.ROOT, "    make step-test %d%n    make test %d%n", info.step(), info.step());
+                    System.err.printf(Locale.ROOT, "    ./gradlew :stepTest -Pstep=%d%n    ./gradlew :test -Pstep=%d%n", info.step(), info.step());
                 } else {
-                    System.err.printf(Locale.ROOT, "    make reference-test %d%n", info.step());
+                    System.err.printf(Locale.ROOT, "    ./gradlew :referenceTest -Pstep=%d%n", info.step());
                 }
             }
         }

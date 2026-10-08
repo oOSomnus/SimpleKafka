@@ -85,6 +85,6 @@ resolve_tectonic() {
       return 0
     fi
   fi
-  printf 'Tectonic executable is unavailable; run make setup-book or set TECTONIC to an executable.\n' >&2
+  printf 'Tectonic executable is unavailable; run ./gradlew :setupBook or set TECTONIC to an executable.\n' >&2
   return 127
 }

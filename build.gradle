@@ -1,0 +1,247 @@
+plugins {
+    id 'base'
+}
+
+subprojects {
+    apply plugin: 'java'
+
+    repositories {
+        mavenCentral()
+    }
+
+    sourceSets {
+        main {
+            java.setSrcDirs([
+                project.file('src/main/java'),
+                rootProject.file('provided/src/main/java')
+            ])
+        }
+        test {
+            java.setSrcDirs([rootProject.file('tests/src/test/java')])
+        }
+    }
+
+    java {
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
+    }
+
+    def outputName = project.name == 'exercises' ? 'student' : 'reference'
+    layout.buildDirectory.set(rootProject.layout.buildDirectory.dir(outputName))
+
+    dependencies {
+        testImplementation 'org.junit.platform:junit-platform-console-standalone:1.11.4'
+    }
+
+    tasks.withType(JavaCompile).configureEach {
+        options.release = 21
+        options.encoding = 'UTF-8'
+        doFirst {
+            if (!JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_21)) {
+                throw new GradleException('Java 21 or newer is required for Java compilation')
+            }
+        }
+    }
+
+    tasks.withType(Test).configureEach {
+        useJUnitPlatform()
+        reports.junitXml.outputLocation = layout.buildDirectory.dir('gradle-test-results')
+        reports.html.outputLocation = layout.buildDirectory.dir('gradle-test-reports')
+        doFirst {
+            if (!JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_21)) {
+                throw new GradleException('Java 21 or newer is required for Java tests')
+            }
+        }
+    }
+}
+
+def studentTestRuntime = project(':exercises').configurations.named('testRuntimeClasspath')
+tasks.register('setup') {
+    group = 'build setup'
+    description = 'Resolve the student test runtime dependencies.'
+    doLast {
+        studentTestRuntime.get().resolve()
+        println 'Gradle course dependencies ready (JUnit 1.11.4).'
+    }
+}
+
+tasks.register('validateCourse', Exec) {
+    group = 'verification'
+    description = 'Validate the bilingual course manifest.'
+    workingDir rootProject.projectDir
+    commandLine 'bash', 'scripts/course.sh', 'validate'
+}
+
+tasks.register('compile') {
+    group = 'build'
+    description = 'Compile the student skeleton and shared course tests.'
+    dependsOn ':validateCourse', ':exercises:testClasses'
+    doLast {
+        println 'Student skeleton and tests compiled.'
+    }
+}
+
+def selectedStep = { boolean required ->
+    String value = rootProject.providers.gradleProperty('step').orNull
+    if (value == null) {
+        if (required) {
+            throw new GradleException('usage: ./gradlew :stepTest -Pstep=N')
+        }
+        return 28
+    }
+    if (!(value ==~ /[0-9]+/)) {
+        throw new GradleException("step must be an integer in 1..28: ${value}")
+    }
+    BigInteger number = new BigInteger(value)
+    if (number < BigInteger.ONE || number > BigInteger.valueOf(28)) {
+        throw new GradleException("step must be an integer in 1..28: ${value}")
+    }
+    return number.intValue()
+}
+
+def registerCourseTestTask = { String taskName, String projectName, String mode, boolean single ->
+    Project implementation = project(projectName)
+    tasks.register(taskName, JavaExec) {
+        group = 'verification'
+        description = single
+            ? "Run only one diagnostic student step."
+            : "Run course tests against the ${mode} implementation."
+        dependsOn ':validateCourse', "${implementation.path}:testClasses"
+        classpath = implementation.sourceSets.test.runtimeClasspath
+        mainClass.set('io.simplekafka.support.CourseTestRunner')
+        ignoreExitValue = false
+
+        doFirst {
+            int completed = selectedStep(single)
+            File manifest = rootProject.file('course/steps.tsv')
+            List<String> testClasses = manifest.readLines('UTF-8')
+                .drop(1)
+                .collect { it.split('\\t', -1)[5] }
+            List<String> selectors = single
+                ? ["io.simplekafka.course.${testClasses[completed - 1]}"]
+                : testClasses.take(completed).collect { "io.simplekafka.course.${it}" }
+
+            File testClassesDirectory = implementation.layout.buildDirectory
+                .dir('classes/java/test').get().asFile
+            selectors.each { selector ->
+                File classFile = new File(testClassesDirectory, selector.replace('.', '/') + '.class')
+                if (!classFile.isFile()) {
+                    throw new GradleException("expected test class was not compiled: ${selector}")
+                }
+            }
+
+            File reports = implementation.layout.buildDirectory.dir('reports').get().asFile
+            if (reports.exists() && !reports.deleteDir()) {
+                throw new GradleException("could not reset course reports: ${reports}")
+            }
+            if (!reports.mkdirs() && !reports.isDirectory()) {
+                throw new GradleException("could not create course reports: ${reports}")
+            }
+
+            setArgs([
+                mode,
+                single ? 'single' : 'cumulative',
+                completed.toString(),
+                manifest.absolutePath,
+                reports.absolutePath
+            ] + selectors)
+            ['NO_COLOR', 'TERM'].each { key ->
+                if (System.getenv().containsKey(key)) {
+                    environment(key, System.getenv(key))
+                } else {
+                    environment.remove(key)
+                }
+            }
+            println String.format('Preparing %s course tests through Step %02d.', mode, completed)
+        }
+
+        doLast {
+            if (single) {
+                println String.format(
+                    'Step %02d diagnostic passed; single-step tests do not grant chapter completion.',
+                    selectedStep(true)
+                )
+            } else {
+                int completed = selectedStep(false)
+                if (completed == 28) {
+                    println 'Course complete'
+                } else if (completed % 4 == 0) {
+                    println String.format(
+                        'Chapter %d complete; next: Chapter %d / Step %d',
+                        completed.intdiv(4),
+                        completed.intdiv(4) + 1,
+                        completed + 1
+                    )
+                } else {
+                    println String.format('Step %d passed; next: Step %d', completed, completed + 1)
+                }
+            }
+        }
+    }
+}
+
+registerCourseTestTask('test', 'exercises', 'student', false)
+registerCourseTestTask('stepTest', 'exercises', 'student', true)
+registerCourseTestTask('referenceTest', 'reference', 'reference', false)
+
+def registerDemoTask = { String taskName, String projectName ->
+    Project implementation = project(projectName)
+    tasks.register(taskName, JavaExec) {
+        group = 'application'
+        description = "Run the ${projectName} TCP/failover scenario."
+        dependsOn ':validateCourse', "${implementation.path}:classes"
+        classpath = implementation.sourceSets.main.runtimeClasspath
+        mainClass.set('io.simplekafka.cli.CourseDemo')
+    }
+}
+
+registerDemoTask('demo', 'exercises')
+registerDemoTask('referenceDemo', 'reference')
+
+tasks.withType(JavaExec).configureEach {
+    doFirst {
+        if (!JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_21)) {
+            throw new GradleException('Java 21 or newer is required for Java execution')
+        }
+    }
+}
+
+tasks.named('assemble') {
+    dependsOn ':exercises:assemble'
+}
+
+tasks.named('check') {
+    dependsOn tasks.named('test')
+}
+
+tasks.register('list', Exec) {
+    group = 'help'
+    description = 'List the bilingual course steps.'
+    workingDir rootProject.projectDir
+    commandLine 'bash', 'scripts/course.sh', 'list'
+}
+
+tasks.register('doctor', Exec) {
+    group = 'help'
+    description = 'Check the Java and optional PDF build environment.'
+    workingDir rootProject.projectDir
+    commandLine 'bash', 'scripts/course.sh', 'doctor'
+    doFirst {
+        println "Gradle: ${gradle.gradleVersion}"
+        println 'JUnit managed by Gradle: 1.11.4'
+    }
+}
+
+tasks.register('setupBook', Exec) {
+    group = 'build setup'
+    description = 'Prepare the pinned Tectonic PDF engine.'
+    workingDir rootProject.projectDir
+    commandLine 'bash', 'scripts/setup.sh', 'book'
+}
+
+tasks.register('book', Exec) {
+    group = 'documentation'
+    description = 'Build the selected textbook PDF.'
+    workingDir rootProject.projectDir
+    commandLine 'bash', 'scripts/book.sh'
+}
