@@ -27,12 +27,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.io.TempDir;
 
 class Step23Test {
     @TempDir Path root;
 
     @Test
+    @DisplayName("Insufficient ISR rejects all before append while leader ack still appends")
     void insufficientIsrRejectsAllBeforeAppendWhileLeaderAckStillAppends() {
         AtomicLong now = new AtomicLong(1_000);
         TimeSource clock = now::get;
@@ -61,6 +63,7 @@ class Step23Test {
     }
 
     @Test
+    @DisplayName("Exact high watermark boundary succeeds but one offset below waits for progress")
     void exactHighWatermarkBoundarySucceedsButOneOffsetBelowWaitsForProgress() throws Exception {
         TimeSource clock = new AtomicLong(1_000)::get;
         TopicPartition tp = new TopicPartition("step23-boundary", 0);
@@ -97,6 +100,7 @@ class Step23Test {
     }
 
     @Test
+    @DisplayName("Zero timeout retains the append without advancing the high watermark")
     void zeroTimeoutRetainsTheAppendWithoutAdvancingTheHighWatermark() {
         TimeSource clock = new AtomicLong(1_000)::get;
         TopicPartition tp = new TopicPartition("step23-zero-timeout", 0);
@@ -119,6 +123,7 @@ class Step23Test {
     }
 
     @Test
+    @DisplayName("Epoch change while waiting fences the acknowledgement")
     void epochChangeWhileWaitingFencesTheAcknowledgement() throws Exception {
         TimeSource clock = new AtomicLong(1_000)::get;
         TopicPartition tp = new TopicPartition("step23-epoch", 0);
@@ -145,6 +150,7 @@ class Step23Test {
     }
 
     @Test
+    @DisplayName("ISR reduction while waiting fails and interruption preserves the interrupt flag")
     void isrReductionWhileWaitingFailsAndInterruptionPreservesTheInterruptFlag() throws Exception {
         AtomicLong now = new AtomicLong(1_000);
         TimeSource clock = now::get;

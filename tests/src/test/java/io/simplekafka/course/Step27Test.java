@@ -39,12 +39,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.io.TempDir;
 
 class Step27Test {
     @TempDir Path root;
 
     @Test
+    @DisplayName("Refresh skips unavailable and factory throwing bootstraps before caching metadata")
     void refreshSkipsUnavailableAndFactoryThrowingBootstrapsBeforeCachingMetadata() {
         TopicPartition tp = new TopicPartition("step27-bootstrap", 0);
         try (ClusterHarness cluster = new ClusterHarness(root, new AtomicLong(0)::get)) {
@@ -69,6 +71,7 @@ class Step27Test {
     }
 
     @Test
+    @DisplayName("All unavailable bootstraps produce no synthetic metadata or active endpoint")
     void allUnavailableBootstrapsProduceNoSyntheticMetadataOrActiveEndpoint() {
         List<Endpoint> bootstrap = List.of(
                 new Endpoint("127.0.0.1", 0), new Endpoint("127.0.0.1", 0));
@@ -84,6 +87,7 @@ class Step27Test {
 
 
     @Test
+    @DisplayName("Failed refresh times out without replacing cache and later successful refresh replaces it")
     void failedRefreshTimesOutWithoutReplacingCacheAndLaterSuccessfulRefreshReplacesIt() {
         TopicPartition tp = new TopicPartition("step27-refresh", 0);
         try (ClusterHarness cluster = new ClusterHarness(root, new AtomicLong(0)::get)) {
@@ -122,6 +126,7 @@ class Step27Test {
     }
 
     @Test
+    @DisplayName("Returns leader errors unchanged and refreshes only for the next request")
     void returnsLeaderErrorsUnchangedAndRefreshesOnlyForTheNextRequest() {
         TopicPartition tp = new TopicPartition("step27-errors", 0);
         try (ClusterHarness cluster = new ClusterHarness(root, new AtomicLong(0)::get)) {
@@ -188,6 +193,7 @@ class Step27Test {
     }
 
     @Test
+    @DisplayName("Router does not replay a produce after its append response times out")
     void routerDoesNotReplayAProduceAfterItsAppendResponseTimesOut() throws Exception {
         CountDownLatch appended = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
@@ -224,6 +230,7 @@ class Step27Test {
     }
 
     @Test
+    @DisplayName("Makes routed producer outcome unknown after every append error")
     void makesRoutedProducerOutcomeUnknownAfterEveryAppendError() {
         for (ErrorCode error : List.of(
                 ErrorCode.FENCED_EPOCH,
@@ -285,6 +292,7 @@ class Step27Test {
     }
 
     @Test
+    @DisplayName("Router does not replay storage or transport failures")
     void routerDoesNotReplayStorageOrTransportFailures() {
         AtomicBoolean failFirstProduce = new AtomicBoolean(true);
         try (TestBroker broker = new TestBroker(root.resolve("storage-failure"), (handler, request) -> {
@@ -326,6 +334,7 @@ class Step27Test {
     }
 
     @Test
+    @DisplayName("Closing borrowed clients leaves the shared router usable for subsequent operations")
     void closingBorrowedClientsLeavesTheSharedRouterUsableForSubsequentOperations() {
         TopicPartition tp = new TopicPartition("shared", 0);
         try (ClusterHarness cluster = new ClusterHarness(root, new AtomicLong(0)::get)) {
@@ -373,6 +382,7 @@ class Step27Test {
     }
 
     @Test
+    @DisplayName("Keeps topic routes independent across failover and restart and routes all client types")
     void keepsTopicRoutesIndependentAcrossFailoverAndRestartAndRoutesAllClientTypes() {
         TopicPartition routeA = new TopicPartition("route-a", 0);
         TopicPartition routeB = new TopicPartition("route-b", 0);

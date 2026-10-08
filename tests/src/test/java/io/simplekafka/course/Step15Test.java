@@ -29,6 +29,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.OptionalLong;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import static io.simplekafka.support.TestSupport.assertCode;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -37,6 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 class Step15Test {
     @Test
+    @DisplayName("Offset store persists next offsets per group and partition and allows rewind")
     void offsetStorePersistsNextOffsetsPerGroupAndPartitionAndAllowsRewind() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             Path storePath = temp.root().resolve("offsets");
@@ -72,6 +74,7 @@ class Step15Test {
     }
 
     @Test
+    @DisplayName("Raw offset requests return exact bodies and isolate group topic and partition keys")
     void rawOffsetRequestsReturnExactBodiesAndIsolateGroupTopicAndPartitionKeys() throws Exception {
         try (TempDirectory temp = new TempDirectory();
              OffsetBrokerFixture broker = new OffsetBrokerFixture(temp.root(), 1)) {
@@ -98,6 +101,7 @@ class Step15Test {
     }
 
     @Test
+    @DisplayName("Resume commits all positions and does not clamp past log end")
     void resumeCommitsAllPositionsAndDoesNotClampPastLogEnd() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             TopicPartition zero = new TopicPartition("orders", 0);
@@ -115,6 +119,17 @@ class Step15Test {
 
                 try (RpcClient client = broker.client();
                      SimpleConsumer consumer = new SimpleConsumer(client, "workers")) {
+                    consumer.assign(List.of(one, zero));
+                    assertEquals(0, consumer.position(zero));
+                    assertEquals(0, consumer.position(one));
+                    var manuallyPolled = consumer.poll(1, 4_096);
+                    assertEquals(List.of(zero), List.copyOf(manuallyPolled.keySet()));
+                    assertEquals(List.of(0L), manuallyPolled.get(zero).stream()
+                            .map(record -> record.offset()).toList());
+                    assertEquals(List.of("p0-0"), TestSupport.values(manuallyPolled.get(zero)));
+                    assertEquals(1, consumer.position(zero));
+                    assertEquals(0, consumer.position(one));
+                    assertRawOffset(broker.endpoint(), workersZero, OptionalLong.of(2), 27);
                     consumer.resume(List.of(one, zero));
                     assertEquals(2, consumer.position(zero));
                     assertEquals(0, consumer.position(one));
@@ -148,6 +163,7 @@ class Step15Test {
     }
 
     @Test
+    @DisplayName("Offset store truncates an incomplete tail and rejects complete bad CRC without mutation")
     void offsetStoreTruncatesAnIncompleteTailAndRejectsCompleteBadCrcWithoutMutation() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             OffsetKey key = new OffsetKey("workers", new TopicPartition("orders", 0));
@@ -193,6 +209,7 @@ class Step15Test {
     }
 
     @Test
+    @DisplayName("Simple consumer commit survives broker restart and resume is group scoped")
     void simpleConsumerCommitSurvivesBrokerRestartAndResumeIsGroupScoped() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             TopicPartition tp = new TopicPartition("orders", 0);

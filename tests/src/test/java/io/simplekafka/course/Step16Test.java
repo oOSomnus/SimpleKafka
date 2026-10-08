@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.OptionalLong;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import static io.simplekafka.support.TestSupport.assertCode;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -22,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 class Step16Test {
     @Test
+    @DisplayName("Later partition failure leaves both offsets uncommitted and replays earlier side effects")
     void laterPartitionFailureLeavesBothOffsetsUncommittedAndReplaysEarlierSideEffects() throws Exception {
         try (TempDirectory temp = new TempDirectory();
              OffsetBrokerFixture broker = new OffsetBrokerFixture(temp.root(), 1)) {
@@ -81,6 +83,7 @@ class Step16Test {
     }
 
     @Test
+    @DisplayName("Commit failure after side effects replays the same records at least once")
     void commitFailureAfterSideEffectsReplaysTheSameRecordsAtLeastOnce() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             TopicPartition tp = new TopicPartition("orders", 0);
@@ -134,6 +137,7 @@ class Step16Test {
     }
 
     @Test
+    @DisplayName("Bounded rounds process in topic partition offset order and commit final positions")
     void boundedRoundsProcessInTopicPartitionOffsetOrderAndCommitFinalPositions() throws Exception {
         try (TempDirectory temp = new TempDirectory();
              OffsetBrokerFixture broker = new OffsetBrokerFixture(temp.root(), 1)) {
@@ -173,6 +177,7 @@ class Step16Test {
         }
     }
     @Test
+    @DisplayName("Failed poll processes nothing and resume retries the previously fetched record")
     void failedPollProcessesNothingAndResumeRetriesThePreviouslyFetchedRecord() throws Exception {
         try (TempDirectory temp = new TempDirectory();
              OffsetBrokerFixture broker = new OffsetBrokerFixture(temp.root(), 1)) {

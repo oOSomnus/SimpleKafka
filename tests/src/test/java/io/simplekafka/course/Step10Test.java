@@ -22,6 +22,7 @@ import java.util.Map;
 import java.util.TreeMap;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import static io.simplekafka.support.TestSupport.assertCode;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -30,6 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class Step10Test {
     @Test
+    @DisplayName("Creates independent fixed topics and reopens only with explicit partition counts")
     void createsIndependentFixedTopicsAndReopensOnlyWithExplicitPartitionCounts() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             List<PartitionMetadata> ordersBeforeRestart;
@@ -116,6 +118,7 @@ class Step10Test {
     }
 
     @Test
+    @DisplayName("Rejects invalid counts and topic names without mutating the filesystem or escaping the root")
     void rejectsInvalidCountsAndTopicNamesWithoutMutatingTheFilesystemOrEscapingTheRoot() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             Path sandbox = temp.root();
@@ -151,6 +154,7 @@ class Step10Test {
     }
 
     @Test
+    @DisplayName("Accepts a 255-byte topic identifier where the filesystem allows it")
     void acceptsA255ByteTopicIdentifierWhereTheFilesystemAllowsIt() throws Exception {
         String topic = "t".repeat(255);
         assertEquals(255, topic.getBytes(StandardCharsets.UTF_8).length);

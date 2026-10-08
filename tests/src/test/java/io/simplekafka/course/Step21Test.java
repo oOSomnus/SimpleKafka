@@ -1,5 +1,6 @@
 package io.simplekafka.course;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -22,11 +23,15 @@ import io.simplekafka.support.RecordBytes;
 import io.simplekafka.support.TimeSource;
 import io.simplekafka.transport.BrokerServer;
 import io.simplekafka.transport.RpcClient;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -34,11 +39,14 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.io.TempDir;
 
 class Step21Test {
     @Test
+    @DisplayName("Discards a reply when replica epoch or role changes during the TCP request")
     void discardsAReplyWhenReplicaEpochOrRoleChangesDuringTheTcpRequest() throws Exception {
         TopicPartition tp = new TopicPartition("in-flight", 0);
         List<RoleTransition> transitions = List.of(
@@ -102,6 +110,7 @@ class Step21Test {
     @TempDir Path root;
 
     @Test
+    @DisplayName("Rejects follower polling when offline or already leader without changing disk")
     void rejectsFollowerPollingWhenOfflineOrAlreadyLeaderWithoutChangingDisk() throws Exception {
         TopicPartition tp = new TopicPartition("step21-entry", 0);
         Path directory = root.resolve("entry-state");
@@ -132,6 +141,7 @@ class Step21Test {
     }
 
     @Test
+    @DisplayName("Replica fetch includes uncommitted leader tail and returns empty at LEO")
     void replicaFetchIncludesUncommittedLeaderTailAndReturnsEmptyAtLeo() {
         TopicPartition tp = new TopicPartition("step21-fetch", 0);
         try (ClusterHarness cluster = new ClusterHarness(root)) {
@@ -176,8 +186,97 @@ class Step21Test {
                     "serving replica fetches must not report follower progress or advance authority state");
         }
     }
+    @Test
+    @DisplayName("Replica fetch rejects offsets below the retained leader start")
+    void replicaFetchRejectsOffsetsBelowTheRetainedLeaderStart() throws Exception {
+        TimeSource clock = new AtomicLong(0)::get;
+        TopicPartition tp = new TopicPartition("step21-retained-fetch", 0);
+        byte[] firstValue = new byte[600_000];
+        byte[] secondValue = new byte[600_000];
+        List<RecordData> batch = List.of(
+                new RecordData(null, firstValue, 10),
+                new RecordData(null, secondValue, 11));
+        try (ClusterHarness cluster = new ClusterHarness(root, clock)) {
+            cluster.start();
+            cluster.createTopic(tp.topic(), 1, 2);
+            assertEquals(new io.simplekafka.model.AppendResult(0, 2),
+                    cluster.partitionLog(1, tp).append(batch));
+            PartitionLog leader = cluster.partitionLog(1, tp);
+            assertEquals(1, leader.deleteBefore(1));
+            assertEquals(1, leader.logStartOffset());
+            assertEquals(2, leader.logEndOffset());
+            Path retainedLog = root.resolve("broker-1").resolve(tp.topic()).resolve("0")
+                    .resolve("00000000000000000001.log");
+            assertFalse(Files.exists(segmentFile(root, 1, tp)));
+            assertTrue(Files.exists(retainedLog));
+
+            ReplicationSnapshot before = cluster.snapshot(tp);
+            Map<String, String> diskBefore = diskImage(root);
+            try (RpcClient client = cluster.client(1, 5_000)) {
+                Messages.Reply belowStart = client.call(
+                        new Messages.ReplicaFetchRequest(tp, 2, 0, 0, 10, 4_000_000, false));
+                assertEquals(ErrorCode.OFFSET_OUT_OF_RANGE, belowStart.error());
+                assertReplicaFetchUnchanged(root, cluster, tp, before, diskBefore);
+
+                Messages.Reply atStart = client.call(
+                        new Messages.ReplicaFetchRequest(tp, 2, 0, 1, 10, 4_000_000, false));
+                assertEquals(ErrorCode.NONE, atStart.error());
+                Messages.ReplicaFetchBody retained = assertInstanceOf(
+                        Messages.ReplicaFetchBody.class, atStart.body());
+                assertEquals(List.of(new LogRecord(1, batch.get(1))), retained.records());
+                assertEquals(2, retained.leaderLogEndOffset());
+                assertEquals(0, retained.highWatermark());
+                assertEquals(0, retained.epoch());
+                assertReplicaFetchUnchanged(root, cluster, tp, before, diskBefore);
+
+                Messages.Reply atEnd = client.call(
+                        new Messages.ReplicaFetchRequest(tp, 2, 0, 2, 10, 4_000_000, false));
+                assertEquals(ErrorCode.NONE, atEnd.error());
+                Messages.ReplicaFetchBody empty = assertInstanceOf(Messages.ReplicaFetchBody.class, atEnd.body());
+                assertEquals(List.of(), empty.records());
+                assertEquals(2, empty.leaderLogEndOffset());
+                assertEquals(0, empty.highWatermark());
+                assertEquals(0, empty.epoch());
+                assertReplicaFetchUnchanged(root, cluster, tp, before, diskBefore);
+            }
+        }
+    }
 
     @Test
+    @DisplayName("Offline replica fetch requester is rejected without changing progress")
+    void offlineReplicaFetchRequesterIsRejectedWithoutChangingProgress() throws Exception {
+        TimeSource clock = new AtomicLong(0)::get;
+        TopicPartition tp = new TopicPartition("step21-offline-requester", 0);
+        RecordData pending = record("pending", 1);
+        Messages.ReplicaFetchRequest request = new Messages.ReplicaFetchRequest(
+                tp, 2, 0, 0, 10, 4_096, false);
+        try (ClusterHarness cluster = new ClusterHarness(root, clock)) {
+            cluster.start();
+            cluster.createTopic(tp.topic(), 1, 2);
+            cluster.partitionLog(1, tp).append(List.of(pending));
+
+            try (RpcClient client = cluster.client(1, 2_000)) {
+                Messages.Reply initial = client.call(request);
+                assertEquals(ErrorCode.NONE, initial.error());
+                Messages.ReplicaFetchBody initialBody =
+                        assertInstanceOf(Messages.ReplicaFetchBody.class, initial.body());
+                assertEquals(List.of(new LogRecord(0, pending)), initialBody.records());
+                assertEquals(0, initialBody.highWatermark());
+
+                cluster.stopBroker(2);
+                ReplicationSnapshot before = cluster.snapshot(tp);
+                List<ReplicaDiskImage> diskBefore = captureReplicaLogs(root, cluster, tp);
+                assertEquals(ErrorCode.NOT_LEADER, client.call(request).error());
+                assertEquals(before, cluster.snapshot(tp));
+                assertReplicaLogsUnchanged(cluster, tp, diskBefore, root,
+                        "an offline replica requester must not change log progress");
+            }
+        }
+    }
+
+
+    @Test
+    @DisplayName("Bounds large replica fetches and copies the complete suffix")
     void boundsLargeReplicaFetchesAndCopiesTheCompleteSuffix() throws Exception {
         TopicPartition tp = new TopicPartition("step21-large-fetch", 0);
         byte[] value = new byte[1_048_548];
@@ -215,6 +314,7 @@ class Step21Test {
     }
 
     @Test
+    @DisplayName("Follower copy survives empty polls and catalog reopen")
     void followerCopySurvivesEmptyPollsAndCatalogReopen() throws Exception {
         AtomicLong now = new AtomicLong(10);
         TimeSource clock = now::get;
@@ -265,6 +365,7 @@ class Step21Test {
     }
 
     @Test
+    @DisplayName("Rejected replica fetch requests preserve disk and authority")
     void rejectedReplicaFetchRequestsPreserveDiskAndAuthority() throws Exception {
         TopicPartition tp = new TopicPartition("step21-rejections", 0);
         try (ClusterHarness cluster = new ClusterHarness(root);
@@ -310,6 +411,7 @@ class Step21Test {
     }
 
     @Test
+    @DisplayName("Follower ahead of leader is rejected without truncating its log")
     void followerAheadOfLeaderIsRejectedWithoutTruncatingItsLog() throws Exception {
         TopicPartition tp = new TopicPartition("step21-ahead", 0);
         try (ClusterHarness cluster = new ClusterHarness(root)) {
@@ -334,6 +436,7 @@ class Step21Test {
     }
 
     @Test
+    @DisplayName("Malformed real TCP replica fetch replies are rejected before append")
     void malformedRealTcpReplicaFetchRepliesAreRejectedBeforeAppend() throws Exception {
         TopicPartition tp = new TopicPartition("step21-scripted", 0);
         List<ScriptedReply> replies = List.of(
@@ -387,6 +490,27 @@ class Step21Test {
     private record ReplicaDiskImage(int brokerId, long logEndOffset, byte[] logBytes) {}
 
     private record ScriptedReply(String name, Messages.ReplicaFetchBody body, ErrorCode expectedError) {}
+
+    private static void assertReplicaFetchUnchanged(Path root, ClusterHarness cluster, TopicPartition tp,
+                                                    ReplicationSnapshot before, Map<String, String> diskBefore)
+            throws IOException {
+        assertEquals(before, cluster.snapshot(tp));
+        assertEquals(List.of(2L, 0L, 0L), List.of(
+                cluster.partitionLog(1, tp).logEndOffset(),
+                cluster.partitionLog(2, tp).logEndOffset(),
+                cluster.partitionLog(3, tp).logEndOffset()));
+        assertEquals(diskBefore, diskImage(root));
+    }
+
+    private static Map<String, String> diskImage(Path directory) throws IOException {
+        Map<String, String> image = new TreeMap<>();
+        try (Stream<Path> paths = Files.walk(directory)) {
+            for (Path file : paths.filter(Files::isRegularFile).toList()) {
+                image.put(directory.relativize(file).toString(), HexFormat.of().formatHex(Files.readAllBytes(file)));
+            }
+        }
+        return Map.copyOf(image);
+    }
 
     private static void assertRejectedFetch(ClusterHarness cluster, TopicPartition tp,
                                             ReplicaFetchFailure failure,

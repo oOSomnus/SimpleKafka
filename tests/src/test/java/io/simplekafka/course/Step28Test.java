@@ -22,25 +22,34 @@ import io.simplekafka.model.RecordData;
 import io.simplekafka.model.OffsetKey;
 import io.simplekafka.model.TopicPartition;
 import io.simplekafka.replication.ReplicaAdmission;
+import io.simplekafka.replication.ReplicaReconciler;
 import io.simplekafka.storage.PartitionLog;
 import io.simplekafka.protocol.Messages;
 import io.simplekafka.transport.RpcClient;
 import io.simplekafka.transport.RpcClientFactory;
 import java.nio.charset.StandardCharsets;
+import java.io.IOException;
 import java.nio.file.Path;
+import java.nio.file.Files;
 import java.util.List;
+import java.util.HexFormat;
 import java.util.Set;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.TreeMap;
 import org.junit.jupiter.api.Test;
+import java.util.stream.Stream;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.io.TempDir;
 
 class Step28Test {
     @TempDir Path root;
 
     @Test
+    @DisplayName("Recovered proof restores ISR for all acks and replica logs converge")
     void recoveredProofRestoresIsrForAllAcksAndReplicaLogsConverge() throws Exception {
         TopicPartition tp = new TopicPartition("step28", 0);
         try (ClusterHarness cluster = new ClusterHarness(root, new AtomicLong(0)::get)) {
@@ -125,6 +134,7 @@ class Step28Test {
     }
 
     @Test
+    @DisplayName("Proof becomes stale when leader appends after reconciliation")
     void proofBecomesStaleWhenLeaderAppendsAfterReconciliation() {
         TopicPartition tp = new TopicPartition("step28proof", 0);
         try (ClusterHarness cluster = new ClusterHarness(root, new AtomicLong(0)::get)) {
@@ -161,6 +171,7 @@ class Step28Test {
     }
 
     @Test
+    @DisplayName("Admission requires current proof and online assigned follower and is idempotent")
     void admissionRequiresCurrentProofAndOnlineAssignedFollowerAndIsIdempotent() {
         TopicPartition tp = new TopicPartition("step28admission", 0);
         try (ClusterHarness cluster = new ClusterHarness(root, new AtomicLong(0)::get)) {
@@ -216,6 +227,7 @@ class Step28Test {
     }
 
     @Test
+    @DisplayName("Recovery proof cannot be used with another log object with the same records and version")
     void recoveryProofCannotBeUsedWithAnotherLogObjectWithTheSameRecordsAndVersion() {
         TopicPartition tp = new TopicPartition("step28-log-identity", 0);
         try (ClusterHarness cluster = new ClusterHarness(root, new AtomicLong(0)::get)) {
@@ -257,6 +269,7 @@ class Step28Test {
     }
 
     @Test
+    @DisplayName("Admission rejects proof after truncate and after different data restores same LEO")
     void admissionRejectsProofAfterTruncateAndAfterDifferentDataRestoresSameLeo() {
         TopicPartition truncated = new TopicPartition("step28-truncated", 0);
         TopicPartition rewritten = new TopicPartition("step28-rewritten", 0);
@@ -312,6 +325,7 @@ class Step28Test {
     }
 
     @Test
+    @DisplayName("Min ISR three needs both recovered replicas before all acks resume")
     void minIsrThreeNeedsBothRecoveredReplicasBeforeAllAcksResume() throws Exception {
         TopicPartition tp = new TopicPartition("step28-min-isr-three", 0);
         try (ClusterHarness cluster = new ClusterHarness(root, new AtomicLong(0)::get)) {
@@ -363,6 +377,7 @@ class Step28Test {
     }
 
     @Test
+    @DisplayName("Min ISR two admission advances HW and wakes an actual all produce waiter")
     void minIsrTwoAdmissionAdvancesHwAndWakesAnActualAllProduceWaiter() throws Exception {
         TopicPartition tp = new TopicPartition("step28-min-isr-two", 0);
         AtomicLong clock = new AtomicLong(0);
@@ -452,6 +467,118 @@ class Step28Test {
             }
         }
     }
+    @Test
+    @DisplayName("Retention invalidates proof and keeps the replica out of ISR")
+    void retentionInvalidatesProofAndKeepsTheReplicaOutOfIsr() throws Exception {
+        TopicPartition tp = new TopicPartition("step28-retained-proof", 0);
+        List<RecordData> batch = List.of(
+                new RecordData(null, new byte[600_000], 10),
+                new RecordData(null, new byte[600_000], 11));
+        List<LogRecord> expected = List.of(
+                new LogRecord(0, batch.get(0)),
+                new LogRecord(1, batch.get(1)));
+        try (ClusterHarness cluster = new ClusterHarness(root, new AtomicLong(0)::get)) {
+            cluster.start();
+            cluster.createTopic(tp.topic(), 1, 2);
+            assertEquals(new AppendResult(0, 2), produce(cluster, tp, 1, 0, Acks.LEADER, batch).result());
+            for (int brokerId : List.of(2, 3)) {
+                assertEquals(2, cluster.replicateOnce(brokerId, tp, 10, 4_000_000));
+                cluster.tracker(tp).report(brokerId, 0, 2);
+            }
+            assertEquals(2, cluster.tracker(tp).highWatermark());
+
+            cluster.stopBroker(1);
+            var election = cluster.elect(tp);
+            assertEquals(2, election.leaderId());
+            assertEquals(1, election.epoch());
+            assertEquals(List.of(2), cluster.snapshot(tp).isr());
+
+            ReplicaReconciler reconciler;
+            try (RpcClient client = new RpcClient(cluster.endpoint(2), 5_000)) {
+                reconciler = new ReplicaReconciler(
+                        3, tp, cluster.partitionLog(3, tp), client, cluster.authority());
+                assertEquals(2, reconciler.reconcile(1));
+                assertTrue(reconciler.recoveryProof().isPresent());
+            }
+
+            PartitionLog local = cluster.partitionLog(3, tp);
+            Path partitionDirectory = cluster.catalog(3).root().resolve(tp.topic()).resolve("0");
+            Path baseZeroLog = partitionDirectory.resolve("00000000000000000000.log");
+            Path baseOneLog = partitionDirectory.resolve("00000000000000000001.log");
+            assertEquals(1, local.deleteBefore(1));
+            assertEquals(1, local.logStartOffset());
+            assertEquals(2, local.logEndOffset());
+            assertFalse(Files.exists(baseZeroLog));
+            assertTrue(Files.exists(baseOneLog));
+            List<LogRecord> retainedRecords = expected.subList(1, 2);
+            assertEquals(retainedRecords, local.read(1, 10, 4_000_000));
+            Map<String, String> diskBeforeAdmission = diskImage(partitionDirectory);
+            ReplicationSnapshot beforeAdmission = cluster.snapshot(tp);
+            assertEquals(2, beforeAdmission.highWatermark());
+            assertEquals(List.of(2), beforeAdmission.isr());
+
+            assertFalse(admission(cluster, 3, tp).tryAdd(3, tp, 1));
+            assertTrue(reconciler.recoveryProof().isEmpty());
+            assertEquals(beforeAdmission, cluster.snapshot(tp));
+            assertEquals(2, local.logEndOffset());
+            assertEquals(1, local.logStartOffset());
+            assertEquals(retainedRecords, local.read(1, 10, 4_000_000));
+            assertEquals(diskBeforeAdmission, diskImage(partitionDirectory));
+        }
+    }
+
+    @Test
+    @DisplayName("Admission initializes caught up deadline for the readmitted replica")
+    void admissionInitializesCaughtUpDeadlineForTheReadmittedReplica() {
+        AtomicLong clock = new AtomicLong(0);
+        TopicPartition tp = new TopicPartition("step28-admission-deadline", 0);
+        try (ClusterHarness cluster = new ClusterHarness(root, clock::get)) {
+            cluster.start();
+            cluster.createTopic(tp.topic(), 1, 2);
+            assertEquals(new AppendResult(0, 1),
+                    produce(cluster, tp, 1, 0, Acks.LEADER, List.of(record("prefix", 10))).result());
+            for (int brokerId : List.of(2, 3)) {
+                assertEquals(1, cluster.replicateOnce(brokerId, tp, 10, 4_096));
+                cluster.tracker(tp).report(brokerId, 0, 1);
+            }
+            assertEquals(1, cluster.tracker(tp).highWatermark());
+
+            cluster.stopBroker(1);
+            var election = cluster.elect(tp);
+            assertEquals(2, election.leaderId());
+            assertEquals(1, election.epoch());
+            assertEquals(List.of(2), cluster.snapshot(tp).isr());
+            cluster.restartBroker(1);
+            assertEquals(1, cluster.reconcile(1, tp));
+
+            clock.set(1_000);
+            assertTrue(admission(cluster, 1, tp).tryAdd(1, tp, 1));
+            ReplicationSnapshot afterAdmission = cluster.snapshot(tp);
+            assertEquals(List.of(1, 2), afterAdmission.isr());
+            assertEquals(1, afterAdmission.highWatermark());
+
+            clock.set(1_999);
+            assertEquals(Set.of(), cluster.tracker(tp).expireLagging());
+            assertEquals(afterAdmission, cluster.snapshot(tp));
+
+            clock.set(2_000);
+            assertEquals(Set.of(1), cluster.tracker(tp).expireLagging());
+            ReplicationSnapshot afterExpiry = cluster.snapshot(tp);
+            assertEquals(List.of(2), afterExpiry.isr());
+            assertEquals(1, afterExpiry.highWatermark());
+        }
+    }
+
+    private static Map<String, String> diskImage(Path directory) throws IOException {
+        Map<String, String> image = new TreeMap<>();
+        try (Stream<Path> paths = Files.walk(directory)) {
+            for (Path file : paths.filter(Files::isRegularFile).toList()) {
+                image.put(directory.relativize(file).toString(), HexFormat.of().formatHex(Files.readAllBytes(file)));
+            }
+        }
+        return Map.copyOf(image);
+    }
+
 
     private static void awaitConditionWaiter(PartitionState state, Thread producer) {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);

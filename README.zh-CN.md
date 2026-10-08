@@ -36,6 +36,8 @@ make book             # 英文 PDF: build/book/en/simpleKafka.pdf
 make book COURSE_LANG=zh  # 中文 PDF: build/book/zh/simpleKafka-zh.pdf
 ```
 
+测试报告始终使用英文，与 `COURSE_LANG` 无关。输出按步骤分组显示测试名称、各步和总计数；失败时展示断言、步骤/方法定位和重跑命令。JUnit XML 保存在 `build/student/reports/` 或 `build/reference/reports/`；重定向输出、设置 `NO_COLOR` 或 `TERM=dumb` 时不输出颜色。
+
 `docs/book/simpleKafka.tex` 是默认英文教材入口，`docs/book/simpleKafka-zh.tex` 是完整中文教材入口。分别构建两种语言后，可用 `make book BOOK_OFFLINE=1` 与 `make book COURSE_LANG=zh BOOK_OFFLINE=1` 离线编译。
 
 ## 严格行为覆盖
@@ -49,8 +51,8 @@ make book COURSE_LANG=zh  # 中文 PDF: build/book/zh/simpleKafka-zh.pdf
 | 路由与 TCP，9–12 | CRC/null-key 路由、topic 元数据隔离；固定帧字节、短读/截断/错误 wire 字段；原始 socket 请求错误、无副作用与后续连接存活。 |
 | 客户端与 offsets，13–16 | 生产批次和分区顺序、已追加但响应超时不重放；consumer 总预算/position/error 边界；offset 回退与重启恢复；处理异常和 commit 失败时的至少一次重复窗口。 |
 | 消费组，17–20 | 字典序分配及空成员；generation、heartbeat、expiry；真实 TCP token FETCH/COMMIT 的 stale/future/non-owner/empty-owner 拒绝；撤销/保留 position、重启后恢复提交位点。 |
-| 复制与确认，21–24 | 真实 TCP 拉取、坏响应和飞行中角色/epoch 变化；ISR/HW 单调与精确超时；ACK 等待/中断；并发追加、HW 可见性和跨 broker 进度。 |
-| 选举与修复，25–28 | 干净候选资格与无候选状态不变；HW 冲突、分批修复与失败 proof；metadata 刷新不重放、topic/partition 路由隔离；proof 绑定日志身份/version，截短或同 LEO 改写不能 admission，minISR/HW/waiter 恢复。 |
+| 复制与确认，21–24 | 真实 TCP 拉取、保留起点/离线 requester 拒绝、坏响应和飞行中角色/epoch 变化；ISR/HW 单调与精确超时边界（含负超时拒绝）；ACK 等待/中断；并发追加、HW 可见性和跨 broker 进度。 |
+| 选举与修复，25–28 | 干净候选资格与无候选状态不变；HW 冲突、分批修复与失败 proof；metadata 刷新不重放、topic/partition 路由隔离；proof 绑定日志身份/version，截短或同 LEO 改写不能 admission，保留清理后 proof 失效、重新 admission deadline 初始化，以及 minISR/HW/waiter 恢复。 |
 
 该矩阵覆盖 simpleKafka 明确教学契约中的代表性边界，不是对所有输入的穷举、模糊测试、Kafka 生产实现认证或 100% 代码覆盖率声明。执行完整答案验收：`make reference-test 28`；学生完成相应步骤后可运行示例 `make test 28`，将 28 替换为当前要验收的步骤号。
 

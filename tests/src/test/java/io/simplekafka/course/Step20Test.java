@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.OptionalLong;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import static io.simplekafka.support.TestSupport.assertCode;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -27,6 +28,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class Step20Test {
     @Test
+    @DisplayName("Coordinator fences commits by generation ownership and matching offset key")
     void coordinatorFencesCommitsByGenerationOwnershipAndMatchingOffsetKey() throws Exception {
         try (TempDirectory temp = new TempDirectory();
              BrokerHarness broker = BrokerHarness.single(temp.root(), 1, 0, "orders", 2);
@@ -61,6 +63,7 @@ class Step20Test {
     }
 
     @Test
+    @DisplayName("Raw TCP fetch and commit tokens fence invalid owners without changing offsets")
     void rawTcpFetchAndCommitTokensFenceInvalidOwnersWithoutChangingOffsets() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             ManualTimeSource clock = new ManualTimeSource(1_000);
@@ -161,6 +164,7 @@ class Step20Test {
     }
 
     @Test
+    @DisplayName("Group consumer preserves retained position drops revoked partitions and recovers after expiry and restart")
     void groupConsumerPreservesRetainedPositionDropsRevokedPartitionsAndRecoversAfterExpiryAndRestart()
             throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
@@ -265,6 +269,7 @@ class Step20Test {
         }
     }
     @Test
+    @DisplayName("Group consumer closes its owned RPC client after polling a record")
     void groupConsumerClosesItsOwnedRpcClientAfterPollingARecord() throws Exception {
         try (TempDirectory temp = new TempDirectory();
              GroupBrokerFixture broker = new GroupBrokerFixture(

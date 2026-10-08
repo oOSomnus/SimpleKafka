@@ -36,6 +36,8 @@ make book                   # English PDF: build/book/en/simpleKafka.pdf
 make book COURSE_LANG=zh    # Chinese PDF: build/book/zh/simpleKafka-zh.pdf
 ```
 
+The test report is always in English, independent of `COURSE_LANG`. It groups named tests by step, shows per-step and overall counts, and prints failing assertions with step/method navigation and rerun commands. JUnit XML is written under `build/student/reports/` or `build/reference/reports/`; color is disabled when output is redirected, `NO_COLOR` is set, or `TERM=dumb`.
+
 `docs/book/simpleKafka.tex` is the default English textbook entry point; `docs/book/simpleKafka-zh.tex` is the complete Chinese edition. After both languages have been built once, use `make book BOOK_OFFLINE=1` and `make book COURSE_LANG=zh BOOK_OFFLINE=1` for offline builds.
 
 ## Strict behavioral coverage
@@ -49,8 +51,8 @@ Acceptance is defined by the course contract, not by test count or line coverage
 | Routing and TCP, 9–12 | CRC/null-key routing and topic-metadata isolation; fixed frame bytes, short reads, truncation, and invalid wire fields; raw-socket request errors, absence of side effects, and subsequent connection survival. |
 | Clients and offsets, 13–16 | Producer batches and partition order; no replay after append with a timed-out response; consumer total budgets, positions, and error boundaries; offset rewind and restart recovery; at-least-once duplicate windows after processor or commit failure. |
 | Consumer groups, 17–20 | Lexicographic assignment and empty members; generation, heartbeat, and expiry; real TCP token FETCH/COMMIT rejection for stale, future, non-owner, and empty-owner cases; revoked/retained positions and committed-offset recovery after restart. |
-| Replication and acknowledgments, 21–24 | Real TCP fetch, bad responses, and in-flight role/epoch changes; ISR/HW monotonicity and exact timeout boundaries; ACK waits/interruption; concurrent append, HW visibility, and cross-broker progress. |
-| Election and repair, 25–28 | Clean-candidate eligibility and unchanged state when no candidate exists; HW conflicts, batched repair, and invalid proofs; metadata refresh without replay and topic/partition routing isolation; proofs bound to log identity/version, stale after truncation or same-LEO rewrite, plus minISR/HW/waiter recovery. |
+| Replication and acknowledgments, 21–24 | Real TCP fetch, retained-start/offline-requester rejection, bad responses, and in-flight role/epoch changes; ISR/HW monotonicity and exact timeout boundaries, including invalid negative timeouts; ACK waits/interruption; concurrent append, HW visibility, and cross-broker progress. |
+| Election and repair, 25–28 | Clean-candidate eligibility and unchanged state when no candidate exists; HW conflicts, batched repair, and invalid proofs; metadata refresh without replay and topic/partition routing isolation; proofs bound to log identity/version, stale after truncation or same-LEO rewrite, retention invalidation, readmission deadlines, plus minISR/HW/waiter recovery. |
 
 This matrix covers representative boundaries in simpleKafka’s explicit teaching contract. It does not claim exhaustive inputs, fuzzing, production Kafka certification, or 100% code coverage. Run the complete reference contract with `make reference-test 28`. After implementing the corresponding steps, run `make test N`, replacing `N` with the step to verify.
 

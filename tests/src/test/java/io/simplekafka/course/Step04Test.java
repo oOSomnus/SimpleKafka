@@ -13,6 +13,7 @@ import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import static io.simplekafka.support.TestSupport.assertCode;
 import static io.simplekafka.support.TestSupport.utf8;
 import static io.simplekafka.support.TestSupport.value;
@@ -23,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
 class Step04Test {
     @Test
+    @DisplayName("Truncates every incomplete tail prefix and keeps a complete third record")
     void truncatesEveryIncompleteTailPrefixAndKeepsACompleteThirdRecord() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             byte[] first = record(0, "a");
@@ -63,6 +65,7 @@ class Step04Test {
         }
     }
     @Test
+    @DisplayName("Truncates an incomplete first record at zero and nonzero bases")
     void truncatesAnIncompleteFirstRecordAtZeroAndNonzeroBases() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             for (long baseOffset : new long[]{0, 5}) {
@@ -86,6 +89,7 @@ class Step04Test {
 
 
     @Test
+    @DisplayName("Recovers empty and nonzero base files idempotently and rejects wrong base")
     void recoversEmptyAndNonzeroBaseFilesIdempotentlyAndRejectsWrongBase() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             for (long baseOffset : new long[]{0, 5}) {
@@ -125,6 +129,7 @@ class Step04Test {
     }
 
     @Test
+    @DisplayName("Rejects complete corruption and offset discontinuities without changing file bytes")
     void rejectsCompleteCorruptionAndOffsetDiscontinuitiesWithoutChangingFileBytes() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             byte[][] valid = {record(0, "a"), record(1, "b"), record(2, "c")};
@@ -171,6 +176,7 @@ class Step04Test {
     }
 
     @Test
+    @DisplayName("Missing file open reports storage error with io cause")
     void missingFileOpenReportsStorageErrorWithIoCause() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             Path missing = temp.root().resolve("missing/segment.log");

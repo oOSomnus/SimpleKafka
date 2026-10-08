@@ -15,6 +15,7 @@ import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import static io.simplekafka.support.TestSupport.assertCode;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -26,6 +27,7 @@ class Step11Test {
     private static final byte[] GOLDEN = hex("0000000d00010001000000290008010203");
 
     @Test
+    @DisplayName("Writes and reads the independent golden frame and handles empty payload")
     void writesAndReadsTheIndependentGoldenFrameAndHandlesEmptyPayload() throws Exception {
         Frame expected = new Frame(Api.METADATA, 41, ErrorCode.REQUEST_TIMEOUT, new byte[]{1, 2, 3});
         ByteArrayOutputStream output = new ByteArrayOutputStream();
@@ -40,6 +42,7 @@ class Step11Test {
         assertFrameEquals(empty, FrameCodec.read(new ByteArrayInputStream(emptyOutput.toByteArray())));
     }
     @Test
+    @DisplayName("Preserves independent wire ids for every API and metadata error")
     void preservesIndependentWireIdsForEveryApiAndMetadataError() throws Exception {
         List<HeaderWireCase> cases = List.of(
                 new HeaderWireCase((short) 2, ErrorCode.NONE, "0000000a00010002000000290000"),
@@ -74,6 +77,7 @@ class Step11Test {
 
 
     @Test
+    @DisplayName("Accepts maximum frame and rejects one byte over before writing anything")
     void acceptsMaximumFrameAndRejectsOneByteOverBeforeWritingAnything() throws Exception {
         byte[] maximumPayload = new byte[8_388_598];
         Arrays.fill(maximumPayload, (byte) 0x5a);
@@ -93,6 +97,7 @@ class Step11Test {
     }
 
     @Test
+    @DisplayName("Rejects every incomplete prefix of the golden frame")
     void rejectsEveryIncompletePrefixOfTheGoldenFrame() throws Exception {
         for (int length = 0; length < GOLDEN.length; length++) {
             byte[] prefix = Arrays.copyOf(GOLDEN, length);
@@ -106,6 +111,7 @@ class Step11Test {
     }
 
     @Test
+    @DisplayName("Reads back to back frames from streams delivering one two or three bytes at a time")
     void readsBackToBackFramesFromStreamsDeliveringOneTwoOrThreeBytesAtATime() throws Exception {
         Frame first = new Frame(Api.METADATA, 41, ErrorCode.REQUEST_TIMEOUT, new byte[]{1, 2, 3});
         Frame second = new Frame(Api.FETCH, 42, ErrorCode.NONE, new byte[]{9, 8, 7, 6, 5});
@@ -120,6 +126,7 @@ class Step11Test {
     }
 
     @Test
+    @DisplayName("Rejects invalid lengths without consuming bytes after the header")
     void rejectsInvalidLengthsWithoutConsumingBytesAfterTheHeader() {
         for (int length : new int[]{-1, 0, 9, 8_388_609, Integer.MIN_VALUE}) {
             byte[] bytes = ByteBuffer.allocate(Integer.BYTES + 1).order(ByteOrder.BIG_ENDIAN)
@@ -131,6 +138,7 @@ class Step11Test {
     }
 
     @Test
+    @DisplayName("Rejects unknown version API and error ids")
     void rejectsUnknownVersionApiAndErrorIds() {
         byte[] badVersion = GOLDEN.clone();
         ByteBuffer.wrap(badVersion).order(ByteOrder.BIG_ENDIAN).putShort(4, (short) 2);
@@ -153,6 +161,7 @@ class Step11Test {
     }
 
     @Test
+    @DisplayName("Propagates the same underlying IO exception from read and write")
     void propagatesTheSameUnderlyingIoExceptionFromReadAndWrite() {
         IOException readFailure = new IOException("read failed");
         InputStream failedInput = new InputStream() {

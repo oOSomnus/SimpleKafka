@@ -31,12 +31,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.io.TempDir;
 
 class Step24Test {
     @TempDir Path root;
 
     @Test
+    @DisplayName("Pending all ack leaves fetch at old HW allows leader produce and completes after TCP replication")
     void pendingAllAckLeavesFetchAtOldHwAllowsLeaderProduceAndCompletesAfterTcpReplication() throws Exception {
         TimeSource clock = new AtomicLong(0)::get;
         TopicPartition tp = new TopicPartition("step24", 0);
@@ -116,6 +118,7 @@ class Step24Test {
     }
 
     @Test
+    @DisplayName("Fetch honors HW LEO and whole record byte budgets and rejects invalid requests")
     void fetchHonorsHwLeoAndWholeRecordByteBudgetsAndRejectsInvalidRequests() {
         TimeSource clock = new AtomicLong(0)::get;
         TopicPartition tp = new TopicPartition("step24-limits", 0);
@@ -162,10 +165,16 @@ class Step24Test {
                     fetchReply(cluster, tp, 0, 10, 0));
             assertUnchangedAfterReply(cluster, tp, before, beforeLEOs, ErrorCode.INVALID_REQUEST,
                     fetchReply(cluster, tp, -1, 10, 64));
+            List<RecordData> validRecords = List.of(record("invalid-timeout", 5));
+            assertUnchangedAfterReply(cluster, tp, before, beforeLEOs, ErrorCode.INVALID_REQUEST,
+                    produce(cluster, tp, 0, Acks.LEADER, validRecords, -1, 3_000));
+            assertUnchangedAfterReply(cluster, tp, before, beforeLEOs, ErrorCode.INVALID_REQUEST,
+                    produce(cluster, tp, 0, Acks.ALL, validRecords, -1, 3_000));
         }
     }
 
     @Test
+    @DisplayName("Retained log start is enforced over TCP without changing replication state")
     void retainedLogStartIsEnforcedOverTcpWithoutChangingReplicationState() {
         TimeSource clock = new AtomicLong(0)::get;
         TopicPartition tp = new TopicPartition("step24-retained", 0);
@@ -221,6 +230,7 @@ class Step24Test {
     }
 
     @Test
+    @DisplayName("All precheck does not append and zero timeout retains an invisible append until replication")
     void allPrecheckDoesNotAppendAndZeroTimeoutRetainsAnInvisibleAppendUntilReplication() {
         AtomicLong now = new AtomicLong(1_000);
         TimeSource clock = now::get;
@@ -270,6 +280,7 @@ class Step24Test {
     }
 
     @Test
+    @DisplayName("Producer acks control admission visibility and timeout without discarding the append")
     void producerAcksControlAdmissionVisibilityAndTimeoutWithoutDiscardingTheAppend() {
         AtomicLong now = new AtomicLong(1_000);
         TimeSource clock = now::get;
@@ -333,6 +344,7 @@ class Step24Test {
     }
 
     @Test
+    @DisplayName("Stopping leader completes an outstanding all ack request without leaking the producer")
     void stoppingLeaderCompletesAnOutstandingAllAckRequestWithoutLeakingTheProducer() throws Exception {
         TimeSource clock = new AtomicLong(0)::get;
         TopicPartition tp = new TopicPartition("step24shutdown", 0);

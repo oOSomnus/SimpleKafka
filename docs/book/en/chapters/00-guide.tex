@@ -19,6 +19,7 @@ A \method{ByteBuffer} is a byte view with a position and limit. Before reading, 
 
 \section{How to Read Test Failures}
 First read the failed Step test name and assertion, then return to the contract in this chapter. The first exception in a test report is usually more useful than the last part of the stack trace: an unimplemented method identifies its step and method; course errors should preserve \method{ErrorCode}; an unexpected IOException may be wrapped as \method{STORAGE_ERROR} with its cause preserved. Do not map errors to an empty list or a successful default value just to make tests green. A single-step diagnostic command runs only that step and does not mean its cumulative dependencies are satisfied; the cumulative command reevaluates every earlier step.
+The course runner prints named tests grouped by step, per-step and overall counts, failure assertions with exact method navigation, and rerun commands. The report is always in English; JUnit XML is saved under \pathcode{build/student/reports/} or \pathcode{build/reference/reports/}. Redirected output, \pathcode{NO_COLOR}, and \pathcode{TERM=dumb} disable color.
 
 \begin{center}
 \begin{tabular}{p{.23\textwidth}p{.68\textwidth}}

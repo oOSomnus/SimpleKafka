@@ -38,12 +38,14 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.io.TempDir;
 
 class Step26Test {
     @TempDir Path root;
 
     @Test
+    @DisplayName("Repairs only divergent uncommitted tail at high watermark and returns leader prefix proof")
     void repairsOnlyDivergentUncommittedTailAtHighWatermarkAndReturnsLeaderPrefixProof() {
         TopicPartition tp = new TopicPartition("step26", 0);
         try (ClusterHarness cluster = new ClusterHarness(root, new AtomicLong(0)::get)) {
@@ -87,6 +89,7 @@ class Step26Test {
     }
 
     @Test
+    @DisplayName("Refuses mismatch at high watermark minus one without changing the log or authority and clears old proof")
     void refusesMismatchAtHighWatermarkMinusOneWithoutChangingTheLogOrAuthorityAndClearsOldProof()
             throws IOException {
         TopicPartition tp = new TopicPartition("step26corrupt", 0);
@@ -121,6 +124,7 @@ class Step26Test {
     }
 
     @Test
+    @DisplayName("Fills short and empty replicas with the committed prefix")
     void fillsShortAndEmptyReplicasWithTheCommittedPrefix() {
         TopicPartition tp = new TopicPartition("step26lagging", 0);
         try (ClusterHarness cluster = new ClusterHarness(root, new AtomicLong(0)::get)) {
@@ -147,6 +151,7 @@ class Step26Test {
     }
 
     @Test
+    @DisplayName("Trims only an uncommitted tail when the local replica has the complete leader prefix")
     void trimsOnlyAnUncommittedTailWhenTheLocalReplicaHasTheCompleteLeaderPrefix() {
         TopicPartition tp = new TopicPartition("step26longer", 0);
         try (ClusterHarness cluster = new ClusterHarness(root, new AtomicLong(0)::get)) {
@@ -171,6 +176,7 @@ class Step26Test {
     }
 
     @Test
+    @DisplayName("Repairs ten records in four record fetch rounds without reporting recovery progress")
     void repairsTenRecordsInFourRecordFetchRoundsWithoutReportingRecoveryProgress() {
         TopicPartition tp = new TopicPartition("step26rounds", 0);
         try (ClusterHarness cluster = new ClusterHarness(root, new AtomicLong(0)::get)) {
@@ -212,6 +218,7 @@ class Step26Test {
     }
 
     @Test
+    @DisplayName("Rejects stale epoch leader self and nonassigned entry before any RPC or disk change")
     void rejectsStaleEpochLeaderSelfAndNonassignedEntryBeforeAnyRpcOrDiskChange() throws IOException {
         TopicPartition tp = new TopicPartition("step26entry", 0);
         try (ClusterHarness cluster = new ClusterHarness(root, new AtomicLong(0)::get)) {
@@ -254,6 +261,7 @@ class Step26Test {
     }
 
     @Test
+    @DisplayName("RPC timeout does not publish proof or truncate an unverified local tail")
     void rpcTimeoutDoesNotPublishProofOrTruncateAnUnverifiedLocalTail() throws Exception {
         TopicPartition tp = new TopicPartition("step26timeout", 0);
         try (ClusterHarness cluster = new ClusterHarness(root, new AtomicLong(0)::get)) {
@@ -299,6 +307,7 @@ class Step26Test {
     }
 
     @Test
+    @DisplayName("Malformed RPC reply does not publish proof or truncate an unverified local tail")
     void malformedRpcReplyDoesNotPublishProofOrTruncateAnUnverifiedLocalTail() throws IOException {
         TopicPartition tp = new TopicPartition("step26malformed", 0);
         try (ClusterHarness cluster = new ClusterHarness(root, new AtomicLong(0)::get)) {
@@ -336,6 +345,7 @@ class Step26Test {
         }
     }
     @Test
+    @DisplayName("Same LEO local rewrite during recovery is detected before any repair or proof publication")
     void sameLeoLocalRewriteDuringRecoveryIsDetectedBeforeAnyRepairOrProofPublication() throws Exception {
         TopicPartition tp = new TopicPartition("step26-version-race", 0);
         try (ClusterHarness cluster = new ClusterHarness(root, new AtomicLong(0)::get)) {
@@ -410,6 +420,7 @@ class Step26Test {
 
 
     @Test
+    @DisplayName("Epoch change during recovery preserves local tail and publishes no proof")
     void epochChangeDuringRecoveryPreservesLocalTailAndPublishesNoProof() throws Exception {
         TopicPartition tp = new TopicPartition("step26-epoch-race", 0);
         try (ClusterHarness cluster = new ClusterHarness(root, new AtomicLong(0)::get)) {
@@ -492,6 +503,87 @@ class Step26Test {
             }
         }
     }
+    @Test
+    @DisplayName("High watermark advancing during recovery scan prevents truncation and proof")
+    void highWatermarkAdvancingDuringRecoveryScanPreventsTruncationAndProof() throws Exception {
+        TopicPartition tp = new TopicPartition("step26-high-watermark-race", 0);
+        try (ClusterHarness cluster = new ClusterHarness(root, new AtomicLong(0)::get)) {
+            cluster.start();
+            cluster.createTopic(tp.topic(), 1, 2);
+            assertEquals(3, checkpoint(cluster, tp, prefix()));
+            PartitionLog leader = cluster.partitionLog(1, tp);
+            PartitionLog secondReplica = cluster.partitionLog(2, tp);
+            PartitionLog local = cluster.partitionLog(3, tp);
+            assertEquals(new AppendResult(3, 4), local.append(List.of(record("divergent-tail", 99))));
+            List<LogRecord> localBefore = local.read(0, 10, 65_536);
+            Map<String, String> diskBefore = diskImage(logDirectory(cluster, 3, tp));
+            List<LogRecord> capturedLeaderPrefix = expectedRecords(prefix());
+            CountDownLatch requestReceived = new CountDownLatch(1);
+            CountDownLatch releaseResponse = new CountDownLatch(1);
+
+            try (BrokerServer scriptedLeader = new BrokerServer("127.0.0.1", 0, request -> {
+                if (!(request instanceof Messages.ReplicaFetchRequest))
+                    return Messages.Reply.failure(ErrorCode.INVALID_REQUEST, "expected replica fetch");
+                requestReceived.countDown();
+                try {
+                    if (!releaseResponse.await(5, TimeUnit.SECONDS))
+                        return Messages.Reply.failure(ErrorCode.REQUEST_TIMEOUT, "recovery response gate expired");
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    return Messages.Reply.failure(ErrorCode.REQUEST_TIMEOUT, "recovery response gate interrupted");
+                }
+                return Messages.Reply.success(new Messages.ReplicaFetchBody(capturedLeaderPrefix, 0, 3, 3));
+            })) {
+                Endpoint endpoint = scriptedLeader.start();
+                try (RpcClient client = new RpcClient(endpoint, 5_000)) {
+                    ReplicaReconciler reconciler = new ReplicaReconciler(
+                            3, tp, local, client, cluster.authority());
+                    AtomicReference<Throwable> failure = new AtomicReference<>();
+                    Thread scan = new Thread(() -> {
+                        try {
+                            reconciler.reconcile(0);
+                        } catch (Throwable thrown) {
+                            failure.set(thrown);
+                        }
+                    }, "step26-high-watermark-scan");
+                    scan.setDaemon(true);
+                    scan.start();
+                    try {
+                        assertTrue(requestReceived.await(2, TimeUnit.SECONDS),
+                                "recovery must pause after capturing the leader prefix");
+                        RecordData leaderAdvance = record("leader-advance", 98);
+                        assertEquals(new AppendResult(3, 4), leader.append(List.of(leaderAdvance)));
+                        assertEquals(new AppendResult(3, 4), secondReplica.append(List.of(leaderAdvance)));
+                        cluster.tracker(tp).report(1, 0, 4);
+                        cluster.tracker(tp).report(2, 0, 4);
+                        cluster.tracker(tp).report(3, 0, 4);
+                        assertEquals(4, cluster.tracker(tp).highWatermark());
+                        ReplicationSnapshot afterHighWatermarkAdvance = cluster.snapshot(tp);
+
+                        releaseResponse.countDown();
+                        scan.join(3_000);
+                        assertTrue(!scan.isAlive(), "reconciliation worker must finish after HW advances");
+                        assertTrue(failure.get() instanceof CourseException,
+                                "expected CORRUPT_RECORD, got " + failure.get());
+                        assertEquals(ErrorCode.CORRUPT_RECORD, ((CourseException) failure.get()).code());
+                        assertEquals(4, local.logEndOffset());
+                        assertEquals(localBefore, local.read(0, 10, 65_536));
+                        assertEquals(diskBefore, diskImage(logDirectory(cluster, 3, tp)));
+                        assertTrue(reconciler.recoveryProof().isEmpty());
+                        assertEquals(afterHighWatermarkAdvance, cluster.snapshot(tp));
+                    } finally {
+                        releaseResponse.countDown();
+                        if (scan.isAlive()) {
+                            scan.interrupt();
+                            scan.join(3_000);
+                        }
+                        assertTrue(!scan.isAlive(), "reconciliation worker must not leak");
+                    }
+                }
+            }
+        }
+    }
+
 
     private static long checkpoint(ClusterHarness cluster, TopicPartition tp, List<RecordData> records) {
         Messages.Reply reply = produce(cluster, tp, 1, 0, Acks.LEADER, records);

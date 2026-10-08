@@ -16,11 +16,13 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class Step19Test {
     @Test
+    @DisplayName("Replicated cluster expires idle members without incoming requests")
     void replicatedClusterExpiresIdleMembersWithoutIncomingRequests() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             ManualTimeSource clock = new ManualTimeSource(0);
@@ -59,6 +61,7 @@ class Step19Test {
     }
 
     @Test
+    @DisplayName("Expire groups provides deterministic cluster expiry and checks lifecycle")
     void expireGroupsProvidesDeterministicClusterExpiryAndChecksLifecycle() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             ManualTimeSource clock = new ManualTimeSource(0);
@@ -97,6 +100,7 @@ class Step19Test {
     }
 
     @Test
+    @DisplayName("Rejects stale and future heartbeats and expires only the unrefreshed member at the boundary")
     void rejectsStaleAndFutureHeartbeatsAndExpiresOnlyTheUnrefreshedMemberAtTheBoundary() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             ManualTimeSource clock = new ManualTimeSource(1_000);
@@ -132,6 +136,7 @@ class Step19Test {
     }
 
     @Test
+    @DisplayName("Idempotent join refreshes heartbeat but rejected join does not")
     void idempotentJoinRefreshesHeartbeatButRejectedJoinDoesNot() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             ManualTimeSource clock = new ManualTimeSource(1_000);
@@ -166,6 +171,7 @@ class Step19Test {
     }
 
     @Test
+    @DisplayName("Expiration orders all identifiers and advances each changed group once")
     void expirationOrdersAllIdentifiersAndAdvancesEachChangedGroupOnce() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             ManualTimeSource clock = new ManualTimeSource(1_000);
@@ -188,6 +194,35 @@ class Step19Test {
             }
         }
     }
+    @Test
+    @DisplayName("Explicitly left member cannot heartbeat or expire again")
+    void explicitlyLeftMemberCannotHeartbeatOrExpireAgain() throws Exception {
+        try (TempDirectory temp = new TempDirectory()) {
+            ManualTimeSource clock = new ManualTimeSource(1_000);
+            try (GroupBrokerFixture broker = new GroupBrokerFixture(
+                    temp.root(), 1, "orders", 1, clock, 100);
+                 RpcClient client = broker.client()) {
+                assertEquals(1, join(client, "workers", "a").generation());
+
+                Messages.Reply leaveReply = client.call(new Messages.LeaveGroupRequest("workers", "a"));
+                assertEquals(ErrorCode.NONE, leaveReply.error());
+                GroupAssignment afterLeave = ((Messages.GroupBody) leaveReply.body()).assignment();
+                assertEquals(2, afterLeave.generation());
+                assertEquals(Map.of(), afterLeave.assignments());
+
+                assertEquals(ErrorCode.UNKNOWN_MEMBER,
+                        client.call(new Messages.HeartbeatRequest(new GroupToken("workers", "a", 2))).error());
+                clock.setMillis(1_100);
+                assertEquals(Set.of(), broker.expireGroups());
+
+                GroupAssignment replacement = join(client, "workers", "b");
+                assertEquals(3, replacement.generation());
+                assertEquals(Map.of("b", List.of(new TopicPartition("orders", 0))),
+                        replacement.assignments());
+            }
+        }
+    }
+
 
     private static GroupAssignment join(RpcClient client, String group, String member) {
         Messages.Reply reply = client.call(new Messages.JoinGroupRequest(group, member, "orders"));

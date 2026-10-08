@@ -21,6 +21,7 @@ import java.util.TreeMap;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import static io.simplekafka.support.TestSupport.assertCode;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -29,6 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class Step08Test {
     @Test
+    @DisplayName("Truncates at boundaries within segments at LEO and at log start")
     void truncatesAtBoundariesWithinSegmentsAtLeoAndAtLogStart() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             assertTruncateScenario(temp.root().resolve("boundary"), 0, 3,
@@ -43,8 +45,69 @@ class Step08Test {
                     List.of(3L), List.of(0L), List.of(0), false);
         }
     }
+    @Test
+    @DisplayName("Truncate rebuilds mixed size segment state and index points")
+    void truncateRebuildsMixedSizeSegmentStateAndIndexPoints() throws Exception {
+        try (TempDirectory temp = new TempDirectory()) {
+            Path directory = temp.root().resolve("mixed-size-truncate");
+            List<RecordData> batch = List.of(
+                    new RecordData(null, new byte[0], 0),
+                    new RecordData(null, new byte[100], 1),
+                    new RecordData(null, new byte[0], 2));
+            List<LogRecord> expected = List.of(
+                    new LogRecord(0, batch.get(0)),
+                    new LogRecord(1, batch.get(1)),
+                    new LogRecord(2, batch.get(2)));
+            byte[] firstRecord = RecordBytes.record(0, null, new byte[0], 0);
+            byte[] secondRecord = RecordBytes.record(1, null, new byte[100], 1);
+            byte[] thirdRecord = RecordBytes.record(2, null, new byte[0], 2);
+            byte[] firstTwoBytes = RecordBytes.concat(firstRecord, secondRecord);
+            byte[] expectedLog = RecordBytes.concat(firstTwoBytes, thirdRecord);
+            Path logFile = logFile(directory, 0);
+            Path indexFile = indexFile(directory, 0);
+
+            try (PartitionLog log = new PartitionLog(directory, 300, 2)) {
+                assertEquals(new AppendResult(0, 3), log.append(batch));
+                assertEquals(1, log.mutationVersion());
+                assertEquals(3, log.logEndOffset());
+                assertArrayEquals(expectedLog, Files.readAllBytes(logFile));
+                assertArrayEquals(indexBytes(0, 0, 2, 164), Files.readAllBytes(indexFile));
+                assertSegmentFileSet(directory, List.of(0L));
+                assertEquals(expected, diskRecords(directory));
+
+                log.truncateTo(2);
+                assertEquals(2, log.mutationVersion());
+                assertEquals(0, log.logStartOffset());
+                assertEquals(2, log.logEndOffset());
+                assertArrayEquals(firstTwoBytes, Files.readAllBytes(logFile));
+                assertArrayEquals(indexBytes(0, 1), Files.readAllBytes(indexFile));
+                assertEquals(expected.subList(0, 2), log.read(0, 2, 164));
+                assertEquals(List.of(), log.read(2, 1, 32));
+                assertEquals(expected.subList(0, 2), diskRecords(directory));
+
+                assertEquals(new AppendResult(2, 3), log.append(List.of(batch.get(2))));
+                assertEquals(3, log.mutationVersion());
+                assertEquals(expectedLog.length, Files.size(logFile));
+                assertArrayEquals(expectedLog, Files.readAllBytes(logFile));
+                assertArrayEquals(indexBytes(0, 0, 2, 164), Files.readAllBytes(indexFile));
+                assertEquals(expected, log.read(0, 3, 196));
+                assertEquals(expected, diskRecords(directory));
+            }
+
+            try (PartitionLog reopened = new PartitionLog(directory, 300, 2)) {
+                assertEquals(3, reopened.logEndOffset());
+                assertEquals(expected.subList(1, 3), reopened.read(1, 2, 164));
+                assertArrayEquals(expectedLog, Files.readAllBytes(logFile));
+                assertArrayEquals(indexBytes(0, 0, 2, 164), Files.readAllBytes(indexFile));
+                assertSegmentFileSet(directory, List.of(0L));
+                assertEquals(expected, diskRecords(directory));
+            }
+        }
+    }
+
 
     @Test
+    @DisplayName("Invalid and repeated truncations preserve the retained files")
     void invalidAndRepeatedTruncationsPreserveTheRetainedFiles() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             Path directory = temp.root().resolve("invalid");
@@ -91,6 +154,7 @@ class Step08Test {
         }
     }
     @Test
+    @DisplayName("Truncates then retains across restart and continues at the reopened end")
     void truncatesThenRetainsAcrossRestartAndContinuesAtTheReopenedEnd() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             Path directory = temp.root().resolve("truncate-retain-reopen");
@@ -171,6 +235,7 @@ class Step08Test {
 
 
     @Test
+    @DisplayName("Fixed seed operations match an independent segment and offset model")
     void fixedSeedOperationsMatchAnIndependentSegmentAndOffsetModel() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             Path directory = temp.root().resolve("model");

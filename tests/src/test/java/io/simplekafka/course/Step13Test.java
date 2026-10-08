@@ -24,6 +24,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import static io.simplekafka.support.TestSupport.assertCode;
 import static io.simplekafka.support.TestSupport.values;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -32,6 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class Step13Test {
     @Test
+    @DisplayName("Flushes at the batch threshold and returns automatic and explicit ranges")
     void flushesAtTheBatchThresholdAndReturnsAutomaticAndExplicitRanges() throws Exception {
         try (TempDirectory temp = new TempDirectory();
              BrokerHarness broker = BrokerHarness.single(temp.root(), 1, 0, "orders", 1);
@@ -63,6 +65,7 @@ class Step13Test {
     }
 
     @Test
+    @DisplayName("Batch size one makes every send visible and returns each receipt once")
     void batchSizeOneMakesEverySendVisibleAndReturnsEachReceiptOnce() throws Exception {
         try (TempDirectory temp = new TempDirectory();
              BrokerHarness broker = BrokerHarness.single(temp.root(), 1, 0, "orders", 1);
@@ -83,6 +86,7 @@ class Step13Test {
         }
     }
     @Test
+    @DisplayName("Routes null keys within each topic across different partition counts")
     void routesNullKeysWithinEachTopicAcrossDifferentPartitionCounts() throws Exception {
         try (TempDirectory temp = new TempDirectory();
              BrokerHarness broker = BrokerHarness.single(temp.root(), 1, 0, "large", 3);
@@ -114,6 +118,7 @@ class Step13Test {
 
 
     @Test
+    @DisplayName("Automatic flush for one partition leaves another partitions pending batch invisible")
     void automaticFlushForOnePartitionLeavesAnotherPartitionsPendingBatchInvisible() throws Exception {
         try (TempDirectory temp = new TempDirectory();
              BrokerHarness broker = BrokerHarness.single(temp.root(), 1, 0, "orders", 2);
@@ -155,6 +160,7 @@ class Step13Test {
     }
 
     @Test
+    @DisplayName("Rejects invalid sends without persisting any records")
     void rejectsInvalidSendsWithoutPersistingAnyRecords() throws Exception {
         try (TempDirectory temp = new TempDirectory();
              BrokerHarness broker = BrokerHarness.single(temp.root(), 1, 0, "orders", 1);
@@ -216,6 +222,7 @@ class Step13Test {
     }
 
     @Test
+    @DisplayName("Direct RPC client cannot be reused after closing after a record operation")
     void directRpcClientCannotBeReusedAfterClosingAfterARecordOperation() throws Exception {
         try (TempDirectory temp = new TempDirectory();
              BrokerHarness broker = BrokerHarness.single(temp.root(), 1, 0, "orders", 1);
@@ -237,6 +244,7 @@ class Step13Test {
     }
 
     @Test
+    @DisplayName("Keeps the producer poisoned after an automatic flush times out")
     void keepsTheProducerPoisonedAfterAnAutomaticFlushTimesOut() throws Exception {
         try (TempDirectory temp = new TempDirectory();
              BrokerHarness broker = BrokerHarness.single(temp.root(), 1, 0, "orders", 1);
@@ -253,6 +261,7 @@ class Step13Test {
     }
 
     @Test
+    @DisplayName("Does not retry a produce whose append succeeded before its response timed out")
     void doesNotRetryAProduceWhoseAppendSucceededBeforeItsResponseTimedOut() throws Exception {
         try (TempDirectory temp = new TempDirectory();
              DelayedProduceBroker broker = new DelayedProduceBroker(temp.root());
@@ -273,6 +282,7 @@ class Step13Test {
     }
 
     @Test
+    @DisplayName("Makes direct producer outcome unknown after every append error")
     void makesDirectProducerOutcomeUnknownAfterEveryAppendError() throws Exception {
         for (ErrorCode error : List.of(
                 ErrorCode.FENCED_EPOCH,

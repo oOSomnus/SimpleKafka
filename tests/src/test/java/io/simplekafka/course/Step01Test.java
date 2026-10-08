@@ -10,6 +10,7 @@ import java.nio.ByteOrder;
 import java.util.HexFormat;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import static io.simplekafka.support.TestSupport.assertCode;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -24,6 +25,7 @@ class Step01Test {
             HEX.parseHex("0000001ef5e706790000000000000007000000000000001700000001000000016b76");
 
     @Test
+    @DisplayName("Encode and decode match independent big endian golden records")
     void encodeAndDecodeMatchIndependentBigEndianGoldenRecords() {
         List<LogRecord> records = List.of(
                 new LogRecord(7, new RecordData(null, new byte[0], 23)),
@@ -49,6 +51,7 @@ class Step01Test {
     }
 
     @Test
+    @DisplayName("Decodes one record from heap direct read only and slice buffers")
     void decodesOneRecordFromHeapDirectReadOnlyAndSliceBuffers() {
         LogRecord expected = new LogRecord(7, new RecordData(new byte[]{'k'}, new byte[]{'v'}, 23));
         for (ByteBuffer input : bufferViews(ONE_BYTE_KEY_AND_VALUE)) {
@@ -63,6 +66,7 @@ class Step01Test {
     }
 
     @Test
+    @DisplayName("Rejects every incomplete prefix and out of range record length")
     void rejectsEveryIncompletePrefixAndOutOfRangeRecordLength() {
         for (int prefixBytes = 0; prefixBytes < ONE_BYTE_KEY_AND_VALUE.length; prefixBytes++) {
             byte[] truncated = java.util.Arrays.copyOf(ONE_BYTE_KEY_AND_VALUE, prefixBytes);
@@ -75,6 +79,7 @@ class Step01Test {
     }
 
     @Test
+    @DisplayName("Rejects corruption in every stored field")
     void rejectsCorruptionInEveryStoredField() {
         for (int fieldPosition : new int[]{4, 8, 16, 24, 28, 32, 33}) {
             byte[] corrupted = ONE_BYTE_KEY_AND_VALUE.clone();
@@ -84,6 +89,7 @@ class Step01Test {
     }
 
     @Test
+    @DisplayName("Rejects structurally invalid fields even when their CRC is valid")
     void rejectsStructurallyInvalidFieldsEvenWhenTheirCrcIsValid() {
         for (byte[] malformed : List.of(
                 RecordBytes.withField(ONE_BYTE_KEY_AND_VALUE, 8, -1, 8, true),
@@ -98,6 +104,7 @@ class Step01Test {
     }
 
     @Test
+    @DisplayName("Enforces length limit and supports largest nonnegative logical values")
     void enforcesLengthLimitAndSupportsLargestNonnegativeLogicalValues() {
         byte[] largestValue = new byte[1_048_548];
         RecordData maximumData = new RecordData(null, largestValue, Long.MAX_VALUE);

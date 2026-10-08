@@ -5,10 +5,12 @@ import io.simplekafka.model.TopicPartition;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class Step17Test {
     @Test
+    @DisplayName("Sorts and deduplicates partitions and members before round robin assignment")
     void sortsAndDeduplicatesPartitionsAndMembersBeforeRoundRobinAssignment() {
         RoundRobinAssignor assignor = new RoundRobinAssignor();
         List<TopicPartition> input = List.of(
@@ -26,6 +28,7 @@ class Step17Test {
 
 
     @Test
+    @DisplayName("Assigns five partitions to the first five of seven sorted members and keeps empty members")
     void assignsFivePartitionsToTheFirstFiveOfSevenSortedMembersAndKeepsEmptyMembers() {
         RoundRobinAssignor assignor = new RoundRobinAssignor();
         List<TopicPartition> partitions = List.of(
@@ -50,6 +53,7 @@ class Step17Test {
     }
 
     @Test
+    @DisplayName("Sorts cross topic partitions and member ids lexically after deduplication")
     void sortsCrossTopicPartitionsAndMemberIdsLexicallyAfterDeduplication() {
         RoundRobinAssignor assignor = new RoundRobinAssignor();
         List<TopicPartition> input = List.of(

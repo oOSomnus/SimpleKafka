@@ -13,11 +13,13 @@ import java.util.List;
 import java.util.OptionalLong;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
 class Step18Test {
     @Test
+    @DisplayName("Membership changes rebalance every survivor and retain empty group generation over TCP")
     void membershipChangesRebalanceEverySurvivorAndRetainEmptyGroupGenerationOverTcp() throws Exception {
         try (TempDirectory temp = new TempDirectory();
              GroupBrokerFixture broker = new GroupBrokerFixture(temp.root(), 1, "orders", 3,

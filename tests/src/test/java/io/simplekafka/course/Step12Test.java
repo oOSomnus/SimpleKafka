@@ -37,6 +37,7 @@ import java.util.Map;
 import java.util.TreeMap;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import static io.simplekafka.support.TestSupport.assertCode;
 import static io.simplekafka.support.TestSupport.record;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -57,6 +58,7 @@ class Step12Test {
             "00000001 74 00000000 00000000 0000000000000000 0000000a 00001000 00");
 
     @Test
+    @DisplayName("Serves precise metadata records and failures without mutating the log")
     void servesPreciseMetadataRecordsAndFailuresWithoutMutatingTheLog() throws Exception {
         try (TempDirectory temp = new TempDirectory();
              BrokerHarness broker = BrokerHarness.single(temp.root(), 1, 0, "orders", 1);
@@ -126,6 +128,11 @@ class Step12Test {
             assertRpcErrorWithoutMutation(client, temp.root(), unchanged,
                     new Messages.FetchRequest(tp, -1, 0, 1, 256, null), ErrorCode.FENCED_EPOCH);
             assertRpcErrorWithoutMutation(client, temp.root(), unchanged,
+                    new Messages.ProduceRequest(tp, 1, Acks.LEADER, 1_000,
+                            List.of(record(null, "must-not-append", 13))), ErrorCode.FENCED_EPOCH);
+            assertRpcErrorWithoutMutation(client, temp.root(), unchanged,
+                    new Messages.FetchRequest(tp, 1, 0, 1, 256, null), ErrorCode.FENCED_EPOCH);
+            assertRpcErrorWithoutMutation(client, temp.root(), unchanged,
                     new Messages.ProduceRequest(tp, 0, Acks.LEADER, 1_000, List.of()), ErrorCode.INVALID_REQUEST);
             assertRpcErrorWithoutMutation(client, temp.root(), unchanged,
                     new Messages.ProduceRequest(tp, 0, Acks.LEADER, -1,
@@ -152,6 +159,7 @@ class Step12Test {
     }
 
     @Test
+    @DisplayName("Bounds large fetch replies and preserves record continuation")
     void boundsLargeFetchRepliesAndPreservesRecordContinuation() throws Exception {
         try (TempDirectory temp = new TempDirectory();
              BrokerHarness broker = BrokerHarness.single(temp.root(), 1, 0, "orders", 1);
@@ -175,6 +183,7 @@ class Step12Test {
     }
 
     @Test
+    @DisplayName("Returns an error reply when a handler produces an oversized fetch body")
     void returnsAnErrorReplyWhenAHandlerProducesAnOversizedFetchBody() {
         byte[] value = new byte[1_048_548];
         List<LogRecord> records = largeRecords(value, 0, 9);
@@ -189,6 +198,7 @@ class Step12Test {
     }
 
     @Test
+    @DisplayName("Message codec matches independent manual request bodies in both directions")
     void messageCodecMatchesIndependentManualRequestBodiesInBothDirections() {
         Messages.MetadataRequest metadata = new Messages.MetadataRequest("t");
         assertEquals((short) 1, metadata.apiId());
@@ -212,6 +222,7 @@ class Step12Test {
         }
     }
     @Test
+    @DisplayName("Matches independent manual goldens for every additional request and response schema")
     void matchesIndependentManualGoldensForEveryAdditionalRequestAndResponseSchema() {
         for (RequestWireCase wireCase : additionalRequestWireCases()) {
             assertEquals(wireCase.api(), wireCase.request().apiId());
@@ -244,6 +255,7 @@ class Step12Test {
     }
 
     @Test
+    @DisplayName("Rejects every truncated and extended additional schema body")
     void rejectsEveryTruncatedAndExtendedAdditionalSchemaBody() {
         for (RequestWireCase wireCase : additionalRequestWireCases()) {
             byte[] body = wireCase.body();
@@ -294,6 +306,7 @@ class Step12Test {
     }
 
     @Test
+    @DisplayName("Enforces UTF-8 identifier and topic boundaries for encoding and decoding")
     void enforcesUtf8IdentifierAndTopicBoundariesForEncodingAndDecoding() {
         String maximumIdentifier = "组".repeat(85);
         Messages.JoinGroupRequest maximum = new Messages.JoinGroupRequest(maximumIdentifier, maximumIdentifier, "t");
@@ -342,6 +355,7 @@ class Step12Test {
     }
 
     @Test
+    @DisplayName("Sanitizes handler runtime exceptions and keeps both connections usable")
     void sanitizesHandlerRuntimeExceptionsAndKeepsBothConnectionsUsable() throws Exception {
         String marker = "private-handler-cause-7f31";
         TopicPartition tp = new TopicPartition("t", 0);
@@ -381,6 +395,7 @@ class Step12Test {
     }
 
     @Test
+    @DisplayName("Isolates existing topic partitions and serves fetches from nonzero log start")
     void isolatesExistingTopicPartitionsAndServesFetchesFromNonzeroLogStart() throws Exception {
         try (TempDirectory temp = new TempDirectory();
              BrokerHarness broker = BrokerHarness.single(temp.root(), 1, 0);
@@ -444,6 +459,7 @@ class Step12Test {
 
 
     @Test
+    @DisplayName("Raw TCP requests and malformed bodies stay isolated to their connections")
     void rawTcpRequestsAndMalformedBodiesStayIsolatedToTheirConnections() throws Exception {
         try (TempDirectory temp = new TempDirectory();
              BrokerHarness broker = BrokerHarness.single(temp.root(), 1, 0, "t", 1);

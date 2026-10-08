@@ -15,6 +15,7 @@ import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import static io.simplekafka.support.TestSupport.assertCode;
 import static io.simplekafka.support.TestSupport.value;
 import static io.simplekafka.support.TestSupport.values;
@@ -22,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class Step03Test {
     @Test
+    @DisplayName("Validates record boundary hints and whole record budgets")
     void validatesRecordBoundaryHintsAndWholeRecordBudgets() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             Path file = temp.root().resolve("0.log");
@@ -67,6 +69,7 @@ class Step03Test {
     }
 
     @Test
+    @DisplayName("Enforces nonzero base bounds and keeps read paging separate from append position")
     void enforcesNonzeroBaseBoundsAndKeepsReadPagingSeparateFromAppendPosition() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             Path file = temp.root().resolve("5.log");
@@ -100,6 +103,7 @@ class Step03Test {
     }
 
     @Test
+    @DisplayName("Rereads complete records and rejects damage written through another handle")
     void rereadsCompleteRecordsAndRejectsDamageWrittenThroughAnotherHandle() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             Path file = temp.root().resolve("0.log");

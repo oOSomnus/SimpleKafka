@@ -5,11 +5,13 @@ import io.simplekafka.client.Partitioner;
 import java.nio.charset.StandardCharsets;
 import java.util.zip.CRC32C;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import static io.simplekafka.support.TestSupport.assertCode;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class Step09Test {
     @Test
+    @DisplayName("Routes by known unsigned CRC32C vectors and keeps empty key as a key")
     void routesByKnownUnsignedCrc32cVectorsAndKeepsEmptyKeyAsAKey() {
         byte[] checkVector = "123456789".getBytes(StandardCharsets.US_ASCII);
         assertEquals(0xe3069283L, crc32c(checkVector), "CRC32C standard check vector");
@@ -27,6 +29,7 @@ class Step09Test {
     }
 
     @Test
+    @DisplayName("Keyed and empty keys do not advance the null key cursor")
     void keyedAndEmptyKeysDoNotAdvanceTheNullKeyCursor() {
         Partitioner partitioner = new Partitioner();
 
@@ -37,6 +40,7 @@ class Step09Test {
     }
 
     @Test
+    @DisplayName("Null key cursors are independent and single partition always selects zero")
     void nullKeyCursorsAreIndependentAndSinglePartitionAlwaysSelectsZero() {
         Partitioner first = new Partitioner();
         Partitioner second = new Partitioner();
@@ -53,6 +57,7 @@ class Step09Test {
     }
 
     @Test
+    @DisplayName("Null key cursor stays within partitions when topic sizes change")
     void nullKeyCursorStaysWithinPartitionsWhenTopicSizesChange() {
         Partitioner partitioner = new Partitioner();
 
@@ -66,6 +71,7 @@ class Step09Test {
     }
 
     @Test
+    @DisplayName("Requires a positive partition count")
     void requiresAPositivePartitionCount() {
         Partitioner partitioner = new Partitioner();
         assertCode(ErrorCode.INVALID_REQUEST, () -> partitioner.choose(null, 0));

@@ -21,6 +21,7 @@
 
 \section{测试失败的阅读法}
 先读失败的 Step 测试名和断言，再回到本章契约。测试报告中的第一处异常通常比最后一段堆栈更有用：未实现方法给出步骤和方法名；课程错误应保留 \method{ErrorCode}；意外 IOException 可能被包装为 \method{STORAGE_ERROR} 并保留 cause。不要把错误映射成空列表或成功默认值来让测试变绿。一个单步定位命令只运行该步，不代表累计依赖都满足；累计命令会再次评估之前每步。
+课程 runner 按步骤分组输出测试名称、各步和总计数；失败时显示断言、精确方法定位与重跑命令。报告始终为英文；JUnit XML 保存到 \pathcode{build/student/reports/} 或 \pathcode{build/reference/reports/}。重定向输出、设置 \pathcode{NO_COLOR} 或 \pathcode{TERM=dumb} 时关闭颜色。
 
 \begin{center}
 \begin{tabular}{p{.23\textwidth}p{.68\textwidth}}

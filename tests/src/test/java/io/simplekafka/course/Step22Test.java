@@ -17,12 +17,14 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.io.TempDir;
 
 class Step22Test {
     @TempDir Path root;
 
     @Test
+    @DisplayName("Rejects invalid progress and expires only replicas that miss the exact catch up deadline")
     void rejectsInvalidProgressAndExpiresOnlyReplicasThatMissTheExactCatchUpDeadline() {
         AtomicLong now = new AtomicLong(1_000);
         TimeSource clock = now::get;

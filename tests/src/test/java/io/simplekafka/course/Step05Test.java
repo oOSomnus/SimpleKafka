@@ -14,12 +14,14 @@ import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import static io.simplekafka.support.TestSupport.assertCode;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class Step05Test {
     @Test
+    @DisplayName("Writes big endian entries at interval and floors safely")
     void writesBigEndianEntriesAtIntervalAndFloorsSafely() throws Exception {
         try (TempDirectory temp = new TempDirectory();
              SparseIndex index = new SparseIndex(temp.root().resolve("segment.index"), 0, 4)) {
@@ -38,6 +40,7 @@ class Step05Test {
     }
 
     @Test
+    @DisplayName("Supports nonzero bases and reopens persisted points")
     void supportsNonzeroBasesAndReopensPersistedPoints() throws Exception {
         Path indexFile;
         try (TempDirectory temp = new TempDirectory()) {
@@ -74,6 +77,7 @@ class Step05Test {
     }
 
     @Test
+    @DisplayName("Rejected observations leave the index and ordering state unchanged")
     void rejectedObservationsLeaveTheIndexAndOrderingStateUnchanged() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             Path indexFile = temp.root().resolve("segment.index");
@@ -99,6 +103,7 @@ class Step05Test {
     }
 
     @Test
+    @DisplayName("Rebuilds missing truncated and stale indexes from the current log")
     void rebuildsMissingTruncatedAndStaleIndexesFromTheCurrentLog() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             Path logFile = temp.root().resolve("segment.log");
@@ -153,6 +158,7 @@ class Step05Test {
     }
 
     @Test
+    @DisplayName("Rebuild rejects malformed logs without changing their bytes")
     void rebuildRejectsMalformedLogsWithoutChangingTheirBytes() throws Exception {
         byte[] valid = RecordBytes.record(0, null, new byte[]{7}, 0);
         List<InvalidLog> invalidLogs = List.of(

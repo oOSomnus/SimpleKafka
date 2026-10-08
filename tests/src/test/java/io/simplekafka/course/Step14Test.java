@@ -19,12 +19,14 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import static io.simplekafka.support.TestSupport.assertCode;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class Step14Test {
     @Test
+    @DisplayName("Polls in partition order within round budgets and preserves manual positions")
     void pollsInPartitionOrderWithinRoundBudgetsAndPreservesManualPositions() throws Exception {
         try (TempDirectory temp = new TempDirectory();
              BrokerHarness broker = BrokerHarness.single(temp.root(), 1, 0, "orders", 2);
@@ -92,8 +94,35 @@ class Step14Test {
             assertCode(ErrorCode.NOT_ASSIGNED, () -> consumer.position(zero));
         }
     }
+    @Test
+    @DisplayName("Poll continues past empty partitions without spending the shared budget")
+    void pollContinuesPastEmptyPartitionsWithoutSpendingTheSharedBudget() throws Exception {
+        try (TempDirectory temp = new TempDirectory();
+             BrokerHarness broker = BrokerHarness.single(temp.root(), 1, 0, "orders", 2);
+             RpcClient client = new RpcClient(broker.endpoint(), 3_000);
+             SimpleConsumer consumer = new SimpleConsumer(client, "empty-first-partition")) {
+            TopicPartition zero = new TopicPartition("orders", 0);
+            TopicPartition one = new TopicPartition("orders", 1);
+            TestSupport.append(client, one, List.of(emptyRecord(), emptyRecord()));
+            consumer.assign(List.of(one, zero));
+
+            Map<TopicPartition, List<LogRecord>> first = consumer.poll(2, 64);
+            assertEquals(List.of(one), List.copyOf(first.keySet()));
+            assertEquals(List.of(0L, 1L), offsets(first.get(one)));
+            assertEquals(0, consumer.position(zero));
+            assertEquals(2, consumer.position(one));
+
+            TestSupport.append(client, zero, List.of(emptyRecord()));
+            Map<TopicPartition, List<LogRecord>> second = consumer.poll(1, 32);
+            assertEquals(List.of(zero), List.copyOf(second.keySet()));
+            assertEquals(List.of(0L), offsets(second.get(zero)));
+            assertEquals(1, consumer.position(zero));
+            assertEquals(2, consumer.position(one));
+        }
+    }
 
     @Test
+    @DisplayName("Spends the three record budget on the first partition and rejects invalid limits without advancing")
     void spendsTheThreeRecordBudgetOnTheFirstPartitionAndRejectsInvalidLimitsWithoutAdvancing() throws Exception {
         try (TempDirectory temp = new TempDirectory();
              BrokerHarness broker = BrokerHarness.single(temp.root(), 1, 0, "orders", 2);
@@ -125,6 +154,7 @@ class Step14Test {
         }
     }
     @Test
+    @DisplayName("Accumulates byte budget across topics and keeps assignment atomic on failures")
     void accumulatesByteBudgetAcrossTopicsAndKeepsAssignmentAtomicOnFailures() throws Exception {
         try (TempDirectory temp = new TempDirectory();
              BrokerHarness broker = BrokerHarness.single(temp.root(), 1, 0);
@@ -189,6 +219,7 @@ class Step14Test {
     }
 
     @Test
+    @DisplayName("Manual consumer closes its owned RPC client after reading a record")
     void manualConsumerClosesItsOwnedRpcClientAfterReadingARecord() throws Exception {
         try (TempDirectory temp = new TempDirectory();
              BrokerHarness broker = BrokerHarness.single(temp.root(), 1, 0, "orders", 1);
@@ -206,6 +237,7 @@ class Step14Test {
     }
 
     @Test
+    @DisplayName("Leaves failed partition position unchanged for fetch errors and malformed success replies")
     void leavesFailedPartitionPositionUnchangedForFetchErrorsAndMalformedSuccessReplies() throws Exception {
         try (TempDirectory temp = new TempDirectory();
              ScriptedFetchBroker broker = new ScriptedFetchBroker(temp.root());

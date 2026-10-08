@@ -30,12 +30,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.io.TempDir;
 
 class Step25Test {
     @TempDir Path root;
 
     @Test
+    @DisplayName("Elects the lowest eligible ISR and fences old epoch without losing committed prefix")
     void electsTheLowestEligibleIsrAndFencesOldEpochWithoutLosingCommittedPrefix() {
         AtomicLong now = new AtomicLong(0);
         TimeSource clock = now::get;
@@ -104,6 +106,7 @@ class Step25Test {
 
 
     @Test
+    @DisplayName("Election fences an outstanding all ack without rolling back append")
     void electionFencesAnOutstandingAllAckWithoutRollingBackAppend() throws Exception {
         TopicPartition tp = new TopicPartition("step25-pending-all", 0);
         try (ClusterHarness cluster = new ClusterHarness(root, new AtomicLong(0)::get)) {
@@ -184,6 +187,7 @@ class Step25Test {
     }
 
     @Test
+    @DisplayName("Election requires the committed prefix before choosing the lowest ISR")
     void electionRequiresTheCommittedPrefixBeforeChoosingTheLowestIsr() {
         TimeSource clock = new AtomicLong(0)::get;
         ClusterAuthority authority = new ClusterAuthority(clock);

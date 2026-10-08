@@ -120,10 +120,11 @@ run_tests() {
     local classfile=${selector//./\/}.class
     [[ -f "$classdir/$classfile" ]] || fail "expected test class was not compiled: $selector"
   done
-  local -a junit_args=(execute --class-path "$main:$classdir" --details=tree --disable-ansi-colors --fail-if-no-tests --reports-dir "$reports")
-  for selector in "${selectors[@]}"; do junit_args+=(--select-class "$selector"); done
-  printf 'Running %s tests: %s\n' "$mode" "${selectors[*]}"
-  "$JAVA" -jar "$JUNIT" "${junit_args[@]}"
+  local scope=cumulative
+  [[ "$single" == true ]] && scope=single
+  printf 'Preparing %s course tests through Step %02d.\n' "$mode" "$completed"
+  "$JAVA" -cp "$main:$classdir:$JUNIT" io.simplekafka.support.CourseTestRunner \
+    "$mode" "$scope" "$completed" "$MANIFEST" "$reports" "${selectors[@]}"
   if [[ "$single" == true ]]; then
     printf 'Step %02d diagnostic passed; single-step tests do not grant chapter completion.\n' "$number"
   elif ((completed == 28)); then

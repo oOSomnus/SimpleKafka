@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import static io.simplekafka.support.TestSupport.assertCode;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -20,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class Step07Test {
     @Test
+    @DisplayName("Deletes only eligible closed segments and keeps the active segment")
     void deletesOnlyEligibleClosedSegmentsAndKeepsTheActiveSegment() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             Path directory = temp.root().resolve("orders-0");
@@ -82,6 +84,7 @@ class Step07Test {
     }
 
     @Test
+    @DisplayName("Retention keeps the only active segment whether empty or nonempty")
     void retentionKeepsTheOnlyActiveSegmentWhetherEmptyOrNonempty() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             Path emptyDirectory = temp.root().resolve("empty");
@@ -114,6 +117,7 @@ class Step07Test {
     }
 
     @Test
+    @DisplayName("Deletes closed segment at its exact end offset")
     void deletesClosedSegmentAtItsExactEndOffset() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             Path directory = temp.root().resolve("exact-retention-boundary");

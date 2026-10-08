@@ -18,6 +18,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import static io.simplekafka.support.TestSupport.assertCode;
 import static io.simplekafka.support.TestSupport.utf8;
 import static io.simplekafka.support.TestSupport.value;
@@ -28,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class Step02Test {
     @Test
+    @DisplayName("Appends batches from nonzero base and preserves independent disk encoding")
     void appendsBatchesFromNonzeroBaseAndPreservesIndependentDiskEncoding() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             Path file = temp.root().resolve("5.log");
@@ -56,6 +58,7 @@ class Step02Test {
     }
 
     @Test
+    @DisplayName("Rejects invalid batches atomically without creating offset gaps")
     void rejectsInvalidBatchesAtomicallyWithoutCreatingOffsetGaps() throws Exception {
         try (TempDirectory temp = new TempDirectory();
              SegmentLog log = SegmentLog.create(temp.root().resolve("5.log"), 5)) {
@@ -101,6 +104,7 @@ class Step02Test {
     }
 
     @Test
+    @DisplayName("Rejects append at maximum offset without changing empty file")
     void rejectsAppendAtMaximumOffsetWithoutChangingEmptyFile() throws Exception {
         try (TempDirectory temp = new TempDirectory();
              SegmentLog log = SegmentLog.create(temp.root().resolve("max.log"), Long.MAX_VALUE)) {
@@ -112,6 +116,7 @@ class Step02Test {
     }
 
     @Test
+    @DisplayName("Concurrent batches receive disjoint ranges without interleaving")
     void concurrentBatchesReceiveDisjointRangesWithoutInterleaving() throws Exception {
         try (TempDirectory temp = new TempDirectory();
              SegmentLog log = SegmentLog.create(temp.root().resolve("0.log"), 0)) {

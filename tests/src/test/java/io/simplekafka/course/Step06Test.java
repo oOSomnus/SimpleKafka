@@ -8,6 +8,8 @@ import io.simplekafka.storage.PartitionLog;
 import io.simplekafka.support.RecordBytes;
 import io.simplekafka.support.TempDirectory;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -22,6 +24,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import static io.simplekafka.support.TestSupport.assertCode;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -30,6 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class Step06Test {
     @Test
+    @DisplayName("Rolls at exact byte boundaries and writes independent records")
     void rollsAtExactByteBoundariesAndWritesIndependentRecords() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             Path exactDirectory = temp.root().resolve("exact-rollover");
@@ -58,6 +62,7 @@ class Step06Test {
     }
 
     @Test
+    @DisplayName("Applies read budgets across segments and validates bounds and limits")
     void appliesReadBudgetsAcrossSegmentsAndValidatesBoundsAndLimits() throws Exception {
         try (TempDirectory temp = new TempDirectory();
              PartitionLog log = new PartitionLog(temp.root().resolve("orders-0"), 256, 2)) {
@@ -83,6 +88,7 @@ class Step06Test {
     }
 
     @Test
+    @DisplayName("Invalid batch does not mutate an existing multi segment log")
     void invalidBatchDoesNotMutateAnExistingMultiSegmentLog() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             Path directory = temp.root().resolve("invalid-batch");
@@ -132,6 +138,7 @@ class Step06Test {
     }
 
     @Test
+    @DisplayName("Accepts an oversized record between records in one batch and reopens every segment")
     void acceptsAnOversizedRecordBetweenRecordsInOneBatchAndReopensEverySegment() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             Path directory = temp.root().resolve("large-record-batch");
@@ -148,19 +155,68 @@ class Step06Test {
                 assertEquals(new AppendResult(0, 3), log.append(batch));
                 assertEquals(List.of(0L, 1L, 2L), segmentBases(directory));
                 assertEquals(List.of(32L, 132L, 32L), segmentSizes(directory));
-                assertEquals(expected, log.read(0, 3, 196));
+                assertMixedSizeReadBudgets(log, expected);
             }
 
             try (PartitionLog reopened = new PartitionLog(directory, 64, 2)) {
                 assertEquals(3, reopened.logEndOffset());
-                assertEquals(expected, reopened.read(0, 3, 196));
+                assertMixedSizeReadBudgets(reopened, expected);
                 assertEquals(List.of(0L, 1L, 2L), segmentBases(directory));
                 assertEquals(List.of(32L, 132L, 32L), segmentSizes(directory));
             }
         }
     }
+    @Test
+    @DisplayName("Indexes and reads mixed size records inside one segment")
+    void indexesAndReadsMixedSizeRecordsInsideOneSegment() throws Exception {
+        try (TempDirectory temp = new TempDirectory()) {
+            Path directory = temp.root().resolve("mixed-size-single-segment");
+            List<RecordData> batch = List.of(
+                    new RecordData(null, new byte[0], 0),
+                    new RecordData(null, new byte[100], 1),
+                    new RecordData(null, new byte[0], 2));
+            List<LogRecord> expected = List.of(
+                    new LogRecord(0, batch.get(0)),
+                    new LogRecord(1, batch.get(1)),
+                    new LogRecord(2, batch.get(2)));
+            byte[] expectedLog = RecordBytes.concat(
+                    RecordBytes.record(0, null, new byte[0], 0),
+                    RecordBytes.record(1, null, new byte[100], 1),
+                    RecordBytes.record(2, null, new byte[0], 2));
+            byte[] expectedIndex = indexBytes(0, 0, 1, 32, 2, 164);
+            Path logFile = directory.resolve(segmentName(0));
+            Path indexFile = directory.resolve(segmentName(0).replace(".log", ".index"));
+
+            try (PartitionLog log = new PartitionLog(directory, 300, 1)) {
+                assertEquals(new AppendResult(0, 3), log.append(batch));
+                assertEquals(List.of(0L), segmentBases(directory));
+                assertEquals(List.of(196L), segmentSizes(directory));
+                assertArrayEquals(expectedLog, Files.readAllBytes(logFile));
+                assertArrayEquals(expectedIndex, Files.readAllBytes(indexFile));
+                assertEquals(List.of(expected.get(1)), log.read(1, 1, 132));
+                assertEquals(List.of(expected.get(2)), log.read(2, 1, 32));
+                assertEquals(expected, log.read(0, 3, 196));
+                assertDiskRecords(directory, expected);
+            }
+
+            Files.delete(indexFile);
+            try (PartitionLog reopened = new PartitionLog(directory, 300, 1)) {
+                assertEquals(3, reopened.logEndOffset());
+                assertEquals(List.of(0L), segmentBases(directory));
+                assertEquals(List.of(196L), segmentSizes(directory));
+                assertArrayEquals(expectedLog, Files.readAllBytes(logFile));
+                assertArrayEquals(expectedIndex, Files.readAllBytes(indexFile));
+                assertEquals(List.of(expected.get(1)), reopened.read(1, 1, 132));
+                assertEquals(List.of(expected.get(2)), reopened.read(2, 1, 32));
+                assertEquals(expected, reopened.read(0, 3, 196));
+                assertDiskRecords(directory, expected);
+            }
+        }
+    }
+
 
     @Test
+    @DisplayName("Recovers only an incomplete active tail and rebuilds indexes on reopen")
     void recoversOnlyAnIncompleteActiveTailAndRebuildsIndexesOnReopen() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             Path directory = temp.root().resolve("recover");
@@ -205,6 +261,7 @@ class Step06Test {
     }
 
     @Test
+    @DisplayName("Refuses complete CRC corruption and segment base gaps without changing logs")
     void refusesCompleteCrcCorruptionAndSegmentBaseGapsWithoutChangingLogs() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             Path corruptDirectory = temp.root().resolve("crc-corrupt");
@@ -233,10 +290,11 @@ class Step06Test {
     }
 
     @Test
+    @DisplayName("Concurrent batches stay contiguous and survive reopen")
     void concurrentBatchesStayContiguousAndSurviveReopen() throws Exception {
         int threadCount = 4;
-        int batchesPerThread = 12;
-        int recordsPerBatch = 3;
+        int batchesPerThread = 8;
+        int recordsPerBatch = 5;
         List<LogRecord> expectedRecords = new ArrayList<>();
         Path directory;
         List<Thread> workers = new ArrayList<>();
@@ -257,10 +315,9 @@ class Step06Test {
                                 throw new AssertionError("concurrent append start latch timed out");
                             for (int batch = 0; batch < batchesPerThread; batch++) {
                                 long marker = id * 10_000L + batch * 10L;
-                                List<RecordData> records = List.of(
-                                        new RecordData(null, new byte[0], marker),
-                                        new RecordData(null, new byte[0], marker + 1),
-                                        new RecordData(null, new byte[0], marker + 2));
+                                List<RecordData> records = LongStream.range(0, recordsPerBatch)
+                                        .mapToObj(index -> new RecordData(null, new byte[0], marker + index))
+                                        .toList();
                                 AppendResult range = log.append(records);
                                 results.add(new BatchAppend(id, batch, marker, range));
                             }
@@ -286,12 +343,12 @@ class Step06Test {
 
                 List<BatchAppend> sortedResults = new ArrayList<>(results);
                 sortedResults.sort(java.util.Comparator.comparingLong(result -> result.range().firstOffset()));
-                List<AppendResult> expectedRanges = LongStream.range(0, 48)
+                List<AppendResult> expectedRanges = LongStream.range(0, (long) threadCount * batchesPerThread)
                         .mapToObj(batch -> new AppendResult(batch * recordsPerBatch,
                                 (batch + 1) * recordsPerBatch))
                         .toList();
                 assertEquals(expectedRanges, sortedResults.stream().map(BatchAppend::range).toList(),
-                        "sorted returned ranges must exactly tile offsets [0,144) by complete batches");
+                        "sorted returned ranges must exactly tile offsets [0,160) by complete batches");
 
                 List<Long> expectedMarkers = new ArrayList<>();
                 for (int threadId = 0; threadId < threadCount; threadId++) {
@@ -310,29 +367,46 @@ class Step06Test {
                                 new RecordData(null, new byte[0], result.marker() + index)));
                     }
                 }
-                assertEquals(LongStream.range(0, 144).boxed().toList(),
+                assertEquals(LongStream.range(0, 160).boxed().toList(),
                         expectedRecords.stream().map(LogRecord::offset).toList());
-                assertEquals(expectedRanges.stream().map(AppendResult::firstOffset).toList(),
-                        segmentBases(directory));
-                assertTrue(segmentSizes(directory).stream().allMatch(size -> size == 96));
+                List<Long> expectedSegmentBases = LongStream.range(0, 54).map(base -> base * 3).boxed().toList();
+                List<Long> expectedSegmentSizes = LongStream.range(0, 54)
+                        .map(index -> index < 53 ? 96 : 32).boxed().toList();
+                assertEquals(expectedSegmentBases, segmentBases(directory));
+                assertEquals(expectedSegmentSizes, segmentSizes(directory));
 
                 List<LogRecord> disk = diskRecords(directory);
                 assertEquals(expectedRecords, disk,
                         "independent disk parsing must preserve the exact data assigned to every sorted range");
-                assertEquals(expectedRecords, log.read(0, 144, 4_608));
+                assertEquals(expectedRecords, log.read(0, 160, 5_120));
             }
 
             try (PartitionLog reopened = new PartitionLog(directory, 96, 1)) {
-                assertEquals(expectedRecords, reopened.read(0, 144, 4_608));
+                assertEquals(expectedRecords, reopened.read(0, 160, 5_120));
                 assertDiskRecords(directory, expectedRecords);
             }
         }
     }
 
+    private static void assertMixedSizeReadBudgets(PartitionLog log, List<LogRecord> expected) {
+        assertEquals(List.of(), log.read(0, 3, 31));
+        assertEquals(List.of(expected.get(0)), log.read(0, 3, 100));
+        assertEquals(List.of(), log.read(1, 3, 131));
+        assertEquals(List.of(expected.get(1)), log.read(1, 3, 132));
+        assertEquals(expected.subList(1, 3), log.read(1, 3, 164));
+        assertEquals(expected.subList(0, 2), log.read(0, 3, 164));
+        assertEquals(expected, log.read(0, 3, 196));
+    }
     private static List<LogRecord> expectedRecords(long firstOffset, int count) {
         return LongStream.range(firstOffset, firstOffset + count)
                 .mapToObj(offset -> new LogRecord(offset, new RecordData(null, new byte[0], offset)))
                 .toList();
+    }
+    private static byte[] indexBytes(long... offsetPositionPairs) {
+        ByteBuffer bytes = ByteBuffer.allocate(Long.BYTES * offsetPositionPairs.length)
+                .order(ByteOrder.BIG_ENDIAN);
+        for (long value : offsetPositionPairs) bytes.putLong(value);
+        return bytes.array();
     }
 
     private static List<Path> segmentFiles(Path directory) throws IOException {
