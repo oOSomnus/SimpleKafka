@@ -14,9 +14,13 @@ Supported: Linux, macOS, and Windows WSL2 on x86_64 or arm64; native Windows is 
 ./gradlew :doctor
 ./gradlew :list        # English by default
 ./gradlew :compile
+./gradlew :format       # format all project Java sources
+./gradlew :formatCheck  # check formatting without modifying files
 ```
 
 Course tests do not need the PDF engine or system fonts. `./gradlew :setup` resolves JUnit 1.11.4 through Gradle dependency verification; first dependency resolution needs network access. `./gradlew --offline` controls Gradle dependency access. The first PDF build also downloads a TeX bundle and its Latin Modern/Fandol fonts. `curl`, `tar`, `install`, and checksum tools are used only to prepare the PDF engine. Noto, fontconfig, xelatex, latexmk, the Maven command-line tool, Docker, and Kafka are not project dependencies.
+
+`:format` and `:formatCheck` cover Java sources in `exercises/`, `reference/`, `provided/`, and `tests/`; formatting uses four-space indentation and does not reflow long string literals.
 
 ## Incremental steps
 

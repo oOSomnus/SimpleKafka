@@ -2,6 +2,22 @@ plugins {
     id 'base'
 }
 
+repositories {
+    mavenCentral()
+}
+
+configurations {
+    javaFormatter {
+        canBeResolved = true
+        canBeConsumed = false
+        transitive = false
+    }
+}
+
+dependencies {
+    javaFormatter 'com.google.googlejavaformat:google-java-format:1.28.0:all-deps@jar'
+}
+
 subprojects {
     apply plugin: 'java'
 
@@ -197,6 +213,49 @@ def registerDemoTask = { String taskName, String projectName ->
 
 registerDemoTask('demo', 'exercises')
 registerDemoTask('referenceDemo', 'reference')
+
+def javaSources = fileTree(rootProject.projectDir) {
+    include 'exercises/src/main/java/**/*.java'
+    include 'reference/src/main/java/**/*.java'
+    include 'provided/src/main/java/**/*.java'
+    include 'tests/src/test/java/**/*.java'
+}
+
+def registerFormatTask = { String taskName, boolean checkOnly ->
+    tasks.register(taskName, JavaExec) {
+        group = checkOnly ? 'verification' : 'formatting'
+        description = checkOnly
+            ? 'Check all project Java sources without modifying them.'
+            : 'Format all project Java sources.'
+        classpath = configurations.javaFormatter
+        mainClass.set('com.google.googlejavaformat.java.Main')
+        workingDir rootProject.projectDir
+        ignoreExitValue = false
+        inputs.files(javaSources)
+        onlyIf { !javaSources.isEmpty() }
+        jvmArgs(
+            '--add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED',
+            '--add-exports=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED',
+            '--add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED',
+            '--add-exports=jdk.compiler/com.sun.tools.javac.parser=ALL-UNNAMED',
+            '--add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED',
+            '--add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED'
+        )
+
+        doFirst {
+            List<String> sourcePaths = javaSources.files
+                .collect { it.absolutePath }
+                .unique()
+                .sort()
+            setArgs((checkOnly
+                ? ['--aosp', '--skip-reflowing-long-strings', '--dry-run', '--set-exit-if-changed']
+                : ['--aosp', '--skip-reflowing-long-strings', '--replace']) + sourcePaths)
+        }
+    }
+}
+
+registerFormatTask('format', false)
+registerFormatTask('formatCheck', true)
 
 tasks.withType(JavaExec).configureEach {
     doFirst {

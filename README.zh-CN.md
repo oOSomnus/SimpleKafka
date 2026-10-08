@@ -14,9 +14,13 @@
 ./gradlew :doctor
 ./gradlew :list        # 默认显示英文
 ./gradlew :compile
+./gradlew :format       # 格式化项目 Java 源码
+./gradlew :formatCheck  # 检查格式，不改写文件
 ```
 
 课程测试不需要 PDF 引擎或系统字体。`./gradlew :setup` 通过 Gradle 依赖校验解析 JUnit 1.11.4；首次解析需要联网。`./gradlew --offline` 控制 Gradle 依赖访问。PDF 首次编译还会下载 TeX bundle 与其中的 Latin Modern/Fandol 字体。只有准备 PDF 引擎时才使用 `curl`、`tar`、`install` 和 checksum 工具。Noto、fontconfig、xelatex、latexmk、Maven 命令行工具、Docker 与 Kafka 均不是项目依赖。
+
+`:format` 和 `:formatCheck` 覆盖 `exercises/`、`reference/`、`provided/`、`tests/` 中的 Java 源码；格式化使用四空格缩进，不重排超长字符串字面量。
 
 ## 渐进式步骤
 
