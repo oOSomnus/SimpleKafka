@@ -19,9 +19,9 @@ import java.util.OptionalLong;
  * Value types for requests and responses in the course teaching protocol.
  *
  * <p>MessageCodec encodes each record's components in declaration order. A response error code is
- * carried in the frame header, with the error message represented by {@link ErrorBody}. Each
- * record documents any constructor validation or defensive copy it performs; other components are
- * not validated by construction.
+ * carried in the frame header, with the error message represented by {@link ErrorBody}. Each record
+ * documents any constructor validation or defensive copy it performs; other components are not
+ * validated by construction.
  */
 public final class Messages {
     private Messages() {}
@@ -70,9 +70,9 @@ public final class Messages {
          * @param error frame error code
          * @param body successful response body for {@code NONE}, otherwise an error body
          * @throws NullPointerException if {@code error} or {@code body} is null
-         * @throws IllegalArgumentException if {@code error} is {@link ErrorCode#NONE} and
-         *     {@code body} is an {@link ErrorBody}, or if {@code error} is not {@code NONE} and
-         *     {@code body} is not an {@link ErrorBody}
+         * @throws IllegalArgumentException if {@code error} is {@link ErrorCode#NONE} and {@code
+         *     body} is an {@link ErrorBody}, or if {@code error} is not {@code NONE} and {@code
+         *     body} is not an {@link ErrorBody}
          */
         public Reply {
             Objects.requireNonNull(error);
@@ -208,7 +208,8 @@ public final class Messages {
      * Request to commit a group's next offset for a topic-partition.
      *
      * <p>The next offset identifies the next record to process and may be moved backward. A null
-     * token omits group-membership fencing; the record constructor does not validate its components.
+     * token omits group-membership fencing; the record constructor does not validate its
+     * components.
      *
      * @param key group and topic-partition whose progress is committed
      * @param nextOffset offset of the next record to process
@@ -247,8 +248,8 @@ public final class Messages {
     /**
      * Request to join a topic's consumer group.
      *
-     * <p>Group and member identifiers use the course's non-empty, 1-to-255-byte UTF-8 rule, not
-     * the topic identifier's ASCII character restriction. The record constructor does not validate
+     * <p>Group and member identifiers use the course's non-empty, 1-to-255-byte UTF-8 rule, not the
+     * topic identifier's ASCII character restriction. The record constructor does not validate
      * them.
      *
      * @param group group identifier

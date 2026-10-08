@@ -33,8 +33,8 @@ public final class Api {
      * Requires an identifier to be one of the defined course API ids.
      *
      * @param id API identifier to validate
-     * @throws CourseException if {@code id} is unknown, with error code
-     *     {@link io.simplekafka.ErrorCode#INVALID_REQUEST}
+     * @throws CourseException if {@code id} is unknown, with error code {@link
+     *     io.simplekafka.ErrorCode#INVALID_REQUEST}
      */
     public static void requireKnown(short id) {
         if (!known(id)) throw new CourseException(ErrorCode.INVALID_REQUEST, "unknown API: " + id);

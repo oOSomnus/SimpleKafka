@@ -27,8 +27,8 @@ public final class GroupConsumer implements AutoCloseable {
     private boolean closed;
 
     /**
-     * Creates a group consumer that owns the supplied RPC client. Group and member identifiers
-     * must satisfy the course limits of 1–255 UTF-8 bytes.
+     * Creates a group consumer that owns the supplied RPC client. Group and member identifiers must
+     * satisfy the course limits of 1–255 UTF-8 bytes.
      *
      * @param client RPC client whose ownership transfers to this consumer
      * @param group group identifier
@@ -63,8 +63,8 @@ public final class GroupConsumer implements AutoCloseable {
     }
 
     /**
-     * Step 20: join this same-topic group and establish the member's assignment and token.
-     * {@code subscribe} is the explicit way to rejoin after {@link ErrorCode#UNKNOWN_MEMBER};
+     * Step 20: join this same-topic group and establish the member's assignment and token. {@code
+     * subscribe} is the explicit way to rejoin after {@link ErrorCode#UNKNOWN_MEMBER};
      * router-backed consumers refresh topic metadata before joining. Retained positions survive,
      * while newly assigned partitions resume from committed offsets or zero. Test: Step20Test.
      * Lesson: docs/book/chapters/05-consumer-groups.tex, Step 20.
@@ -72,8 +72,8 @@ public final class GroupConsumer implements AutoCloseable {
      * @param topic topic to join
      * @throws IllegalStateException if this consumer is closed
      * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} for an invalid topic or with
-     *     {@link ErrorCode#UNKNOWN_TOPIC_OR_PARTITION} if the topic is unknown, or with
-     *     {@link ErrorCode#UNKNOWN_MEMBER} if this member is absent from the returned assignment
+     *     {@link ErrorCode#UNKNOWN_TOPIC_OR_PARTITION} if the topic is unknown, or with {@link
+     *     ErrorCode#UNKNOWN_MEMBER} if this member is absent from the returned assignment
      * @throws ExerciseNotImplementedException while the Step 20 exercise method is a skeleton
      */
     public void subscribe(String topic) {
@@ -105,8 +105,8 @@ public final class GroupConsumer implements AutoCloseable {
      *
      * @throws IllegalStateException if this consumer is closed
      * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} if called before subscribing,
-     *     with {@link ErrorCode#ILLEGAL_GENERATION} for a stale token, or with
-     *     {@link ErrorCode#NOT_ASSIGNED} if the member does not own a committed partition
+     *     with {@link ErrorCode#ILLEGAL_GENERATION} for a stale token, or with {@link
+     *     ErrorCode#NOT_ASSIGNED} if the member does not own a committed partition
      * @throws ExerciseNotImplementedException while the Step 20 exercise method is a skeleton
      */
     public void commitSync() {

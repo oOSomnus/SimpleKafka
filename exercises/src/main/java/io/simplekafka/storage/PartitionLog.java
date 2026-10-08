@@ -52,9 +52,9 @@ public final class PartitionLog implements AutoCloseable {
 
     /**
      * Step 6: append a prevalidated batch across byte-limited segments with contiguous global
-     * offsets. A segment may exceed its target size to hold one record. Call
-     * {@link #markMutation()} once after all input validation and before the first write. See
-     * Step06Test and book step 6.
+     * offsets. A segment may exceed its target size to hold one record. Call {@link
+     * #markMutation()} once after all input validation and before the first write. See Step06Test
+     * and book step 6.
      *
      * @param records non-empty records to append in order
      * @return the appended half-open global offset range
@@ -78,8 +78,8 @@ public final class PartitionLog implements AutoCloseable {
      * @return the records beginning at {@code offset}, bounded by both limits
      * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} for nonpositive limits, with
      *     {@link ErrorCode#OFFSET_OUT_OF_RANGE} for an offset outside the retained range, with
-     *     {@link ErrorCode#CORRUPT_RECORD} for a segment gap or invalid record, or with
-     *     {@link ErrorCode#STORAGE_ERROR} for storage failure or a closed log
+     *     {@link ErrorCode#CORRUPT_RECORD} for a segment gap or invalid record, or with {@link
+     *     ErrorCode#STORAGE_ERROR} for storage failure or a closed log
      * @throws ExerciseNotImplementedException while the Step 6 exercise method is a skeleton
      */
     public List<LogRecord> read(long offset, int maxRecords, int maxBytes) {
@@ -88,9 +88,8 @@ public final class PartitionLog implements AutoCloseable {
 
     /**
      * Step 7: delete closed segments whose end offset is at or below the requested bound, while
-     * keeping at least one segment, and return the actual new start. Call
-     * {@link #markMutation()} once before the first deletion that changes the log. See Step07Test
-     * and book step 7.
+     * keeping at least one segment, and return the actual new start. Call {@link #markMutation()}
+     * once before the first deletion that changes the log. See Step07Test and book step 7.
      *
      * @param offset requested lower bound for retained data
      * @return the actual start offset after any eligible segments are deleted
@@ -127,7 +126,7 @@ public final class PartitionLog implements AutoCloseable {
         lock.lock();
         try {
             ensureOpen();
-            return segments.firstKey();
+            return logStartOffsetLocked();
         } finally {
             lock.unlock();
         }
@@ -143,7 +142,7 @@ public final class PartitionLog implements AutoCloseable {
         lock.lock();
         try {
             ensureOpen();
-            return segments.lastEntry().getValue().log.logEndOffset();
+            return logEndOffsetLocked();
         } finally {
             lock.unlock();
         }
@@ -200,8 +199,7 @@ public final class PartitionLog implements AutoCloseable {
                 SegmentLog log = SegmentLog.open(logFile, baseOffset);
                 SparseIndex index = null;
                 try {
-                    Path indexPath = indexPath(logFile);
-                    index = new SparseIndex(indexPath, baseOffset, indexInterval);
+                    index = new SparseIndex(indexPath(logFile), baseOffset, indexInterval);
                     index.rebuild(logFile, baseOffset);
                     if (expectedBase >= 0 && baseOffset != expectedBase)
                         throw new CourseException(
@@ -228,6 +226,7 @@ public final class PartitionLog implements AutoCloseable {
                     throw exception;
                 }
             }
+            if (segments.isEmpty()) createSegment(0);
         } catch (IOException exception) {
             closeAfterInitializationFailure(exception);
             throw storageError("initialize partition log " + directory, exception);
@@ -262,6 +261,14 @@ public final class PartitionLog implements AutoCloseable {
             }
             throw exception;
         }
+    }
+
+    private long logStartOffsetLocked() {
+        return segments.firstKey();
+    }
+
+    private long logEndOffsetLocked() {
+        return segments.lastEntry().getValue().log.logEndOffset();
     }
 
     private void closeAfterInitializationFailure(Throwable failure) {

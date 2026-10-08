@@ -28,15 +28,15 @@ public interface PartitionBackend {
      * @param timeoutMillis maximum wait for the required acknowledgement; a timeout does not mean
      *     the append was not applied
      * @return the appended batch's half-open offset range
-     * @throws io.simplekafka.CourseException if arguments or records are invalid
-     *     ({@link io.simplekafka.ErrorCode#INVALID_REQUEST}), the epoch is stale
-     *     ({@link io.simplekafka.ErrorCode#FENCED_EPOCH}), this broker is not the online leader
-     *     ({@link io.simplekafka.ErrorCode#NOT_LEADER}), the ISR is below minISR for
-     *     {@code Acks.ALL} ({@link io.simplekafka.ErrorCode#NOT_ENOUGH_REPLICAS}), the required
-     *     acknowledgement times out ({@link io.simplekafka.ErrorCode#REQUEST_TIMEOUT}; the append
-     *     may already have succeeded), or storage fails / the log is corrupt
-     *     ({@link io.simplekafka.ErrorCode#STORAGE_ERROR} or
-     *     {@link io.simplekafka.ErrorCode#CORRUPT_RECORD})
+     * @throws io.simplekafka.CourseException if arguments or records are invalid ({@link
+     *     io.simplekafka.ErrorCode#INVALID_REQUEST}), the epoch is stale ({@link
+     *     io.simplekafka.ErrorCode#FENCED_EPOCH}), this broker is not the online leader ({@link
+     *     io.simplekafka.ErrorCode#NOT_LEADER}), the ISR is below minISR for {@code Acks.ALL}
+     *     ({@link io.simplekafka.ErrorCode#NOT_ENOUGH_REPLICAS}), the required acknowledgement
+     *     times out ({@link io.simplekafka.ErrorCode#REQUEST_TIMEOUT}; the append may already have
+     *     succeeded), or storage fails / the log is corrupt ({@link
+     *     io.simplekafka.ErrorCode#STORAGE_ERROR} or {@link
+     *     io.simplekafka.ErrorCode#CORRUPT_RECORD})
      */
     AppendResult produce(List<RecordData> records, Acks acks, int epoch, long timeoutMillis);
 
@@ -53,13 +53,13 @@ public interface PartitionBackend {
      *     four-byte length prefix; must be positive
      * @param epoch leader epoch against which this operation is fenced
      * @return the available committed records in offset order
-     * @throws io.simplekafka.CourseException if arguments are invalid
-     *     ({@link io.simplekafka.ErrorCode#INVALID_REQUEST}), the epoch is stale
-     *     ({@link io.simplekafka.ErrorCode#FENCED_EPOCH}), this broker is not the online leader
-     *     ({@link io.simplekafka.ErrorCode#NOT_LEADER}), the offset is outside the retained log
-     *     range ({@link io.simplekafka.ErrorCode#OFFSET_OUT_OF_RANGE}), or storage fails / the log
-     *     is corrupt ({@link io.simplekafka.ErrorCode#STORAGE_ERROR} or
-     *     {@link io.simplekafka.ErrorCode#CORRUPT_RECORD})
+     * @throws io.simplekafka.CourseException if arguments are invalid ({@link
+     *     io.simplekafka.ErrorCode#INVALID_REQUEST}), the epoch is stale ({@link
+     *     io.simplekafka.ErrorCode#FENCED_EPOCH}), this broker is not the online leader ({@link
+     *     io.simplekafka.ErrorCode#NOT_LEADER}), the offset is outside the retained log range
+     *     ({@link io.simplekafka.ErrorCode#OFFSET_OUT_OF_RANGE}), or storage fails / the log is
+     *     corrupt ({@link io.simplekafka.ErrorCode#STORAGE_ERROR} or {@link
+     *     io.simplekafka.ErrorCode#CORRUPT_RECORD})
      */
     List<LogRecord> fetch(long offset, int maxRecords, int maxBytes, int epoch);
 

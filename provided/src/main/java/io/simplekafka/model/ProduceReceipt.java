@@ -17,8 +17,8 @@ public record ProduceReceipt(TopicPartition tp, long firstOffset, long nextOffse
      * @param firstOffset inclusive first offset in the receipt range
      * @param nextOffset exclusive next offset after the receipt range
      * @throws NullPointerException if {@code tp} is null
-     * @throws IllegalArgumentException if {@code firstOffset} is negative or
-     *     {@code nextOffset} is less than {@code firstOffset}
+     * @throws IllegalArgumentException if {@code firstOffset} is negative or {@code nextOffset} is
+     *     less than {@code firstOffset}
      */
     public ProduceReceipt {
         Objects.requireNonNull(tp, "tp");

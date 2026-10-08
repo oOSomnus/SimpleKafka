@@ -6,8 +6,8 @@ import java.util.Objects;
 /**
  * Identifies one partition of a topic.
  *
- * @param topic topic identifier containing 1 to 255 ASCII characters from
- *     {@code [A-Za-z0-9._-]}, except {@code "."} and {@code ".."}
+ * @param topic topic identifier containing 1 to 255 ASCII characters from {@code [A-Za-z0-9._-]},
+ *     except {@code "."} and {@code ".."}
  * @param partition nonnegative partition number
  */
 public record TopicPartition(String topic, int partition) implements Comparable<TopicPartition> {

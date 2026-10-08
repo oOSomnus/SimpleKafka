@@ -1,5 +1,7 @@
 package io.simplekafka.replication;
 
+import io.simplekafka.CourseException;
+import io.simplekafka.ErrorCode;
 import io.simplekafka.ExerciseNotImplementedException;
 import io.simplekafka.cluster.ClusterAuthority;
 import io.simplekafka.cluster.ClusterAuthority.PartitionState;
@@ -14,17 +16,14 @@ import java.util.Set;
 public final class ReplicationTracker {
     private final ClusterAuthority authority;
     private final TopicPartition tp;
-    private final int initialLeaderId;
-    private final Set<Integer> initialReplicas;
     private final int minISR;
     private final TimeSource clock;
     private final long lagTimeoutMillis;
     private final PartitionState state;
 
     /**
-     * Attaches a tracker to the authority state for one partition and stores the supplied
-     * configuration. The constructor does not validate that the supplied leader, replicas, minISR,
-     * or lag timeout agree with that authority state.
+     * Attaches a tracker to the authority state for one partition and verifies the supplied
+     * configuration against that state.
      *
      * @param authority authority owning the partition state
      * @param tp partition tracked by this instance
@@ -34,8 +33,9 @@ public final class ReplicationTracker {
      * @param clock clock used for lag timing
      * @param lagTimeoutMillis configured catch-up timeout in milliseconds
      * @throws NullPointerException if a required reference or a replica element is null
-     * @throws io.simplekafka.CourseException with
-     *     {@link io.simplekafka.ErrorCode#UNKNOWN_TOPIC_OR_PARTITION} if the authority has no state
+     * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} if {@code lagTimeoutMillis} is
+     *     negative or the supplied leader, replicas, or {@code minISR} differ from the authority
+     *     state, with {@link ErrorCode#UNKNOWN_TOPIC_OR_PARTITION} if the authority has no state
      *     for {@code tp}
      */
     public ReplicationTracker(
@@ -48,12 +48,20 @@ public final class ReplicationTracker {
             long lagTimeoutMillis) {
         this.authority = Objects.requireNonNull(authority);
         this.tp = Objects.requireNonNull(tp);
-        this.initialLeaderId = leaderId;
-        this.initialReplicas = Set.copyOf(replicas);
+        Set<Integer> configuredReplicas = Set.copyOf(Objects.requireNonNull(replicas));
         this.minISR = minISR;
         this.clock = Objects.requireNonNull(clock);
+        if (lagTimeoutMillis < 0)
+            throw new CourseException(ErrorCode.INVALID_REQUEST, "negative lag timeout");
         this.lagTimeoutMillis = lagTimeoutMillis;
         this.state = authority.partitionState(tp);
+        if (minISR < 1
+                || minISR != state.minISR
+                || !configuredReplicas.equals(state.replicas)
+                || leaderId != state.leaderId)
+            throw new CourseException(
+                    ErrorCode.INVALID_REQUEST,
+                    "tracker configuration differs from partition authority");
     }
 
     /**
@@ -65,10 +73,9 @@ public final class ReplicationTracker {
      * @param brokerId reporting broker identifier
      * @param epoch leader epoch for the report
      * @param leo reported log end offset
-     * @throws io.simplekafka.CourseException with
-     *     {@link io.simplekafka.ErrorCode#INVALID_REQUEST} for negative, offline, or unassigned
-     *     broker data, a follower LEO beyond the leader LEO, a leader LEO moving backward, or a
-     *     follower LEO moving backward within the same epoch; with
+     * @throws io.simplekafka.CourseException with {@link io.simplekafka.ErrorCode#INVALID_REQUEST}
+     *     for negative, offline, or unassigned broker data, a follower LEO beyond the leader LEO, a
+     *     leader LEO moving backward, or a follower LEO moving backward within the same epoch; with
      *     {@link io.simplekafka.ErrorCode#FENCED_EPOCH} for a stale epoch
      * @throws ExerciseNotImplementedException while the Step 22 exercise method is a skeleton
      */
@@ -79,7 +86,8 @@ public final class ReplicationTracker {
     /**
      * Step 22: remove non-leader ISR members with no caught-up timestamp or whose lag elapsed time
      * is at least {@code lagTimeoutMillis}; a zero timeout expires them immediately. When members
-     * are removed, reconsider the high watermark and signal waiters. See Step22Test and book step 22.
+     * are removed, reconsider the high watermark and signal waiters. See Step22Test and book step
+     * 22.
      *
      * @return immutable set of removed non-leader broker identifiers
      * @throws ExerciseNotImplementedException while the Step 22 exercise method is a skeleton
@@ -110,22 +118,6 @@ public final class ReplicationTracker {
 
     PartitionState state() {
         return state;
-    }
-
-    int configuredLeaderId() {
-        return initialLeaderId;
-    }
-
-    Set<Integer> configuredReplicas() {
-        return initialReplicas;
-    }
-
-    TimeSource clock() {
-        return clock;
-    }
-
-    long lagTimeoutMillis() {
-        return lagTimeoutMillis;
     }
 
     /**

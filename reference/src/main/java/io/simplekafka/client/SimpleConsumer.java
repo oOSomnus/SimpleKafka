@@ -149,7 +149,7 @@ public final class SimpleConsumer implements AutoCloseable {
             for (TopicPartition tp : partitions) {
                 Objects.requireNonNull(tp);
                 Long existing = positions.get(tp);
-                replacement.put(tp, existing == null ? null : existing);
+                replacement.put(tp, existing);
             }
         } catch (RuntimeException exception) {
             throw new CourseException(

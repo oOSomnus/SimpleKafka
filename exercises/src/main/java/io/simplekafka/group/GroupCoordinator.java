@@ -10,8 +10,10 @@ import io.simplekafka.model.OffsetKey;
 import io.simplekafka.model.TopicPartition;
 import io.simplekafka.support.TimeSource;
 
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.locks.ReentrantLock;
 
 /** Single-process, same-topic group membership, assignment, heartbeat, and generation fence. */
@@ -21,6 +23,7 @@ public final class GroupCoordinator implements AutoCloseable {
     private final TimeSource time;
     private final long sessionTimeoutMillis;
     private final ReentrantLock lock = new ReentrantLock();
+    private final Map<String, GroupState> groups = new TreeMap<>();
     private boolean closed;
 
     /**
@@ -59,8 +62,8 @@ public final class GroupCoordinator implements AutoCloseable {
      * @return the assignment for the current group generation
      * @throws IllegalStateException if this coordinator is closed
      * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} for invalid identifiers or a
-     *     group attempting to join a second topic, or with
-     *     {@link ErrorCode#UNKNOWN_TOPIC_OR_PARTITION} if the topic is unknown
+     *     group attempting to join a second topic, or with {@link
+     *     ErrorCode#UNKNOWN_TOPIC_OR_PARTITION} if the topic is unknown
      * @throws ExerciseNotImplementedException while the Step 18 exercise method is a skeleton
      */
     public GroupAssignment join(String group, String member, String topic) {
@@ -70,8 +73,8 @@ public final class GroupCoordinator implements AutoCloseable {
     /**
      * Step 18: remove a known member and rebalance every remaining member. Unknown members fail;
      * each leave increments the generation, while an empty group retains its generation counter and
-     * committed offsets. Test: Step18Test. Lesson:
-     * docs/book/chapters/05-consumer-groups.tex, Step 18.
+     * committed offsets. Test: Step18Test. Lesson: docs/book/chapters/05-consumer-groups.tex, Step
+     * 18.
      *
      * @param group consumer group identifier
      * @param member member identifier to remove
@@ -109,9 +112,9 @@ public final class GroupCoordinator implements AutoCloseable {
      *
      * @param token member token whose heartbeat is being recorded
      * @throws IllegalStateException if this coordinator is closed
-     * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} for a null token, with
-     *     {@link ErrorCode#UNKNOWN_MEMBER} for an unknown member, or with
-     *     {@link ErrorCode#ILLEGAL_GENERATION} for a stale generation
+     * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} for a null token, with {@link
+     *     ErrorCode#UNKNOWN_MEMBER} for an unknown member, or with {@link
+     *     ErrorCode#ILLEGAL_GENERATION} for a stale generation
      * @throws ExerciseNotImplementedException while the Step 19 exercise method is a skeleton
      */
     public void heartbeat(GroupToken token) {
@@ -119,13 +122,13 @@ public final class GroupCoordinator implements AutoCloseable {
     }
 
     /**
-     * Step 19: expire all due members and return sorted group/member identifiers. Expiry occurs when
-     * elapsed time is at least {@code sessionTimeoutMillis}; each expired member advances the
+     * Step 19: expire all due members and return sorted group/member identifiers. Expiry occurs
+     * when elapsed time is at least {@code sessionTimeoutMillis}; each expired member advances the
      * generation, and an empty group retains its generation counter and committed offsets. Test:
      * Step19Test. Lesson: docs/book/chapters/05-consumer-groups.tex, Step 19.
      *
-     * @return the expired identifiers in ascending group-then-member order, formatted as
-     *     {@code group/member}
+     * @return the expired identifiers in ascending group-then-member order, formatted as {@code
+     *     group/member}
      * @throws IllegalStateException if this coordinator is closed
      * @throws ExerciseNotImplementedException while the Step 19 exercise method is a skeleton
      */
@@ -134,18 +137,18 @@ public final class GroupCoordinator implements AutoCloseable {
     }
 
     /**
-     * Step 20: fence a token by current generation and verify that its member owns the partition.
-     * A stale token returns {@link ErrorCode#ILLEGAL_GENERATION}; a current non-owner returns
-     * {@link ErrorCode#NOT_ASSIGNED}. Test: Step20Test. Lesson:
-     * docs/book/chapters/05-consumer-groups.tex, Step 20.
+     * Step 20: fence a token by current generation and verify that its member owns the partition. A
+     * stale token returns {@link ErrorCode#ILLEGAL_GENERATION}; a current non-owner returns {@link
+     * ErrorCode#NOT_ASSIGNED}. Test: Step20Test. Lesson: docs/book/chapters/05-consumer-groups.tex,
+     * Step 20.
      *
      * @param token group member token to validate
      * @param tp partition being accessed
      * @throws IllegalStateException if this coordinator is closed
      * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} if {@code tp} is null, with
-     *     {@link ErrorCode#UNKNOWN_MEMBER} for an unknown member, with
-     *     {@link ErrorCode#ILLEGAL_GENERATION} for a stale token, or with
-     *     {@link ErrorCode#NOT_ASSIGNED} if the member does not own {@code tp}
+     *     {@link ErrorCode#UNKNOWN_MEMBER} for an unknown member, with {@link
+     *     ErrorCode#ILLEGAL_GENERATION} for a stale token, or with {@link ErrorCode#NOT_ASSIGNED}
+     *     if the member does not own {@code tp}
      * @throws ExerciseNotImplementedException while the Step 20 exercise method is a skeleton
      */
     public void validate(GroupToken token, TopicPartition tp) {
@@ -162,11 +165,10 @@ public final class GroupCoordinator implements AutoCloseable {
      * @param nextOffset committed next offset
      * @param store durable offset store receiving the commit
      * @throws IllegalStateException if this coordinator is closed
-     * @throws NullPointerException if {@code key} or {@code store} is null
-     * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} if the token or partition does
-     *     not match the key, with {@link ErrorCode#ILLEGAL_GENERATION} for a stale token, with
-     *     {@link ErrorCode#NOT_ASSIGNED} if the member does not own the partition, or with the
-     *     error raised by the offset store
+     * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} for null {@code tp}, {@code
+     *     key}, or {@code store}, or if the token or partition does not match the key, with {@link
+     *     ErrorCode#ILLEGAL_GENERATION} for a stale token, with {@link ErrorCode#NOT_ASSIGNED} if
+     *     the member does not own the partition, or with the error raised by the offset store
      * @throws ExerciseNotImplementedException while the delegated Step 20 validation method is a
      *     skeleton
      */
@@ -179,12 +181,11 @@ public final class GroupCoordinator implements AutoCloseable {
         lock.lock();
         try {
             ensureOpen();
-            Objects.requireNonNull(key, "key");
-            Objects.requireNonNull(store, "store");
-            if (token == null
-                    || tp == null
-                    || !token.group().equals(key.group())
-                    || !tp.equals(key.tp())) {
+            if (tp == null || key == null || store == null)
+                throw new CourseException(
+                        ErrorCode.INVALID_REQUEST,
+                        "topic-partition, offset key, and store are required");
+            if (token == null || !token.group().equals(key.group()) || !tp.equals(key.tp())) {
                 throw new CourseException(
                         ErrorCode.INVALID_REQUEST, "commit token and offset key do not match");
             }
@@ -207,9 +208,30 @@ public final class GroupCoordinator implements AutoCloseable {
     public void close() {
         lock.lock();
         try {
+            if (closed) return;
             closed = true;
+            groups.clear();
         } finally {
             lock.unlock();
+        }
+    }
+
+    private static final class GroupState {
+        private final String topic;
+        private final TreeMap<String, MemberState> members = new TreeMap<>();
+        private int generation;
+        private GroupAssignment assignment = new GroupAssignment(0, Map.of());
+
+        private GroupState(String topic) {
+            this.topic = topic;
+        }
+    }
+
+    private static final class MemberState {
+        private long lastHeartbeat;
+
+        private MemberState(long lastHeartbeat) {
+            this.lastHeartbeat = lastHeartbeat;
         }
     }
 }

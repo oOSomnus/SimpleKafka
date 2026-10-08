@@ -12,8 +12,8 @@ public record AppendResult(long firstOffset, long nextOffset) {
      *
      * @param firstOffset inclusive first offset in the range
      * @param nextOffset exclusive next offset after the range
-     * @throws IllegalArgumentException if {@code firstOffset} is negative or
-     *     {@code nextOffset} is less than {@code firstOffset}
+     * @throws IllegalArgumentException if {@code firstOffset} is negative or {@code nextOffset} is
+     *     less than {@code firstOffset}
      */
     public AppendResult {
         if (firstOffset < 0 || nextOffset < firstOffset)

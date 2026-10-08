@@ -43,8 +43,8 @@ public final class SimpleProducer implements AutoCloseable {
      * @param partitioner partition-selection strategy
      * @param batchRecords number of records per partition batch before automatic send
      * @throws NullPointerException if {@code client} or {@code partitioner} is null
-     * @throws CourseException with {@link io.simplekafka.ErrorCode#INVALID_REQUEST} if
-     *     {@code batchRecords} is not positive
+     * @throws CourseException with {@link io.simplekafka.ErrorCode#INVALID_REQUEST} if {@code
+     *     batchRecords} is not positive
      */
     public SimpleProducer(RpcClient client, Partitioner partitioner, int batchRecords) {
         this.client = Objects.requireNonNull(client, "client");
@@ -62,8 +62,8 @@ public final class SimpleProducer implements AutoCloseable {
      * @param partitioner partition-selection strategy
      * @param batchRecords number of records per partition batch before automatic send
      * @throws NullPointerException if {@code router} or {@code partitioner} is null
-     * @throws CourseException with {@link io.simplekafka.ErrorCode#INVALID_REQUEST} if
-     *     {@code batchRecords} is not positive
+     * @throws CourseException with {@link io.simplekafka.ErrorCode#INVALID_REQUEST} if {@code
+     *     batchRecords} is not positive
      */
     public SimpleProducer(MetadataRouter router, Partitioner partitioner, int batchRecords) {
         this.client = null;
@@ -82,9 +82,8 @@ public final class SimpleProducer implements AutoCloseable {
      * @throws IllegalStateException if this producer is closed
      * @throws NullPointerException if {@code acks} is null
      * @throws CourseException with {@link io.simplekafka.ErrorCode#INVALID_REQUEST} if records are
-     *     pending or the timeout is negative, or with
-     *     {@link io.simplekafka.ErrorCode#REQUEST_TIMEOUT} if a previous produce outcome is
-     *     unknown
+     *     pending or the timeout is negative, or with {@link
+     *     io.simplekafka.ErrorCode#REQUEST_TIMEOUT} if a previous produce outcome is unknown
      */
     public void setAcks(Acks acks, long timeoutMillis) {
         ensureOpen();
@@ -102,8 +101,8 @@ public final class SimpleProducer implements AutoCloseable {
     /**
      * Step 13: route and batch one record, sending a partition batch when it reaches the configured
      * threshold. Per-partition FIFO order is preserved; a failed produce is not retried and leaves
-     * the outcome unknown. Test: Step13Test. Lesson:
-     * docs/book/chapters/04-client-offset.tex, Step 13.
+     * the outcome unknown. Test: Step13Test. Lesson: docs/book/chapters/04-client-offset.tex, Step
+     * 13.
      *
      * @param topic topic to produce to
      * @param key nullable key used for partition routing
@@ -111,9 +110,9 @@ public final class SimpleProducer implements AutoCloseable {
      * @param timestamp nonnegative record timestamp
      * @throws IllegalStateException if this producer is closed
      * @throws CourseException with {@link io.simplekafka.ErrorCode#INVALID_REQUEST} for an invalid
-     *     topic, null value, negative timestamp, or oversized record; with
-     *     {@link io.simplekafka.ErrorCode#UNKNOWN_TOPIC_OR_PARTITION} if the topic is unknown; or
-     *     with {@link io.simplekafka.ErrorCode#REQUEST_TIMEOUT} if a produce outcome is unknown
+     *     topic, null value, negative timestamp, or oversized record; with {@link
+     *     io.simplekafka.ErrorCode#UNKNOWN_TOPIC_OR_PARTITION} if the topic is unknown; or with
+     *     {@link io.simplekafka.ErrorCode#REQUEST_TIMEOUT} if a produce outcome is unknown
      * @throws ExerciseNotImplementedException while the Step 13 exercise method is a skeleton
      */
     public void send(String topic, byte[] key, byte[] value, long timestamp) {
@@ -122,9 +121,8 @@ public final class SimpleProducer implements AutoCloseable {
 
     /**
      * Step 13: send every nonempty partition batch and return receipts accumulated since the prior
-     * flush, then clear that receipt accumulation. Flush is explicit; the default policy is
-     * {@link Acks#LEADER}. Test: Step13Test. Lesson:
-     * docs/book/chapters/04-client-offset.tex, Step 13.
+     * flush, then clear that receipt accumulation. Flush is explicit; the default policy is {@link
+     * Acks#LEADER}. Test: Step13Test. Lesson: docs/book/chapters/04-client-offset.tex, Step 13.
      *
      * @return an unmodifiable list of receipts produced since the preceding flush
      * @throws IllegalStateException if this producer is closed
@@ -148,8 +146,8 @@ public final class SimpleProducer implements AutoCloseable {
     }
 
     /**
-     * Closes the producer, clears pending batches, receipts, and cached metadata, and closes only an
-     * owned RPC client. A borrowed router remains open; repeated calls have no effect.
+     * Closes the producer, clears pending batches, receipts, and cached metadata, and closes only
+     * an owned RPC client. A borrowed router remains open; repeated calls have no effect.
      */
     @Override
     public void close() {

@@ -40,8 +40,8 @@ public final class SegmentLog implements AutoCloseable {
      * @param path path of the new segment file
      * @param baseOffset first offset represented by this segment
      * @return the open segment
-     * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} for a null path, negative base,
-     *     or existing file, or with {@link ErrorCode#STORAGE_ERROR} if creation fails
+     * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} for a null path, negative
+     *     base, or existing file, or with {@link ErrorCode#STORAGE_ERROR} if creation fails
      */
     public static SegmentLog create(Path path, long baseOffset) {
         validatePathAndBase(path, baseOffset);
@@ -64,37 +64,36 @@ public final class SegmentLog implements AutoCloseable {
     }
 
     /**
-     * Opens a segment for reading and writing, then recovers its next offset from its contents.
-     * If recovery fails, closes the segment before rethrowing the failure.
+     * Opens a segment for reading and writing, then recovers its next offset from its contents. If
+     * recovery fails, closes the segment before rethrowing the failure.
      *
      * @param path path of the existing segment file
      * @param baseOffset first offset represented by this segment
      * @return the recovered open segment
      * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} for a null path or negative
-     *     base, with {@link ErrorCode#CORRUPT_RECORD} for complete corrupt contents, or with
-     *     {@link ErrorCode#STORAGE_ERROR} if opening or recovery I/O fails; an I/O cause is
-     *     retained
+     *     base, with {@link ErrorCode#CORRUPT_RECORD} for complete corrupt contents, or with {@link
+     *     ErrorCode#STORAGE_ERROR} if opening or recovery I/O fails; an I/O cause is retained
      * @throws ExerciseNotImplementedException if recovery reaches the unfinished Step 4 method
      */
     public static SegmentLog open(Path path, long baseOffset) {
         validatePathAndBase(path, baseOffset);
+        FileChannel channel;
         try {
-            FileChannel channel =
-                    FileChannel.open(path, StandardOpenOption.READ, StandardOpenOption.WRITE);
-            SegmentLog segment = new SegmentLog(path, channel, baseOffset);
-            try {
-                segment.recover();
-                return segment;
-            } catch (RuntimeException exception) {
-                try {
-                    segment.close();
-                } catch (RuntimeException closeFailure) {
-                    exception.addSuppressed(closeFailure);
-                }
-                throw exception;
-            }
+            channel = FileChannel.open(path, StandardOpenOption.READ, StandardOpenOption.WRITE);
         } catch (IOException exception) {
             throw storageError("open segment " + path, exception);
+        }
+        SegmentLog segment = new SegmentLog(path, channel, baseOffset);
+        try {
+            segment.recover();
+            return segment;
+        } catch (RuntimeException exception) {
+            try {
+                segment.close();
+            } catch (RuntimeException closeFailure) {
+                exception.addSuppressed(closeFailure);
+            }
+            throw exception;
         }
     }
 
@@ -141,10 +140,10 @@ public final class SegmentLog implements AutoCloseable {
      * @param maxBytes maximum encoded bytes to return
      * @return the records within both limits
      * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} for a negative, out-of-file,
-     *     non-boundary, or skipping hint or a nonpositive limit; with
-     *     {@link ErrorCode#OFFSET_OUT_OF_RANGE} when {@code offset} is outside this segment, with
-     *     {@link ErrorCode#CORRUPT_RECORD} for corrupt stored contents, or with
-     *     {@link ErrorCode#STORAGE_ERROR} for storage failure or a closed segment
+     *     non-boundary, or skipping hint or a nonpositive limit; with {@link
+     *     ErrorCode#OFFSET_OUT_OF_RANGE} when {@code offset} is outside this segment, with {@link
+     *     ErrorCode#CORRUPT_RECORD} for corrupt stored contents, or with {@link
+     *     ErrorCode#STORAGE_ERROR} for storage failure or a closed segment
      * @throws ExerciseNotImplementedException while the Step 3 exercise method is a skeleton
      */
     public List<LogRecord> readFrom(
@@ -230,7 +229,8 @@ public final class SegmentLog implements AutoCloseable {
             long fileSize = channel.size();
             long position = 0;
             long expectedOffset = baseOffset;
-            while (position < fileSize && expectedOffset < offset) {
+            while (position < fileSize) {
+                if (expectedOffset == offset) break;
                 RecordAt found = readRecordAt(position, fileSize);
                 if (found.record().offset() != expectedOffset)
                     throw new CourseException(
@@ -252,7 +252,7 @@ public final class SegmentLog implements AutoCloseable {
     }
 
     private RecordAt readRecordAt(long position, long fileSize) throws IOException {
-        if (fileSize - position < Integer.BYTES)
+        if (position < 0 || position >= fileSize || fileSize - position < Integer.BYTES)
             throw new CourseException(
                     ErrorCode.CORRUPT_RECORD, "segment ends in an incomplete record header");
         ByteBuffer lengthBuffer = ByteBuffer.allocate(Integer.BYTES).order(ByteOrder.BIG_ENDIAN);
@@ -262,15 +262,16 @@ public final class SegmentLog implements AutoCloseable {
         if (length < RecordCodec.MIN_LENGTH || length > RecordCodec.MAX_LENGTH)
             throw new CourseException(
                     ErrorCode.CORRUPT_RECORD, "segment contains an invalid record length");
-        int bytes = Integer.BYTES + length;
-        if (fileSize - position < bytes)
+        int totalBytes = Integer.BYTES + length;
+        if (fileSize - position < totalBytes)
             throw new CourseException(
                     ErrorCode.CORRUPT_RECORD, "segment ends in an incomplete record body");
-        ByteBuffer encoded = ByteBuffer.allocate(bytes).order(ByteOrder.BIG_ENDIAN);
+        ByteBuffer encoded = ByteBuffer.allocate(totalBytes).order(ByteOrder.BIG_ENDIAN);
         encoded.putInt(length);
         ChannelIO.readFully(channel, encoded, position + Integer.BYTES);
         encoded.flip();
-        return new RecordAt(RecordCodec.decode(encoded), bytes);
+        LogRecord record = RecordCodec.decode(encoded);
+        return new RecordAt(record, totalBytes);
     }
 
     private void ensureOpen() {

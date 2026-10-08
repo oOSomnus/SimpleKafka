@@ -30,9 +30,9 @@ public final class SparseIndex implements AutoCloseable {
 
     /**
      * Opens or creates the index file, creating its parent directories. Existing entries are loaded
-     * only when the file length is a multiple of 16 bytes, the first entry is
-     * {@code (baseOffset, 0)}, and later offsets advance by {@code intervalRecords} with strictly
-     * increasing byte positions; otherwise, the index file is truncated to zero.
+     * only when the file length is a multiple of 16 bytes, the first entry is {@code (baseOffset,
+     * 0)}, and later offsets advance by {@code intervalRecords} with strictly increasing byte
+     * positions; otherwise, the index file is truncated to zero.
      *
      * @param path index file path
      * @param baseOffset base offset of the corresponding segment
@@ -106,26 +106,14 @@ public final class SparseIndex implements AutoCloseable {
      * See Step05Test and book step 5.
      *
      * @param logFile segment log file to scan
-     * @param baseOffset base offset that must match this index
+     * @param requestedBaseOffset base offset that must match this index
      * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} for a null log file or
      *     mismatched base, with {@link ErrorCode#CORRUPT_RECORD} for invalid segment contents, or
      *     with {@link ErrorCode#STORAGE_ERROR} if index or log I/O fails
      * @throws ExerciseNotImplementedException while the Step 5 exercise method is a skeleton
      */
-    public synchronized void rebuild(Path logFile, long baseOffset) {
+    public synchronized void rebuild(Path logFile, long requestedBaseOffset) {
         throw new ExerciseNotImplementedException(5, "SparseIndex.rebuild");
-    }
-
-    void reset() {
-        ensureOpen();
-        try {
-            channel.truncate(0);
-            entries.clear();
-            lastObservedOffset = -1;
-            lastObservedPosition = -1;
-        } catch (IOException exception) {
-            throw storageError("reset sparse index", exception);
-        }
     }
 
     private void loadIfValid() throws IOException {
@@ -165,6 +153,21 @@ public final class SparseIndex implements AutoCloseable {
         }
     }
 
+    void reset() {
+        clearEntries();
+    }
+
+    private void clearEntries() {
+        try {
+            channel.truncate(0);
+        } catch (IOException exception) {
+            throw storageError("clear sparse index", exception);
+        }
+        entries.clear();
+        lastObservedOffset = -1;
+        lastObservedPosition = -1;
+    }
+
     Path path() {
         return path;
     }
@@ -182,8 +185,8 @@ public final class SparseIndex implements AutoCloseable {
     }
 
     /**
-     * Closes this index file; repeated calls have no effect. Open-state checks report
-     * {@link ErrorCode#STORAGE_ERROR} after closure.
+     * Closes this index file; repeated calls have no effect. Open-state checks report {@link
+     * ErrorCode#STORAGE_ERROR} after closure.
      *
      * @throws CourseException with {@link ErrorCode#STORAGE_ERROR} if closing the file fails
      */

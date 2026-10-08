@@ -28,10 +28,10 @@ import java.util.function.Function;
  * Loopback-only framed TCP server with one worker per connection.
  *
  * <p>Construction validates the bind address but does not bind a port; {@link #start()} performs
- * the bind. Each accepted connection has a 30-second read timeout. Nonzero request error fields
- * and unknown APIs are replied to with {@code INVALID_REQUEST}; {@link CourseException} codes and
- * messages are returned, {@link ExerciseNotImplementedException} becomes {@code STORAGE_ERROR},
- * and other request-time runtime failures become a generic {@code STORAGE_ERROR}. A reply encoding
+ * the bind. Each accepted connection has a 30-second read timeout. Nonzero request error fields and
+ * unknown APIs are replied to with {@code INVALID_REQUEST}; {@link CourseException} codes and
+ * messages are returned, {@link ExerciseNotImplementedException} becomes {@code STORAGE_ERROR}, and
+ * other request-time runtime failures become a generic {@code STORAGE_ERROR}. A reply encoding
  * failure falls back to {@code INVALID_REQUEST}; malformed or abruptly closed clients affect only
  * their own connection.
  */

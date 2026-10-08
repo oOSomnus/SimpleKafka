@@ -33,8 +33,8 @@ public enum Acks {
      *
      * @param id wire value to resolve
      * @return the matching acknowledgment mode
-     * @throws CourseException if {@code id} is not supported, with error code
-     *     {@link io.simplekafka.ErrorCode#INVALID_REQUEST}
+     * @throws CourseException if {@code id} is not supported, with error code {@link
+     *     io.simplekafka.ErrorCode#INVALID_REQUEST}
      */
     public static Acks fromWireId(short id) {
         for (Acks acks : values()) if (acks.wireId == id) return acks;

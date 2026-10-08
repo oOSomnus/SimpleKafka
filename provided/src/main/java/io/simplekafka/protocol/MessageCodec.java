@@ -193,8 +193,8 @@ public final class MessageCodec {
     }
 
     /**
-     * Decodes either a successful response body or the error message body selected by a frame
-     * error code.
+     * Decodes either a successful response body or the error message body selected by a frame error
+     * code.
      *
      * @param api course API identifier selecting the successful response type
      * @param frameError error value from the response frame header

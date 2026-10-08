@@ -35,6 +35,7 @@ jobs:
           ./gradlew :setup
           ./gradlew :setupBook
           ./gradlew :doctor
+          ./gradlew :verifySourceParity
           ./gradlew :compile
           ./gradlew :list
           COURSE_LANG=zh ./gradlew :list

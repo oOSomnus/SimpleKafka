@@ -88,6 +88,29 @@ tasks.register('validateCourse', Exec) {
     commandLine 'bash', 'scripts/course.sh', 'validate'
 }
 
+def registerSourceParityTask = { String taskName, List<String> arguments ->
+    tasks.register(taskName, Exec) {
+        group = 'verification'
+        description = taskName == 'sourceParitySelfTest'
+            ? 'Exercise the source parity checker with deterministic fixtures.'
+            : 'Verify reference/exercises structure against explicit exemptions.'
+        workingDir rootProject.projectDir
+        commandLine([new File(System.getProperty('java.home'), 'bin/java').absolutePath,
+            '--source', '21', 'scripts/SourceParity.java'] + arguments)
+        doFirst {
+            if (!JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_21)) {
+                throw new GradleException('Java 21 or newer is required for source parity verification')
+            }
+        }
+    }
+}
+
+registerSourceParityTask('sourceParitySelfTest', ['self-test'])
+registerSourceParityTask('verifySourceParity', ['verify', rootProject.projectDir.absolutePath])
+tasks.named('verifySourceParity') {
+    dependsOn tasks.named('sourceParitySelfTest'), tasks.named('validateCourse')
+}
+
 tasks.register('compile') {
     group = 'build'
     description = 'Compile the student skeleton and shared course tests.'
@@ -219,6 +242,7 @@ def javaSources = fileTree(rootProject.projectDir) {
     include 'reference/src/main/java/**/*.java'
     include 'provided/src/main/java/**/*.java'
     include 'tests/src/test/java/**/*.java'
+    include 'scripts/**/*.java'
 }
 
 def registerFormatTask = { String taskName, boolean checkOnly ->
@@ -270,7 +294,7 @@ tasks.named('assemble') {
 }
 
 tasks.named('check') {
-    dependsOn tasks.named('test')
+    dependsOn tasks.named('test'), tasks.named('verifySourceParity')
 }
 
 tasks.register('list', Exec) {

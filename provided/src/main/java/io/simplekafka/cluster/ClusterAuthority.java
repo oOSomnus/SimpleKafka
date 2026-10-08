@@ -130,8 +130,8 @@ public final class ClusterAuthority {
      * @param replicaIds broker identifiers assigned to the partition
      * @param minISR minimum number of in-sync replicas required for writes
      * @return the newly created mutable partition state
-     * @throws NullPointerException if {@code tp}, {@code replicaIds}, or an element of
-     *     {@code replicaIds} is {@code null}
+     * @throws NullPointerException if {@code tp}, {@code replicaIds}, or an element of {@code
+     *     replicaIds} is {@code null}
      * @throws IllegalArgumentException if the partition exists, replica identifiers are empty or
      *     duplicated, the leader is not a replica, {@code minISR} is out of range, or a replica is
      *     not registered

@@ -19,8 +19,8 @@ public final class ChannelIO {
      * @param destination buffer to fill; its position advances as bytes are read
      * @param position nonnegative file position at which to begin reading
      * @throws IllegalArgumentException if {@code position} is negative
-     * @throws NullPointerException if {@code destination} is {@code null}, or if {@code channel}
-     *     is {@code null} while the destination has remaining bytes
+     * @throws NullPointerException if {@code destination} is {@code null}, or if {@code channel} is
+     *     {@code null} while the destination has remaining bytes
      * @throws EOFException if end of file is reached before the destination is full
      * @throws IOException if a channel read fails
      */
@@ -40,11 +40,11 @@ public final class ChannelIO {
     }
 
     /**
-     * Writes all remaining bytes of {@code source} using positional writes beginning at
-     * {@code position}.
+     * Writes all remaining bytes of {@code source} using positional writes beginning at {@code
+     * position}.
      *
-     * <p>Each write advances the source buffer position, but does not change the channel's
-     * position or close the channel. The operation retries partial and zero-byte writes.
+     * <p>Each write advances the source buffer position, but does not change the channel's position
+     * or close the channel. The operation retries partial and zero-byte writes.
      *
      * @param channel channel to write to; it remains open
      * @param source buffer whose remaining bytes are written; its position advances as bytes are

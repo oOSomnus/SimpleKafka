@@ -180,8 +180,8 @@ public final class ClusterHarness implements AutoCloseable {
      * @param minISR minimum in-sync replica count for writes
      * @throws IllegalStateException if the harness has not been started or has been closed
      * @throws IllegalArgumentException if {@code topic} is not a valid topic identifier
-     * @throws CourseException with {@code INVALID_REQUEST} for invalid or changed configuration,
-     *     or with {@code NOT_LEADER} if any broker is offline
+     * @throws CourseException with {@code INVALID_REQUEST} for invalid or changed configuration, or
+     *     with {@code NOT_LEADER} if any broker is offline
      */
     public synchronized void createTopic(String topic, int partitions, int minISR) {
         requireStarted();
@@ -292,8 +292,8 @@ public final class ClusterHarness implements AutoCloseable {
      *
      * @param brokerId broker to restart
      * @throws IllegalStateException if the harness has not been started or has been closed
-     * @throws CourseException with {@code UNKNOWN_MEMBER} if the broker is unknown, or with
-     *     {@code STORAGE_ERROR} if the new server cannot bind
+     * @throws CourseException with {@code UNKNOWN_MEMBER} if the broker is unknown, or with {@code
+     *     STORAGE_ERROR} if the new server cannot bind
      */
     public synchronized void restartBroker(int brokerId) {
         requireStarted();
@@ -408,8 +408,8 @@ public final class ClusterHarness implements AutoCloseable {
      * Runs one TCP replication poll and closes its short-lived client afterward.
      *
      * <p>The client is closed after the poll, and this method does not report the resulting log end
-     * to the replication tracker. The exercise poll currently throws
-     * {@link io.simplekafka.ExerciseNotImplementedException}.
+     * to the replication tracker. The exercise poll currently throws {@link
+     * io.simplekafka.ExerciseNotImplementedException}.
      *
      * @param brokerId follower broker to poll
      * @param tp partition to replicate
@@ -439,8 +439,8 @@ public final class ClusterHarness implements AutoCloseable {
      *
      * <p>An online leader remains selected. Otherwise the intended election selects the lowest
      * online broker in the old ISR whose log end is at least the high watermark, advances the
-     * epoch, and makes only that broker the ISR. The exercise method currently throws
-     * {@link io.simplekafka.ExerciseNotImplementedException}.
+     * epoch, and makes only that broker the ISR. The exercise method currently throws {@link
+     * io.simplekafka.ExerciseNotImplementedException}.
      *
      * @param tp partition whose leader may be elected
      * @return metadata for the current or newly elected leader
@@ -504,8 +504,8 @@ public final class ClusterHarness implements AutoCloseable {
      * Attempts to admit an assigned replica to the ISR using its current recovery proof.
      *
      * <p>Admission requires proof for the current epoch that matches the local log identity,
-     * mutation version, and leader log end. The exercise method currently throws
-     * {@link io.simplekafka.ExerciseNotImplementedException}.
+     * mutation version, and leader log end. The exercise method currently throws {@link
+     * io.simplekafka.ExerciseNotImplementedException}.
      *
      * @param brokerId replica broker to admit
      * @param tp partition for which to attempt admission

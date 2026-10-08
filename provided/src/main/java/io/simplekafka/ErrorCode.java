@@ -39,8 +39,8 @@ public enum ErrorCode {
      *
      * @param wireId numeric error identifier to resolve
      * @return the matching error code
-     * @throws CourseException if {@code wireId} is not defined, with error code
-     *     {@link ErrorCode#INVALID_REQUEST}
+     * @throws CourseException if {@code wireId} is not defined, with error code {@link
+     *     ErrorCode#INVALID_REQUEST}
      */
     public static ErrorCode fromWireId(short wireId) {
         return Arrays.stream(values())

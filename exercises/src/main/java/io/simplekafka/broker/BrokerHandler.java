@@ -39,15 +39,15 @@ public final class BrokerHandler {
     }
 
     /**
-     * Step 12: dispatch supported broker request types and map failures to protocol replies.
-     * Course exceptions preserve their code and message; argument failures map to
-     * {@link io.simplekafka.ErrorCode#INVALID_REQUEST}, and other runtime failures map to
-     * {@link io.simplekafka.ErrorCode#STORAGE_ERROR}. Null or unsupported requests, missing
-     * optional group/offset services, empty produce batches, nonpositive fetch limits, and negative
-     * produce timeouts return INVALID_REQUEST; unknown partitions, stale epochs, nonleader access,
-     * and out-of-range fetch offsets return their corresponding error replies, not thrown
-     * exceptions. The handler grows with offsets, groups, token fencing, and replica fetch
-     * (Steps 15 and 18–21); see Step12Test and the course contracts.
+     * Step 12: dispatch supported broker request types and map failures to protocol replies. Course
+     * exceptions preserve their code and message; argument failures map to {@link
+     * io.simplekafka.ErrorCode#INVALID_REQUEST}, and other runtime failures map to {@link
+     * io.simplekafka.ErrorCode#STORAGE_ERROR}. Null or unsupported requests, missing optional
+     * group/offset services, empty produce batches, nonpositive fetch limits, and negative produce
+     * timeouts return INVALID_REQUEST; unknown partitions, stale epochs, nonleader access, and
+     * out-of-range fetch offsets return their corresponding error replies, not thrown exceptions.
+     * The handler grows with offsets, groups, token fencing, and replica fetch (Steps 15 and
+     * 18–21); see Step12Test and the course contracts.
      *
      * @param request request to dispatch
      * @return a success reply or an error reply carrying the mapped error code and message

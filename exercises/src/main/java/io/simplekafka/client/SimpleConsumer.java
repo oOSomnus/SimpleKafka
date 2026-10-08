@@ -77,8 +77,8 @@ public final class SimpleConsumer implements AutoCloseable {
     }
 
     /**
-     * Step 14: set the local next-fetch position for an assigned partition; seeking does not commit,
-     * and a rejected seek leaves all positions unchanged. Test: Step14Test. Lesson:
+     * Step 14: set the local next-fetch position for an assigned partition; seeking does not
+     * commit, and a rejected seek leaves all positions unchanged. Test: Step14Test. Lesson:
      * docs/book/chapters/04-client-offset.tex, Step 14.
      *
      * @param tp assigned partition to reposition
@@ -144,9 +144,9 @@ public final class SimpleConsumer implements AutoCloseable {
     }
 
     /**
-     * Step 15: commit each assigned next-fetch position without committing during poll. Each request
-     * carries the current group token (null for a manual consumer); commits may move backward and
-     * server rejection propagates unchanged. Test: Step15Test. Lesson:
+     * Step 15: commit each assigned next-fetch position without committing during poll. Each
+     * request carries the current group token (null for a manual consumer); commits may move
+     * backward and server rejection propagates unchanged. Test: Step15Test. Lesson:
      * docs/book/chapters/04-client-offset.tex, Step 15.
      *
      * @throws IllegalStateException if this consumer is closed

@@ -1,5 +1,7 @@
 package io.simplekafka.replication;
 
+import io.simplekafka.CourseException;
+import io.simplekafka.ErrorCode;
 import io.simplekafka.ExerciseNotImplementedException;
 import io.simplekafka.cluster.ReplicaState;
 import io.simplekafka.model.TopicPartition;
@@ -17,16 +19,19 @@ public final class FollowerReplicator {
     private final ReplicaState replicaState;
 
     /**
-     * Creates a follower poller using a borrowed RPC client; this instance does not close the client.
-     * The supplied broker ID is stored without checking it against the replica-state broker ID.
+     * Creates a follower poller using a borrowed RPC client; this instance does not close the
+     * client. The broker ID must be nonnegative and match the supplied replica-state broker ID.
      *
      * @param brokerId identifier sent in replica-fetch requests
      * @param tp partition replicated by this poller
      * @param log local follower log to append to
      * @param client RPC client owned by the caller
      * @param replicaState local role, liveness, and epoch state
-     * @throws NullPointerException if {@code tp}, {@code log}, {@code client}, or
-     *     {@code replicaState} is null
+     * @throws io.simplekafka.CourseException with {@link io.simplekafka.ErrorCode#INVALID_REQUEST}
+     *     if {@code brokerId} is negative
+     * @throws IllegalArgumentException if the replica-state broker ID differs from {@code brokerId}
+     * @throws NullPointerException if {@code tp}, {@code log}, {@code client}, or {@code
+     *     replicaState} is null
      */
     public FollowerReplicator(
             int brokerId,
@@ -34,11 +39,15 @@ public final class FollowerReplicator {
             PartitionLog log,
             RpcClient client,
             ReplicaState replicaState) {
+        if (brokerId < 0)
+            throw new CourseException(ErrorCode.INVALID_REQUEST, "broker id must be nonnegative");
         this.brokerId = brokerId;
         this.tp = Objects.requireNonNull(tp);
         this.log = Objects.requireNonNull(log);
         this.client = Objects.requireNonNull(client);
         this.replicaState = Objects.requireNonNull(replicaState);
+        if (replicaState.brokerId() != brokerId)
+            throw new IllegalArgumentException("replica state broker mismatch");
     }
 
     /**
@@ -49,14 +58,13 @@ public final class FollowerReplicator {
      * @param maxRecords positive maximum records requested from the leader
      * @param maxBytes positive maximum encoded bytes requested from the leader
      * @return the number of records appended to the local log
-     * @throws io.simplekafka.CourseException with
-     *     {@link io.simplekafka.ErrorCode#INVALID_REQUEST} for nonpositive limits or an unexpected
-     *     response body, with {@link io.simplekafka.ErrorCode#NOT_LEADER} if this replica is
-     *     offline or already the leader, with {@link io.simplekafka.ErrorCode#FENCED_EPOCH} if its
-     *     role or the response epoch is stale, or with
-     *     {@link io.simplekafka.ErrorCode#CORRUPT_RECORD} if the leader LEO or returned offsets
-     *     conflict with the local suffix; local log failures retain their storage error, and a
-     *     remote failure retains its remote error code and message
+     * @throws io.simplekafka.CourseException with {@link io.simplekafka.ErrorCode#INVALID_REQUEST}
+     *     for nonpositive limits or an unexpected response body, with {@link
+     *     io.simplekafka.ErrorCode#NOT_LEADER} if this replica is offline or already the leader,
+     *     with {@link io.simplekafka.ErrorCode#FENCED_EPOCH} if its role or the response epoch is
+     *     stale, or with {@link io.simplekafka.ErrorCode#CORRUPT_RECORD} if the leader LEO or
+     *     returned offsets conflict with the local suffix; local log failures retain their storage
+     *     error, and a remote failure retains its remote error code and message
      * @throws ExerciseNotImplementedException while the Step 21 exercise method is a skeleton
      */
     public int pollOnce(int maxRecords, int maxBytes) {

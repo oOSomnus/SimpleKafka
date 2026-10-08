@@ -19,9 +19,8 @@ public final class RoundRobinAssignor {
      * @param partitions topic partitions to distribute
      * @param members consumer member identifiers
      * @return an unmodifiable member-to-partitions map with unmodifiable partition lists
-     * @throws io.simplekafka.CourseException with
-     *     {@link io.simplekafka.ErrorCode#INVALID_REQUEST} for null inputs or elements, or a member
-     *     identifier outside the 1–255 UTF-8 byte range
+     * @throws io.simplekafka.CourseException with {@link io.simplekafka.ErrorCode#INVALID_REQUEST}
+     *     for null inputs or elements, or a member identifier outside the 1–255 UTF-8 byte range
      * @throws ExerciseNotImplementedException while the Step 17 exercise method is a skeleton
      */
     public Map<String, List<TopicPartition>> assign(

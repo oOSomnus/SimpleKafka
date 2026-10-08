@@ -15,8 +15,8 @@ public record Endpoint(String host, int port) {
      * @param host host string
      * @param port port number
      * @throws NullPointerException if {@code host} is null
-     * @throws IllegalArgumentException if {@code host} is blank or {@code port} is outside
-     *     {@code 0..65535}
+     * @throws IllegalArgumentException if {@code host} is blank or {@code port} is outside {@code
+     *     0..65535}
      */
     public Endpoint {
         Objects.requireNonNull(host, "host");

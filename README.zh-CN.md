@@ -6,60 +6,36 @@
 
 ## 环境
 
-支持 Linux、macOS 与 Windows WSL2，x86_64 和 arm64；不支持原生 Windows。Gradle 9.8.1 Wrapper 需要 Java 17+；Java 编译、测试和 demo 任务需要 Java 21+ JDK。脚本使用 Bash 3.2+、`find`、`awk`、`curl` 与 `sha256sum` 或 `shasum`；准备 Tectonic 还需要 `tar` 和 `install`。无需安装系统 Gradle。SDKMAN 是可选的 Java 管理器；项目不会自动切换 JDK、安装系统软件或依赖作者本机路径。
+支持 Linux、macOS 与 Windows WSL2，x86_64 和 arm64；不支持原生 Windows。使用 Java 21+ JDK，无需安装系统 Gradle。
+
+## 快速开始
 
 ```sh
-./gradlew :setup       # 通过 Gradle 解析并校验 JUnit
-./gradlew :setupBook   # 单独准备固定版本的 Tectonic PDF 引擎
+./gradlew :setup
 ./gradlew :doctor
-./gradlew :list        # 默认显示英文
+./gradlew :list
 ./gradlew :compile
-./gradlew :format       # 格式化项目 Java 源码
-./gradlew :formatCheck  # 检查格式，不改写文件
 ```
 
-课程测试不需要 PDF 引擎或系统字体。`./gradlew :setup` 通过 Gradle 依赖校验解析 JUnit 1.11.4；首次解析需要联网。`./gradlew --offline` 控制 Gradle 依赖访问。PDF 首次编译还会下载 TeX bundle 与其中的 Latin Modern/Fandol 字体。只有准备 PDF 引擎时才使用 `curl`、`tar`、`install` 和 checksum 工具。Noto、fontconfig、xelatex、latexmk、Maven 命令行工具、Docker 与 Kafka 均不是项目依赖。
-
-`:format` 和 `:formatCheck` 覆盖 `exercises/`、`reference/`、`provided/`、`tests/` 中的 Java 源码；格式化使用四空格缩进，不重排超长字符串字面量。
+`:compile` 检查学生骨架和测试能否编译，不代表练习已经实现。
 
 ## 渐进式步骤
 
-课程共 7 章、28 步。`exercises/` 是唯一默认学习源码；`reference/` 保存隔离的完整答案，默认学生 classpath 不会加载它。在支持 Gradle 的 IDE/LSP 中，从仓库根目录导入 Wrapper 项目，以 `exercises` 作为学习项目，不要把 `reference` 加入学生 classpath。每步测试以前置步骤累计运行；章节末步骤为 4、8、12、16、20、24、28。README 与课程清单默认英文，也可查看中文步骤列表：
+课程共 7 章、28 步。`exercises/` 是学生学习源码；`reference/` 保存隔离的完整答案，不会加载到学生 classpath。在 IDE 中从仓库根目录导入 Gradle Wrapper 项目，并以 `exercises` 为学习项目。测试会累计运行前置步骤；章节末步骤为 4、8、12、16、20、24、28。
 
 ```sh
-COURSE_LANG=zh ./gradlew :list
+./gradlew :test -Pstep=1        # 空练习骨架预期失败
+./gradlew :test -Pstep=12       # 累计运行第 1–12 步
+./gradlew :stepTest -Pstep=12   # 仅诊断第 12 步，不代表整章完成
+COURSE_LANG=zh ./gradlew :list  # 显示中文步骤标题
 ```
 
-```sh
-./gradlew :test -Pstep=1        # 累计检查第 1 步；骨架尚未填写时预期失败
-./gradlew :test -Pstep=12       # 累计检查第 1–12 步
-./gradlew :stepTest -Pstep=12   # 只定位第 12 步，不代表整章通过
-./gradlew :referenceTest -Pstep=28
-./gradlew :referenceDemo
-./gradlew :book                 # 英文 PDF: build/book/en/simpleKafka.pdf
-COURSE_LANG=zh ./gradlew :book  # 中文 PDF: build/book/zh/simpleKafka-zh.pdf
-```
+## 文档
 
-测试报告始终使用英文，与 `COURSE_LANG` 无关。课程任务通过 `JavaExec` 运行自定义 runner，输出纯文本，JUnit XML 保存在 `build/student/reports/` 或 `build/reference/reports/`。标准 `:exercises:test` 与 `:reference:test` 支持 IDE 和 `--tests` 调试；其 XML/HTML 报告位于 `build/<mode>/gradle-test-results/` 与 `build/<mode>/gradle-test-reports/`。runner 保留 `NO_COLOR` / `TERM=dumb` 颜色门禁。
-
-`docs/book/simpleKafka.tex` 是默认英文教材入口，`docs/book/simpleKafka-zh.tex` 是完整中文教材入口。两种语言都在线构建后，可用 `BOOK_OFFLINE=1 ./gradlew :book --offline` 与 `COURSE_LANG=zh BOOK_OFFLINE=1 ./gradlew :book --offline` 离线编译。`BOOK_OFFLINE=1` 控制 TeX bundle cache；Gradle `--offline` 独立控制 Gradle 依赖。Wrapper 启动 PDF 任务仍需要 Java 17+，但 `:book` 不编译 Java，也不解析 JUnit。
-
-## 严格行为覆盖
-
-课程验收不是按测试数量或行覆盖率定义；每个 `StepNNTest` 都通过 `course/steps.tsv` 加入对应闯关，章节末命令累计运行本章及所有前置步骤。
-
-| 章节/步骤 | 主要行为与边界 |
-|---|---|
-| 记录与日志，1–4 | 独立磁盘 golden bytes；CRC、非法字段、buffer 前缀和最大记录边界；批量追加连续 offset；hint 与总预算；非零 base、截断尾恢复和完整损坏拒绝。 |
-| 索引与分段，5–8 | 独立索引字节、坏索引重建；滚段、跨段记录/字节预算、并发批次；保留边界、截断重开和固定 seed 状态模型。 |
-| 路由与 TCP，9–12 | CRC/null-key 路由、topic 元数据隔离；固定帧字节、短读/截断/错误 wire 字段；原始 socket 请求错误、无副作用与后续连接存活。 |
-| 客户端与 offsets，13–16 | 生产批次和分区顺序、已追加但响应超时不重放；consumer 总预算/position/error 边界；offset 回退与重启恢复；处理异常和 commit 失败时的至少一次重复窗口。 |
-| 消费组，17–20 | 字典序分配及空成员；generation、heartbeat、expiry；真实 TCP token FETCH/COMMIT 的 stale/future/non-owner/empty-owner 拒绝；撤销/保留 position、重启后恢复提交位点。 |
-| 复制与确认，21–24 | 真实 TCP 拉取、保留起点/离线 requester 拒绝、坏响应和飞行中角色/epoch 变化；ISR/HW 单调与精确超时边界（含负超时拒绝）；ACK 等待/中断；并发追加、HW 可见性和跨 broker 进度。 |
-| 选举与修复，25–28 | 干净候选资格与无候选状态不变；HW 冲突、分批修复与失败 proof；metadata 刷新不重放、topic/partition 路由隔离；proof 绑定日志身份/version，截短或同 LEO 改写不能 admission，保留清理后 proof 失效、重新 admission deadline 初始化，以及 minISR/HW/waiter 恢复。 |
-
-该矩阵覆盖 simpleKafka 明确教学契约中的代表性边界，不是对所有输入的穷举、模糊测试、Kafka 生产实现认证或 100% 代码覆盖率声明。执行完整答案验收：`./gradlew :referenceTest -Pstep=28`；学生完成相应步骤后运行 `./gradlew :test -Pstep=N`，将 `N` 替换为当前要验收的步骤号。
+- [工程指南](docs/engineering.zh-CN.md) · [English engineering guide](docs/engineering.md)
+- 教材源码：[英文入口](docs/book/simpleKafka.tex) · [中文入口](docs/book/simpleKafka-zh.tex)
+- 第 00 章：[English guide](docs/book/en/chapters/00-guide.tex) · [中文指南](docs/book/zh/chapters/00-guide.tex)
 
 ## 边界
 
-课程实现的是核心机制子集：单 JVM 内的三个真实 TCP broker、独立磁盘日志和线程、一个可信教学 authority。它不提供 KRaft/controller 高可用、网络分区下共识、Kafka wire compatibility、事务、幂等生产者、压缩、compaction、生产级消费组再平衡或端到端 exactly-once。教材逐步解释这些边界。
+课程实现的是教学机制子集：单 JVM 内的三个真实 TCP broker、独立磁盘日志和线程、一个可信 authority。它不兼容 Kafka wire protocol，也不提供 controller 高可用、网络分区下共识、事务、幂等生产者、压缩、compaction、生产级消费组再平衡或端到端 exactly-once。教材会逐步解释这些边界。

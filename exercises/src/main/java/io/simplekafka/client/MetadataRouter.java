@@ -140,7 +140,8 @@ public final class MetadataRouter implements AutoCloseable {
      * @return the broker's reply
      * @throws IllegalStateException if this router is closed
      * @throws NullPointerException if {@code request} is null
-     * @throws CourseException if client creation or the RPC call fails, or no bootstrap is available
+     * @throws CourseException if client creation or the RPC call fails, or no bootstrap is
+     *     available
      */
     public Messages.Reply controlCall(Messages.Request request) {
         ensureOpen();
@@ -222,8 +223,8 @@ public final class MetadataRouter implements AutoCloseable {
     }
 
     /**
-     * Closes each unique cached RPC client once and clears client and metadata caches; repeated calls
-     * have no effect. Subsequent routed operations fail with {@link IllegalStateException}.
+     * Closes each unique cached RPC client once and clears client and metadata caches; repeated
+     * calls have no effect. Subsequent routed operations fail with {@link IllegalStateException}.
      */
     @Override
     public void close() {

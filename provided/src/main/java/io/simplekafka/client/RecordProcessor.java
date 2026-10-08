@@ -6,9 +6,9 @@ import io.simplekafka.model.TopicPartition;
 /**
  * Callback for processing records retrieved by a {@link ProcessingLoop}.
  *
- * <p>The loop invokes callbacks in partition and offset order and commits only after every
- * callback in the poll succeeds. A failed callback is propagated without committing that poll, so
- * its side effects may be repeated when the records are retried.
+ * <p>The loop invokes callbacks in partition and offset order and commits only after every callback
+ * in the poll succeeds. A failed callback is propagated without committing that poll, so its side
+ * effects may be repeated when the records are retried.
  */
 @FunctionalInterface
 public interface RecordProcessor {

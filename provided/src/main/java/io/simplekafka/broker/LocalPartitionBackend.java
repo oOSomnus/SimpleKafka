@@ -34,11 +34,10 @@ public final class LocalPartitionBackend implements PartitionBackend {
      * @param timeoutMillis timeout value; negative values are rejected, while nonnegative values
      *     are not used to wait
      * @return the offset range returned by the log append
-     * @throws CourseException if {@code epoch} is not {@code 0}
-     *     ({@link ErrorCode#FENCED_EPOCH}), {@code timeoutMillis} is negative
-     *     ({@link ErrorCode#INVALID_REQUEST}), the batch is invalid
-     *     ({@link ErrorCode#INVALID_REQUEST} or {@link ErrorCode#CORRUPT_RECORD}), or storage
-     *     fails ({@link ErrorCode#STORAGE_ERROR})
+     * @throws CourseException if {@code epoch} is not {@code 0} ({@link ErrorCode#FENCED_EPOCH}),
+     *     {@code timeoutMillis} is negative ({@link ErrorCode#INVALID_REQUEST}), the batch is
+     *     invalid ({@link ErrorCode#INVALID_REQUEST} or {@link ErrorCode#CORRUPT_RECORD}), or
+     *     storage fails ({@link ErrorCode#STORAGE_ERROR})
      */
     @Override
     public AppendResult produce(
@@ -60,11 +59,10 @@ public final class LocalPartitionBackend implements PartitionBackend {
      *     four-byte length prefix; must be positive
      * @param epoch expected epoch, which must be {@code 0}
      * @return the records returned by the partition log
-     * @throws CourseException if {@code epoch} is not {@code 0}
-     *     ({@link ErrorCode#FENCED_EPOCH}), arguments are invalid
-     *     ({@link ErrorCode#INVALID_REQUEST}), {@code offset} is outside the retained log range
-     *     ({@link ErrorCode#OFFSET_OUT_OF_RANGE}), or storage fails / the log is corrupt
-     *     ({@link ErrorCode#STORAGE_ERROR} or {@link ErrorCode#CORRUPT_RECORD})
+     * @throws CourseException if {@code epoch} is not {@code 0} ({@link ErrorCode#FENCED_EPOCH}),
+     *     arguments are invalid ({@link ErrorCode#INVALID_REQUEST}), {@code offset} is outside the
+     *     retained log range ({@link ErrorCode#OFFSET_OUT_OF_RANGE}), or storage fails / the log is
+     *     corrupt ({@link ErrorCode#STORAGE_ERROR} or {@link ErrorCode#CORRUPT_RECORD})
      */
     @Override
     public List<LogRecord> fetch(long offset, int maxRecords, int maxBytes, int epoch) {
@@ -77,8 +75,8 @@ public final class LocalPartitionBackend implements PartitionBackend {
      * Returns the first offset currently retained by the partition log.
      *
      * @return the inclusive beginning of the retained offset range
-     * @throws CourseException if the underlying log cannot be read
-     *     ({@link ErrorCode#STORAGE_ERROR})
+     * @throws CourseException if the underlying log cannot be read ({@link
+     *     ErrorCode#STORAGE_ERROR})
      */
     @Override
     public long logStartOffset() {
@@ -89,8 +87,8 @@ public final class LocalPartitionBackend implements PartitionBackend {
      * Returns the next offset that would be assigned by an append.
      *
      * @return the exclusive end of the local log
-     * @throws CourseException if the underlying log cannot be read
-     *     ({@link ErrorCode#STORAGE_ERROR})
+     * @throws CourseException if the underlying log cannot be read ({@link
+     *     ErrorCode#STORAGE_ERROR})
      */
     @Override
     public long logEndOffset() {
@@ -101,8 +99,8 @@ public final class LocalPartitionBackend implements PartitionBackend {
      * Returns the local log end as its high watermark; this backend has no replication lag.
      *
      * @return the exclusive boundary of the committed prefix, equal to {@link #logEndOffset()}
-     * @throws CourseException if the underlying log cannot be read
-     *     ({@link ErrorCode#STORAGE_ERROR})
+     * @throws CourseException if the underlying log cannot be read ({@link
+     *     ErrorCode#STORAGE_ERROR})
      */
     @Override
     public long highWatermark() {

@@ -15,8 +15,8 @@ public final class Partitioner {
      * @param key nullable key bytes; null selects round-robin routing
      * @param partitions positive number of available partitions
      * @return the selected partition index
-     * @throws io.simplekafka.CourseException with
-     *     {@link io.simplekafka.ErrorCode#INVALID_REQUEST} if {@code partitions} is nonpositive
+     * @throws io.simplekafka.CourseException with {@link io.simplekafka.ErrorCode#INVALID_REQUEST}
+     *     if {@code partitions} is nonpositive
      * @throws ExerciseNotImplementedException while the Step 9 exercise method is a skeleton
      */
     public int choose(byte[] key, int partitions) {

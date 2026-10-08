@@ -17,9 +17,9 @@ public final class SingleBrokerMain {
      *
      * <p>A {@code --help} token anywhere in the arguments prints usage and returns without starting
      * the broker. Otherwise arguments are {@code --option value} pairs using {@code --data-dir}
-     * (default {@code build/single-broker}), {@code --broker-id} (default {@code 1}), {@code --port}
-     * (default {@code 0}, OS-assigned), {@code --topic} (default {@code demo}), and
-     * {@code --partitions} (default {@code 1}). Duplicate, unknown, missing, or invalid values are
+     * (default {@code build/single-broker}), {@code --broker-id} (default {@code 1}), {@code
+     * --port} (default {@code 0}, OS-assigned), {@code --topic} (default {@code demo}), and {@code
+     * --partitions} (default {@code 1}). Duplicate, unknown, missing, or invalid values are
      * rejected. After startup it prints the listening endpoint and waits until the shutdown hook
      * runs or this thread is interrupted; the broker is closed on return or interruption.
      *

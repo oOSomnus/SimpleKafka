@@ -1,0 +1,118 @@
+kind	side	path	symbol	reason
+method-body	both	io/simplekafka/broker/BrokerHandler.java	BrokerHandler#handle(Messages.Request)	Step 12: editable method body
+method-body	both	io/simplekafka/broker/PartitionCatalog.java	PartitionCatalog#createTopic(String,int)	Step 10: editable method body
+method-body	both	io/simplekafka/broker/PartitionCatalog.java	PartitionCatalog#metadata(String)	Step 10: editable method body
+method-body	both	io/simplekafka/client/GroupConsumer.java	GroupConsumer#commitSync()	Step 20: editable method body
+method-body	both	io/simplekafka/client/GroupConsumer.java	GroupConsumer#poll(int,int)	Step 20: editable method body
+method-body	both	io/simplekafka/client/GroupConsumer.java	GroupConsumer#subscribe(String)	Step 20: editable method body
+method-body	both	io/simplekafka/client/MetadataRouter.java	MetadataRouter#call(TopicPartition,Messages.Request)	Step 27: editable method body
+method-body	both	io/simplekafka/client/MetadataRouter.java	MetadataRouter#refresh(String)	Step 27: editable method body
+method-body	both	io/simplekafka/client/Partitioner.java	Partitioner#choose(byte[],int)	Step 09: editable method body
+method-body	both	io/simplekafka/client/ProcessingLoop.java	ProcessingLoop#runOnce(int,int)	Step 16: editable method body
+method-body	both	io/simplekafka/client/SimpleConsumer.java	SimpleConsumer#assign(Collection<TopicPartition>)	Step 14: editable method body
+method-body	both	io/simplekafka/client/SimpleConsumer.java	SimpleConsumer#commitSync()	Step 15: editable method body
+method-body	both	io/simplekafka/client/SimpleConsumer.java	SimpleConsumer#poll(int,int)	Step 14: editable method body
+method-body	both	io/simplekafka/client/SimpleConsumer.java	SimpleConsumer#resume(Collection<TopicPartition>)	Step 15: editable method body
+method-body	both	io/simplekafka/client/SimpleConsumer.java	SimpleConsumer#seek(TopicPartition,long)	Step 14: editable method body
+method-body	both	io/simplekafka/client/SimpleProducer.java	SimpleProducer#flush()	Step 13: editable method body
+method-body	both	io/simplekafka/client/SimpleProducer.java	SimpleProducer#send(String,byte[],byte[],long)	Step 13: editable method body
+method-body	both	io/simplekafka/group/GroupCoordinator.java	GroupCoordinator#assignment(String,String)	Step 18: editable method body
+method-body	both	io/simplekafka/group/GroupCoordinator.java	GroupCoordinator#expire()	Step 19: editable method body
+method-body	both	io/simplekafka/group/GroupCoordinator.java	GroupCoordinator#heartbeat(GroupToken)	Step 19: editable method body
+method-body	both	io/simplekafka/group/GroupCoordinator.java	GroupCoordinator#join(String,String,String)	Step 18: editable method body
+method-body	both	io/simplekafka/group/GroupCoordinator.java	GroupCoordinator#leave(String,String)	Step 18: editable method body
+method-body	both	io/simplekafka/group/GroupCoordinator.java	GroupCoordinator#validate(GroupToken,TopicPartition)	Step 20: editable method body
+method-body	both	io/simplekafka/group/OffsetStore.java	OffsetStore#commit(OffsetKey,long)	Step 15: editable method body
+method-body	both	io/simplekafka/group/OffsetStore.java	OffsetStore#fetch(OffsetKey)	Step 15: editable method body
+method-body	both	io/simplekafka/group/RoundRobinAssignor.java	RoundRobinAssignor#assign(List<TopicPartition>,List<String>)	Step 17: editable method body
+method-body	both	io/simplekafka/protocol/FrameCodec.java	FrameCodec#read(InputStream)	Step 11: editable method body
+method-body	both	io/simplekafka/protocol/FrameCodec.java	FrameCodec#write(OutputStream,Frame)	Step 11: editable method body
+method-body	both	io/simplekafka/replication/AckPolicy.java	AckPolicy#await(AppendResult,Acks,int,long)	Step 23: editable method body
+method-body	both	io/simplekafka/replication/AckPolicy.java	AckPolicy#validateBeforeAppend(Acks)	Step 23: editable method body
+method-body	both	io/simplekafka/replication/FollowerReplicator.java	FollowerReplicator#pollOnce(int,int)	Step 21: editable method body
+method-body	both	io/simplekafka/replication/LeaderElection.java	LeaderElection#checkLeader(int,TopicPartition,int)	Step 25: editable method body
+method-body	both	io/simplekafka/replication/LeaderElection.java	LeaderElection#elect(TopicPartition)	Step 25: editable method body
+method-body	both	io/simplekafka/replication/ReplicaAdmission.java	ReplicaAdmission#tryAdd(int,TopicPartition,int)	Step 28: editable method body
+method-body	both	io/simplekafka/replication/ReplicaReconciler.java	ReplicaReconciler#reconcile(int)	Step 26: editable method body
+method-body	both	io/simplekafka/replication/ReplicatedPartition.java	ReplicatedPartition#fetch(long,int,int,int)	Step 24: editable method body
+method-body	both	io/simplekafka/replication/ReplicatedPartition.java	ReplicatedPartition#produce(List<RecordData>,Acks,int,long)	Step 24: editable method body
+method-body	both	io/simplekafka/replication/ReplicationTracker.java	ReplicationTracker#advanceHighWatermark()	Step 22: editable method body
+method-body	both	io/simplekafka/replication/ReplicationTracker.java	ReplicationTracker#expireLagging()	Step 22: editable method body
+method-body	both	io/simplekafka/replication/ReplicationTracker.java	ReplicationTracker#report(int,int,long)	Step 22: editable method body
+method-body	both	io/simplekafka/storage/PartitionLog.java	PartitionLog#append(List<RecordData>)	Step 06: editable method body
+method-body	both	io/simplekafka/storage/PartitionLog.java	PartitionLog#deleteBefore(long)	Step 07: editable method body
+method-body	both	io/simplekafka/storage/PartitionLog.java	PartitionLog#read(long,int,int)	Step 06: editable method body
+method-body	both	io/simplekafka/storage/PartitionLog.java	PartitionLog#truncateTo(long)	Step 08: editable method body
+method-body	both	io/simplekafka/storage/RecordCodec.java	RecordCodec#decode(ByteBuffer)	Step 01: editable method body
+method-body	both	io/simplekafka/storage/RecordCodec.java	RecordCodec#encode(LogRecord)	Step 01: editable method body
+method-body	both	io/simplekafka/storage/SegmentLog.java	SegmentLog#append(List<RecordData>)	Step 02: editable method body
+method-body	both	io/simplekafka/storage/SegmentLog.java	SegmentLog#readFrom(long,long,int,int)	Step 03: editable method body
+method-body	both	io/simplekafka/storage/SegmentLog.java	SegmentLog#recover()	Step 04: editable method body
+method-body	both	io/simplekafka/storage/SparseIndex.java	SparseIndex#add(long,long)	Step 05: editable method body
+method-body	both	io/simplekafka/storage/SparseIndex.java	SparseIndex#floor(long)	Step 05: editable method body
+method-body	both	io/simplekafka/storage/SparseIndex.java	SparseIndex#rebuild(Path,long)	Step 05: editable method body
+private-member	exercises	io/simplekafka/client/SimpleProducer.java	SimpleProducer#field:explicitFlushRequired	implementation-only private member
+private-member	reference	io/simplekafka/broker/BrokerHandler.java	BrokerHandler#assignment(Messages.GroupAssignmentRequest)	implementation-only private member
+private-member	reference	io/simplekafka/broker/BrokerHandler.java	BrokerHandler#commit(Messages.CommitOffsetRequest)	implementation-only private member
+private-member	reference	io/simplekafka/broker/BrokerHandler.java	BrokerHandler#fetch(Messages.FetchRequest)	implementation-only private member
+private-member	reference	io/simplekafka/broker/BrokerHandler.java	BrokerHandler#fetchOffset(Messages.FetchOffsetRequest)	implementation-only private member
+private-member	reference	io/simplekafka/broker/BrokerHandler.java	BrokerHandler#heartbeat(Messages.HeartbeatRequest)	implementation-only private member
+private-member	reference	io/simplekafka/broker/BrokerHandler.java	BrokerHandler#invalid(String)	implementation-only private member
+private-member	reference	io/simplekafka/broker/BrokerHandler.java	BrokerHandler#join(Messages.JoinGroupRequest)	implementation-only private member
+private-member	reference	io/simplekafka/broker/BrokerHandler.java	BrokerHandler#leave(Messages.LeaveGroupRequest)	implementation-only private member
+private-member	reference	io/simplekafka/broker/BrokerHandler.java	BrokerHandler#metadata(Messages.MetadataRequest)	implementation-only private member
+private-member	reference	io/simplekafka/broker/BrokerHandler.java	BrokerHandler#produce(Messages.ProduceRequest)	implementation-only private member
+private-member	reference	io/simplekafka/broker/BrokerHandler.java	BrokerHandler#replicaFetch(Messages.ReplicaFetchRequest)	implementation-only private member
+private-member	reference	io/simplekafka/broker/BrokerHandler.java	BrokerHandler#requireGroups()	implementation-only private member
+private-member	reference	io/simplekafka/broker/BrokerHandler.java	BrokerHandler#requireLeader(TopicPartition,int,PartitionBackend)	implementation-only private member
+private-member	reference	io/simplekafka/broker/BrokerHandler.java	BrokerHandler#requireOffsets()	implementation-only private member
+private-member	reference	io/simplekafka/broker/BrokerHandler.java	BrokerHandler#requirePartition(TopicPartition)	implementation-only private member
+private-member	reference	io/simplekafka/broker/BrokerHandler.java	BrokerHandler#safeMessage(Throwable)	implementation-only private member
+private-member	reference	io/simplekafka/broker/PartitionCatalog.java	PartitionCatalog#validateTopic(String)	implementation-only private member
+private-member	reference	io/simplekafka/client/GroupConsumer.java	GroupConsumer#ensureSubscribed()	implementation-only private member
+private-member	reference	io/simplekafka/client/GroupConsumer.java	GroupConsumer#refreshAssignment()	implementation-only private member
+private-member	reference	io/simplekafka/client/MetadataRouter.java	MetadataRouter#findMetadata(TopicPartition)	implementation-only private member
+private-member	reference	io/simplekafka/client/Partitioner.java	Partitioner#field:nextNullPartition	implementation-only private member
+private-member	reference	io/simplekafka/client/ProcessingLoop.java	ProcessingLoop#field:failed	implementation-only private member
+private-member	reference	io/simplekafka/client/SimpleConsumer.java	SimpleConsumer#directMetadata(String)	implementation-only private member
+private-member	reference	io/simplekafka/client/SimpleConsumer.java	SimpleConsumer#partitionMetadata(TopicPartition)	implementation-only private member
+private-member	reference	io/simplekafka/client/SimpleConsumer.java	SimpleConsumer#validateFetch(List<LogRecord>,long,int,int)	implementation-only private member
+private-member	reference	io/simplekafka/client/SimpleProducer.java	SimpleProducer#metadata(String)	implementation-only private member
+private-member	reference	io/simplekafka/client/SimpleProducer.java	SimpleProducer#partitionMetadata(TopicPartition)	implementation-only private member
+private-member	reference	io/simplekafka/client/SimpleProducer.java	SimpleProducer#sendBatch(TopicPartition)	implementation-only private member
+private-member	reference	io/simplekafka/group/GroupCoordinator.java	GroupCoordinator#assign(int,Map<String, MemberState>,List<TopicPartition>)	implementation-only private member
+private-member	reference	io/simplekafka/group/GroupCoordinator.java	GroupCoordinator#nextGeneration(int)	implementation-only private member
+private-member	reference	io/simplekafka/group/GroupCoordinator.java	GroupCoordinator#requireCurrentMember(GroupToken)	implementation-only private member
+private-member	reference	io/simplekafka/group/GroupCoordinator.java	GroupCoordinator#topicPartitions(String)	implementation-only private member
+private-member	reference	io/simplekafka/group/GroupCoordinator.java	GroupCoordinator#unknownMember(String,String)	implementation-only private member
+private-member	reference	io/simplekafka/group/GroupCoordinator.java	GroupCoordinator#validateGroupMember(String,String)	implementation-only private member
+private-member	reference	io/simplekafka/group/GroupCoordinator.java	GroupCoordinator#validateIdentifiers(String,String,String)	implementation-only private member
+private-member	reference	io/simplekafka/group/OffsetStore.java	OffsetStore#ensureOpen()	implementation-only private member
+private-member	reference	io/simplekafka/protocol/FrameCodec.java	FrameCodec#field:MAX_FRAME_LENGTH	implementation-only private member
+private-member	reference	io/simplekafka/protocol/FrameCodec.java	FrameCodec#field:MIN_FRAME_LENGTH	implementation-only private member
+private-member	reference	io/simplekafka/protocol/FrameCodec.java	FrameCodec#field:VERSION	implementation-only private member
+private-member	reference	io/simplekafka/protocol/FrameCodec.java	FrameCodec#invalid(String)	implementation-only private member
+private-member	reference	io/simplekafka/protocol/FrameCodec.java	FrameCodec#readFully(InputStream,byte[],int,int)	implementation-only private member
+private-member	reference	io/simplekafka/protocol/FrameCodec.java	FrameCodec#readInt(InputStream)	implementation-only private member
+private-member	reference	io/simplekafka/protocol/FrameCodec.java	FrameCodec#readRequired(InputStream)	implementation-only private member
+private-member	reference	io/simplekafka/protocol/FrameCodec.java	FrameCodec#readShort(InputStream)	implementation-only private member
+private-member	reference	io/simplekafka/protocol/FrameCodec.java	FrameCodec#writeInt(OutputStream,int)	implementation-only private member
+private-member	reference	io/simplekafka/protocol/FrameCodec.java	FrameCodec#writeShort(OutputStream,short)	implementation-only private member
+private-member	reference	io/simplekafka/replication/FollowerReplicator.java	FollowerReplicator#remoteFailure(Messages.Reply)	implementation-only private member
+private-member	reference	io/simplekafka/replication/ReplicaAdmission.java	ReplicaAdmission#advanceHighWatermark(PartitionState)	implementation-only private member
+private-member	reference	io/simplekafka/replication/ReplicaReconciler.java	ReplicaReconciler#checkEpoch(int)	implementation-only private member
+private-member	reference	io/simplekafka/replication/ReplicaReconciler.java	ReplicaReconciler#fetchCapturedPrefix(int,long)	implementation-only private member
+private-member	reference	io/simplekafka/replication/ReplicaReconciler.java	ReplicaReconciler#field:FETCH_BYTES	implementation-only private member
+private-member	reference	io/simplekafka/replication/ReplicaReconciler.java	ReplicaReconciler#field:FETCH_RECORDS	implementation-only private member
+private-member	reference	io/simplekafka/replication/ReplicaReconciler.java	ReplicaReconciler#firstMismatch(List<LogRecord>,List<LogRecord>,long,long)	implementation-only private member
+private-member	reference	io/simplekafka/replication/ReplicaReconciler.java	ReplicaReconciler#readPrefix(long)	implementation-only private member
+private-member	reference	io/simplekafka/replication/ReplicaReconciler.java	ReplicaReconciler#sameRecord(LogRecord,LogRecord)	implementation-only private member
+private-member	reference	io/simplekafka/replication/ReplicationTracker.java	ReplicationTracker#advanceHighWatermarkLocked()	implementation-only private member
+private-member	reference	io/simplekafka/replication/ReplicationTracker.java	ReplicationTracker#elapsedAtLeast(long,long,long)	implementation-only private member
+private-member	reference	io/simplekafka/storage/PartitionLog.java	PartitionLog#closeEntry(SegmentEntry)	implementation-only private member
+private-member	reference	io/simplekafka/storage/PartitionLog.java	PartitionLog#deleteEntryFiles(SegmentEntry)	implementation-only private member
+private-member	reference	io/simplekafka/storage/SegmentLog.java	SegmentLog#truncateTail(long)	implementation-only private member
+private-member	reference	io/simplekafka/storage/SegmentLog.java	SegmentLog#type:Hint	implementation-only private member
+private-member	reference	io/simplekafka/storage/SegmentLog.java	SegmentLog#validateHint(long,long,long)	implementation-only private member
+private-member	reference	io/simplekafka/storage/SparseIndex.java	SparseIndex#readRecordAt(FileChannel,long,long)	implementation-only private member
+private-member	reference	io/simplekafka/storage/SparseIndex.java	SparseIndex#type:RecordAt	implementation-only private member

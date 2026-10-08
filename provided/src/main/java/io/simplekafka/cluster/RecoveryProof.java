@@ -8,8 +8,8 @@ import java.util.Objects;
 /**
  * In-JVM evidence that one replica's complete prefix was reconciled against a captured leader log.
  *
- * <p>Admission matches this proof to the exact local log object and captured mutation version;
- * a later local mutation makes the proof stale.
+ * <p>Admission matches this proof to the exact local log object and captured mutation version; a
+ * later local mutation makes the proof stale.
  *
  * @param brokerId broker that owns the reconciled replica
  * @param tp partition whose prefix was reconciled
