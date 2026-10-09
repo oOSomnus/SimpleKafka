@@ -30,6 +30,25 @@ The course has 8 chapters and 31 steps. `exercises/` is the student workspace; `
 COURSE_LANG=zh ./gradlew :list  # show Chinese step titles
 ```
 
+## Other Gradle tasks
+
+The commands above cover the quick start and student progression. Other project tasks:
+
+| Command | Purpose |
+|---|---|
+| `./gradlew :demo` · `./gradlew :consistencyDemo` | Run the student TCP/failover and consistency scenarios. |
+| `./gradlew :referenceTest -Pstep=N` | Run the reference contract cumulatively through step `N`. |
+| `./gradlew :referenceDemo` · `./gradlew :referenceConsistencyDemo` | Run the corresponding reference scenarios. |
+| `./gradlew :validateCourse` | Validate the bilingual course manifest. |
+| `./gradlew :verifySourceParity` · `./gradlew :sourceParitySelfTest` | Check exercise/reference structure and run the parity checker's fixture self-test. |
+| `./gradlew :format` · `./gradlew :formatCheck` | Format Java sources or check formatting without modifying files. |
+| `./gradlew :exercises:test --tests 'io.simplekafka.course.Step31Test'` · `./gradlew :reference:test --tests 'io.simplekafka.course.Step31Test'` | Use Gradle's standard JUnit test tasks for IDE or test-filter debugging. |
+| `./gradlew :assemble` · `./gradlew :check` · `./gradlew :build` · `./gradlew :clean` | Run Gradle lifecycle tasks; `:clean` removes generated build outputs, not the committed textbooks. |
+
+For textbook tool setup, run `./gradlew :setupBook`; the bilingual PDF/EPUB build commands are in [Prebuilt textbooks](#prebuilt-textbooks).
+
+`./gradlew tasks --all` lists project and Gradle-generated tasks.
+
 ## Documentation
 
 - [Engineering guide](docs/engineering.md) · [简体中文工程指南](docs/engineering.zh-CN.md)

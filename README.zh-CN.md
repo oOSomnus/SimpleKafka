@@ -30,6 +30,25 @@
 COURSE_LANG=zh ./gradlew :list  # 显示中文步骤标题
 ```
 
+## 其他 Gradle 任务
+
+以上命令涵盖快速开始与学生逐步验收。项目中的其他常用任务：
+
+| 命令 | 用途 |
+|---|---|
+| `./gradlew :demo` · `./gradlew :consistencyDemo` | 运行学生实现的 TCP/failover 与一致性场景。 |
+| `./gradlew :referenceTest -Pstep=N` | 累计运行参考实现至第 `N` 步的契约测试。 |
+| `./gradlew :referenceDemo` · `./gradlew :referenceConsistencyDemo` | 运行对应的参考实现演示场景。 |
+| `./gradlew :validateCourse` | 校验双语课程清单。 |
+| `./gradlew :verifySourceParity` · `./gradlew :sourceParitySelfTest` | 检查练习与参考实现的结构，并运行 parity 检查器的 fixture 自测。 |
+| `./gradlew :format` · `./gradlew :formatCheck` | 格式化 Java 源码，或只检查格式而不修改文件。 |
+| `./gradlew :exercises:test --tests 'io.simplekafka.course.Step31Test'` · `./gradlew :reference:test --tests 'io.simplekafka.course.Step31Test'` | 使用 Gradle 标准 JUnit 测试任务，供 IDE 或筛选测试排查问题。 |
+| `./gradlew :assemble` · `./gradlew :check` · `./gradlew :build` · `./gradlew :clean` | 运行 Gradle 生命周期任务；`:clean` 删除生成的构建输出，不删除已提交的教材。 |
+
+准备教材工具使用 `./gradlew :setupBook`；双语 PDF/EPUB 编译命令见[已编译教材](#已编译教材)。
+
+运行 `./gradlew tasks --all` 可查看项目任务与 Gradle 生成的任务。
+
 ## 文档
 
 - [工程指南](docs/engineering.zh-CN.md) · [English engineering guide](docs/engineering.md)
