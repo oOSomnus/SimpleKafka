@@ -4,6 +4,7 @@ import io.simplekafka.CourseException;
 import io.simplekafka.ErrorCode;
 import io.simplekafka.ExerciseNotImplementedException;
 import io.simplekafka.model.LogRecord;
+import io.simplekafka.model.ProducerStamp;
 import io.simplekafka.model.RecordData;
 
 import java.nio.ByteBuffer;
@@ -53,7 +54,11 @@ public final class RecordCodec {
             throw new CourseException(ErrorCode.INVALID_REQUEST, "record data is invalid");
         byte[] key = data.key();
         byte[] value = data.value();
-        long length = MIN_LENGTH + (key == null ? 0L : key.length) + (long) value.length;
+        long length =
+                MIN_LENGTH
+                        + (key == null ? 0L : key.length)
+                        + (long) value.length
+                        + (data.producerStamp() == null ? 0 : ProducerStamp.ENCODED_OVERHEAD);
         if (length > MAX_LENGTH)
             throw new CourseException(
                     ErrorCode.INVALID_REQUEST, "encoded record exceeds the 1 MiB limit");

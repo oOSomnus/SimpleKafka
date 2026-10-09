@@ -10,11 +10,12 @@ Shell 脚本需要 Bash 3.2+、`find`、`awk`、`curl`，以及 `sha256sum` 或 
 
 ## 任务与测试报告
 
-`:compile` 编译学生骨架和共享测试；编译成功不代表练习方法已实现。`./gradlew :test -Pstep=N` 累计运行学生契约至第 `N` 步。`./gradlew :stepTest -Pstep=N` 仅运行单步以便定位问题，不代表章节验收。章节末累计步骤为 4、8、12、16、20、24、28。完整答案契约和真实 TCP/failover 场景：
+`:compile` 编译学生骨架和共享测试；编译成功不代表练习方法已实现。`./gradlew :test -Pstep=N` 累计运行学生契约至第 `N` 步。`./gradlew :stepTest -Pstep=N` 仅运行单步以便定位问题，不代表章节验收。课程共 8 章、31 步；章节末累计步骤为 4、8、12、16、20、24、28、31。完整答案契约和真实 TCP 场景：
 
 ```sh
-./gradlew :referenceTest -Pstep=28
+./gradlew :referenceTest -Pstep=31
 ./gradlew :referenceDemo
+./gradlew :referenceConsistencyDemo
 ```
 
 课程任务通过 `JavaExec` 运行 `CourseTestRunner`，输出纯文本，并将旧格式 JUnit XML 写入 `build/student/reports/` 或 `build/reference/reports/`。标准 `:exercises:test` 与 `:reference:test` 仍可用于 IDE 和 `--tests` 调试；其 XML/HTML 报告位于 `build/<mode>/gradle-test-results/` 与 `build/<mode>/gradle-test-reports/`。报告始终使用英文，与 `COURSE_LANG` 无关。runner 保留 `NO_COLOR` / `TERM=dumb` 颜色门禁。
@@ -70,6 +71,6 @@ COURSE_LANG=zh BOOK_OFFLINE=1 ./gradlew :book --offline
 | [客户端与 offsets](book/zh/chapters/04-client-offset.tex)，13–16 | producer 批次和分区顺序；追加后响应超时不重放；consumer 总预算、position 和错误边界；offset 回退与重启恢复；处理或 commit 失败后的至少一次重复窗口。 |
 | [消费组](book/zh/chapters/05-consumer-groups.tex)，17–20 | 字典序分配与空成员；generation、heartbeat 和 expiry；真实 TCP token FETCH/COMMIT 对 stale、future、non-owner、empty-owner 的拒绝；撤销/保留 position 与重启后 committed offset 恢复。 |
 | [复制与确认](book/zh/chapters/06-replication.tex)，21–24 | 真实 TCP 拉取、保留起点/离线 requester 拒绝、错误响应和飞行中角色/epoch 变化；ISR/HW 单调性与精确超时边界（含负超时拒绝）；ACK 等待/中断；并发追加、HW 可见性和跨 broker 进度。 |
-| [选举与修复](book/zh/chapters/07-failover.tex)，25–28 | 干净候选资格与无候选时状态不变；HW 冲突、批量修复和无效 proof；metadata 刷新不重放及 topic/partition 路由隔离；proof 绑定日志身份/version、截断或同 LEO 改写后失效、保留清理失效、readmission deadline，以及 minISR/HW/waiter 恢复。 |
+| [跨层一致性](book/zh/chapters/08-consistency.tex)，29–31 | producer ACK、broker 复制/HW、consumer position/commit 与 stale generation 的真实 TCP 故障窗口；stamped producer batch 身份、显式重试及磁盘恢复；回调重放时以 durable event id 去重。 |
 
-完整答案验收：`./gradlew :referenceTest -Pstep=28`。学生完成相应步骤后，用 `./gradlew :test -Pstep=N` 验收指定步骤。
+完整答案契约：`./gradlew :referenceTest -Pstep=31`；随后运行 demo：`./gradlew :referenceDemo` 与 `./gradlew :referenceConsistencyDemo`。学生完成对应步骤后，用 `./gradlew :test -Pstep=N` 验收指定步骤。

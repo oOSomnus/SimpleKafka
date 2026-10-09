@@ -4,6 +4,7 @@ import io.simplekafka.CourseException;
 import io.simplekafka.ErrorCode;
 import io.simplekafka.model.AppendResult;
 import io.simplekafka.model.LogRecord;
+import io.simplekafka.model.ProducerStamp;
 import io.simplekafka.model.RecordData;
 
 import java.io.IOException;
@@ -25,6 +26,7 @@ public final class SegmentLog implements AutoCloseable {
     private final ReentrantLock lock = new ReentrantLock();
     private final long baseOffset;
     private long nextOffset;
+    private ProducerStamp tailProducerStamp;
     private boolean closed;
 
     private SegmentLog(Path path, FileChannel channel, long baseOffset) {
@@ -104,6 +106,7 @@ public final class SegmentLog implements AutoCloseable {
             }
             channel.force(false);
             nextOffset = candidateNext;
+            tailProducerStamp = records.getLast().producerStamp();
             return new AppendResult(firstOffset, candidateNext);
         } catch (IOException exception) {
             throw storageError("append to segment " + path, exception);
@@ -170,6 +173,7 @@ public final class SegmentLog implements AutoCloseable {
         lock.lock();
         try {
             ensureOpen();
+            tailProducerStamp = null;
             long fileSize = channel.size();
             long position = 0;
             long expectedOffset = baseOffset;
@@ -196,6 +200,7 @@ public final class SegmentLog implements AutoCloseable {
                 if (found.record().offset() != expectedOffset)
                     throw new CourseException(
                             ErrorCode.CORRUPT_RECORD, "segment offsets are not contiguous");
+                tailProducerStamp = found.record().data().producerStamp();
                 position += found.bytes();
                 try {
                     expectedOffset = Math.addExact(expectedOffset, 1L);
@@ -222,6 +227,16 @@ public final class SegmentLog implements AutoCloseable {
         try {
             ensureOpen();
             return nextOffset;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    ProducerStamp tailProducerStamp() {
+        lock.lock();
+        try {
+            ensureOpen();
+            return tailProducerStamp;
         } finally {
             lock.unlock();
         }
@@ -254,12 +269,14 @@ public final class SegmentLog implements AutoCloseable {
             long fileSize = channel.size();
             long position = 0;
             long expectedOffset = baseOffset;
+            ProducerStamp retainedTail = null;
             while (position < fileSize) {
                 if (expectedOffset == offset) break;
                 RecordAt found = readRecordAt(position, fileSize);
                 if (found.record().offset() != expectedOffset)
                     throw new CourseException(
                             ErrorCode.CORRUPT_RECORD, "segment offsets are not contiguous");
+                retainedTail = found.record().data().producerStamp();
                 position += found.bytes();
                 expectedOffset++;
             }
@@ -269,6 +286,7 @@ public final class SegmentLog implements AutoCloseable {
             channel.truncate(position);
             channel.force(false);
             nextOffset = offset;
+            tailProducerStamp = retainedTail;
         } catch (IOException exception) {
             throw storageError("truncate segment " + path, exception);
         } finally {

@@ -2,6 +2,7 @@ package io.simplekafka.replication;
 
 import io.simplekafka.CourseException;
 import io.simplekafka.ErrorCode;
+import io.simplekafka.broker.IdempotentProduceBackend;
 import io.simplekafka.broker.PartitionBackend;
 import io.simplekafka.cluster.ClusterAuthority;
 import io.simplekafka.cluster.ClusterAuthority.PartitionState;
@@ -17,12 +18,14 @@ import java.util.List;
 import java.util.Objects;
 
 /** Leader-side partition operations backed by the local durable log and shared authority state. */
-public final class ReplicatedPartition implements PartitionBackend, ReplicaFetchBackend {
+public final class ReplicatedPartition
+        implements PartitionBackend, ReplicaFetchBackend, IdempotentProduceBackend {
     private final PartitionLog log;
     private final ReplicaState replicaState;
     private final ReplicationTracker tracker;
     private final AckPolicy ackPolicy;
     private final PartitionState state;
+    private final IdempotentAppender idempotentAppender;
 
     public ReplicatedPartition(
             io.simplekafka.model.TopicPartition tp,
@@ -35,6 +38,7 @@ public final class ReplicatedPartition implements PartitionBackend, ReplicaFetch
         this.replicaState = Objects.requireNonNull(replicaState, "replicaState");
         this.tracker = Objects.requireNonNull(tracker, "tracker");
         this.ackPolicy = Objects.requireNonNull(ackPolicy, "ackPolicy");
+        this.idempotentAppender = new IdempotentAppender(log);
         this.state = tracker.state();
         if (!tp.equals(tracker.tp()))
             throw new IllegalArgumentException("tracker partition mismatch");
@@ -66,6 +70,62 @@ public final class ReplicatedPartition implements PartitionBackend, ReplicaFetch
             state.lock.unlock();
         }
         ackPolicy.await(result, acks, epoch, AckPolicy.deadlineAfterMillis(timeoutMillis));
+        return result;
+    }
+
+    @Override
+    public AppendResult produceIdempotent(
+            List<RecordData> records,
+            Acks acks,
+            int leaderEpoch,
+            long timeoutMillis,
+            long producerId,
+            int producerEpoch,
+            long firstSequence) {
+        if (records == null || acks == null)
+            throw new CourseException(
+                    ErrorCode.INVALID_REQUEST, "invalid idempotent producer fields");
+        if (timeoutMillis < 0 || producerId < 0 || producerEpoch < 0 || firstSequence < 0)
+            throw new CourseException(
+                    ErrorCode.INVALID_REQUEST, "invalid idempotent producer fields");
+        if (records.isEmpty())
+            throw new CourseException(
+                    ErrorCode.INVALID_REQUEST, "producer batch must not be empty");
+        try {
+            Math.addExact(firstSequence, records.size());
+        } catch (ArithmeticException exception) {
+            throw new CourseException(
+                    ErrorCode.INVALID_REQUEST, "producer sequence range overflows", exception);
+        }
+        for (RecordData record : records) {
+            if (record == null || record.value() == null || record.producerStamp() != null)
+                throw new CourseException(
+                        ErrorCode.INVALID_REQUEST, "producer records must be valid and unstamped");
+            long encodedBytes =
+                    96L + (record.key() == null ? 0L : record.key().length) + record.value().length;
+            if (encodedBytes > 1_048_580L)
+                throw new CourseException(
+                        ErrorCode.INVALID_REQUEST, "producer record exceeds the 1 MiB limit");
+        }
+        ackPolicy.validateBeforeAppend(acks);
+        int brokerId = replicaState.brokerId();
+        boolean online = tracker.authority().isOnline(brokerId);
+        AppendResult result;
+        state.lock.lock();
+        try {
+            syncRoleUnderLock(online);
+            requireLeader(leaderEpoch, online);
+            if (acks == Acks.ALL && state.isr.size() < tracker.minISR())
+                throw new CourseException(
+                        ErrorCode.NOT_ENOUGH_REPLICAS, "ISR is below minISR before append");
+            long leoBefore = log.logEndOffset();
+            result = idempotentAppender.append(producerId, producerEpoch, firstSequence, records);
+            long leoAfter = log.logEndOffset();
+            if (leoAfter != leoBefore) tracker.report(brokerId, leaderEpoch, leoAfter);
+        } finally {
+            state.lock.unlock();
+        }
+        ackPolicy.await(result, acks, leaderEpoch, AckPolicy.deadlineAfterMillis(timeoutMillis));
         return result;
     }
 

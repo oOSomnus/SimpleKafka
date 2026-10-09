@@ -1,11 +1,11 @@
 \title{Understanding simpleKafka from Scratch\\\large A source-driven, incremental Java course}
 \author{simpleKafka teaching project}
-\date{Java 21 · 28 executable steps}
+\date{Java 21 · 31 executable steps}
 \hypersetup{pageanchor=false}
 \maketitle
 \hypersetup{pageanchor=true}
 \chapter*{Before you begin}
-This book develops the course through one map chapter and seven implementation chapters, covering 28 steps. You will build record formats, logs, network requests, consumer offsets, consumer groups, and controlled replica failover. This is neither “implementing Kafka” by connecting to a real Kafka cluster nor reducing production Kafka to a few empty terms. Every step maps to an explicit Java method, behavior tests, failure boundaries, and a reproducible command. Start at Step 1 and proceed in order; the book, course list, and test classes share the same numbering.
+This book develops the course through one map chapter and eight implementation chapters, covering 31 steps. You will build record formats, logs, network requests, consumer offsets, consumer groups, controlled replica failover, and consistency experiments across producers, brokers, and consumers. This is neither “implementing Kafka” by connecting to a real Kafka cluster nor reducing production Kafka to a few empty terms. Every step maps to an explicit Java method, behavior tests, failure boundaries, and a reproducible command. Start at Step 1 and proceed in order; the book, course manifest, and test classes share the same numbering.
 
 The course deliberately separates Java sources into three roots: \pathcode{provided/}, \pathcode{exercises/}, and \pathcode{reference/}. The student entry point compiles the first two; the reference entry point compiles the first and third. The two implementations have identical fully qualified class names, so never compile both answer roots together. The reference implementation is for comparison with the contract after you try a step, not a back door onto the student test classpath. Chapter 1 explains the development environment, how to read test failures, and the progression rules.
 \tableofcontents

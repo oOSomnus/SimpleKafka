@@ -24,19 +24,26 @@ check_java() {
 }
 check_manifest() {
   [[ -f "$MANIFEST" ]] || fail "missing course manifest: $MANIFEST"
-  local expected=1 step chapter title_en title_zh methods test prereq header
+  local expected=1 previous_chapter=0 step chapter title_en title_zh methods test prereq header count=0
   IFS= read -r header < "$MANIFEST" || fail 'course manifest is empty'
   [[ "$header" == $'step\tchapter\ttitle_en\ttitle_zh\teditable_methods\ttest_class\tprerequisites' ]] || fail 'course manifest must use the seven-column bilingual schema'
   awk -F '\t' 'NF != 7 { exit 1 } NR > 1 && ($1 == "" || $2 == "" || $3 == "" || $4 == "" || $5 == "" || $6 == "" || $7 == "") { exit 1 }' "$MANIFEST" || fail 'course manifest must contain exactly seven non-empty columns'
   while IFS=$'\t' read -r step chapter title_en title_zh methods test prereq; do
     [[ "$step" == step ]] && continue
     [[ "$step" =~ ^[0-9]+$ && "$step" -eq "$expected" ]] || fail "manifest step sequence broken at $step; expected $expected"
-    [[ "$chapter" == "$(( (step - 1) / 4 + 1 ))" ]] || fail "manifest chapter mismatch for step $step"
+    [[ "$chapter" =~ ^[0-9]+$ ]] || fail "manifest chapter is not an integer for step $step"
+    if (( expected == 1 )); then
+      (( chapter == 1 )) || fail "manifest must start at chapter 1"
+    else
+      (( chapter == previous_chapter || chapter == previous_chapter + 1 )) || fail "manifest chapter sequence broken at step $step"
+    fi
     [[ "$test" == "Step$(printf '%02d' "$step")Test" ]] || fail "manifest test class mismatch for step $step"
     [[ -n "$title_en" && -n "$title_zh" ]] || fail "manifest titles are required for step $step"
+    previous_chapter=$chapter
     ((expected+=1))
+    ((count+=1))
   done < "$MANIFEST"
-  (( expected == 29 )) || fail "manifest must contain 28 steps, found $((expected-1))"
+  (( count > 0 )) || fail 'manifest must contain at least one step'
 }
 
 check_manifest

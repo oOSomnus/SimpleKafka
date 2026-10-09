@@ -39,8 +39,9 @@ jobs:
           ./gradlew :compile
           ./gradlew :list
           COURSE_LANG=zh ./gradlew :list
-          ./gradlew :referenceTest -Pstep=28
+          ./gradlew :referenceTest -Pstep=31
           ./gradlew :referenceDemo
+          ./gradlew :referenceConsistencyDemo
           ./gradlew :book
           COURSE_LANG=zh ./gradlew :book
           BOOK_OFFLINE=1 ./gradlew :book --offline

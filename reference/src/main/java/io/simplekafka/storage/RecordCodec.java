@@ -3,6 +3,7 @@ package io.simplekafka.storage;
 import io.simplekafka.CourseException;
 import io.simplekafka.ErrorCode;
 import io.simplekafka.model.LogRecord;
+import io.simplekafka.model.ProducerStamp;
 import io.simplekafka.model.RecordData;
 
 import java.nio.ByteBuffer;
@@ -22,6 +23,7 @@ public final class RecordCodec {
         if (record == null || record.offset() < 0 || record.data().timestamp() < 0)
             throw new CourseException(ErrorCode.INVALID_REQUEST, "record is invalid");
         RecordData data = record.data();
+        ProducerStamp stamp = data.producerStamp();
         int totalBytes = encodedSize(data);
         byte[] key = data.key();
         byte[] value = data.value();
@@ -31,6 +33,15 @@ public final class RecordCodec {
         encoded.putInt(0);
         encoded.putLong(record.offset());
         encoded.putLong(data.timestamp());
+        if (stamp != null) {
+            encoded.putInt(-2);
+            encoded.putLong(stamp.producerId());
+            encoded.putInt(stamp.producerEpoch());
+            encoded.putLong(stamp.firstSequence());
+            encoded.putInt(stamp.batchSize());
+            encoded.putInt(stamp.batchIndex());
+            encoded.put(stamp.batchHash());
+        }
         encoded.putInt(key == null ? -1 : key.length);
         encoded.putInt(value.length);
         if (key != null) encoded.put(key);
@@ -70,10 +81,56 @@ public final class RecordCodec {
         if ((int) crc.getValue() != expectedCrc)
             throw new CourseException(ErrorCode.CORRUPT_RECORD, "record CRC32C does not match");
 
+        if (body.remaining() < Long.BYTES * 2 + Integer.BYTES * 2)
+            throw new CourseException(ErrorCode.CORRUPT_RECORD, "record header is incomplete");
         long offset = body.getLong();
         long timestamp = body.getLong();
-        int keyLength = body.getInt();
-        int valueLength = body.getInt();
+        int keyOrMarker = body.getInt();
+        ProducerStamp stamp = null;
+        int keyLength;
+        int valueLength;
+        if (keyOrMarker == -2) {
+            int stampedHeaderBytes =
+                    Long.BYTES
+                            + Integer.BYTES
+                            + Long.BYTES
+                            + Integer.BYTES * 2
+                            + 32
+                            + Integer.BYTES * 2;
+            if (body.remaining() < stampedHeaderBytes)
+                throw new CourseException(
+                        ErrorCode.CORRUPT_RECORD, "stamped record header is incomplete");
+            long producerId = body.getLong();
+            int producerEpoch = body.getInt();
+            long firstSequence = body.getLong();
+            int batchSize = body.getInt();
+            int batchIndex = body.getInt();
+            byte[] batchHash = new byte[32];
+            body.get(batchHash);
+            keyLength = body.getInt();
+            valueLength = body.getInt();
+            try {
+                stamp =
+                        new ProducerStamp(
+                                producerId,
+                                producerEpoch,
+                                firstSequence,
+                                batchSize,
+                                batchIndex,
+                                batchHash);
+            } catch (IllegalArgumentException exception) {
+                throw new CourseException(
+                        ErrorCode.CORRUPT_RECORD,
+                        "record contains an invalid producer stamp",
+                        exception);
+            }
+        } else {
+            keyLength = keyOrMarker;
+            if (body.remaining() < Integer.BYTES)
+                throw new CourseException(
+                        ErrorCode.CORRUPT_RECORD, "record byte-array header is incomplete");
+            valueLength = body.getInt();
+        }
         if (keyLength < -1 || valueLength < 0)
             throw new CourseException(
                     ErrorCode.CORRUPT_RECORD, "record contains an invalid byte-array length");
@@ -89,7 +146,7 @@ public final class RecordCodec {
         byte[] value = new byte[valueLength];
         body.get(value);
         try {
-            LogRecord decoded = new LogRecord(offset, new RecordData(key, value, timestamp));
+            LogRecord decoded = new LogRecord(offset, new RecordData(key, value, timestamp, stamp));
             source.position(end);
             return decoded;
         } catch (IllegalArgumentException exception) {
@@ -105,7 +162,11 @@ public final class RecordCodec {
             throw new CourseException(ErrorCode.INVALID_REQUEST, "record data is invalid");
         byte[] key = data.key();
         byte[] value = data.value();
-        long length = MIN_LENGTH + (key == null ? 0L : key.length) + (long) value.length;
+        long length =
+                MIN_LENGTH
+                        + (key == null ? 0L : key.length)
+                        + (long) value.length
+                        + (data.producerStamp() == null ? 0 : ProducerStamp.ENCODED_OVERHEAD);
         if (length > MAX_LENGTH)
             throw new CourseException(
                     ErrorCode.INVALID_REQUEST, "encoded record exceeds the 1 MiB limit");

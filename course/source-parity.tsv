@@ -116,3 +116,62 @@ private-member	reference	io/simplekafka/storage/SegmentLog.java	SegmentLog#type:
 private-member	reference	io/simplekafka/storage/SegmentLog.java	SegmentLog#validateHint(long,long,long)	implementation-only private member
 private-member	reference	io/simplekafka/storage/SparseIndex.java	SparseIndex#readRecordAt(FileChannel,long,long)	implementation-only private member
 private-member	reference	io/simplekafka/storage/SparseIndex.java	SparseIndex#type:RecordAt	implementation-only private member
+method-body	both	io/simplekafka/lab/ConsistencyExperiments.java	ConsistencyExperiments#producerOutcomeUnknown(ClusterHarness,TopicPartition,RecordData,FaultProxy)	Step 29: editable method body
+method-body	both	io/simplekafka/lab/ConsistencyExperiments.java	ConsistencyExperiments#leaderAckLoss(ClusterHarness,TopicPartition,RecordData)	Step 29: editable method body
+method-body	both	io/simplekafka/lab/ConsistencyExperiments.java	ConsistencyExperiments#allAckTimeout(ClusterHarness,TopicPartition,RecordData)	Step 29: editable method body
+method-body	both	io/simplekafka/lab/ConsistencyExperiments.java	ConsistencyExperiments#consumerReplay(ClusterHarness,TopicPartition,String,RecordData,EffectRecorder,FaultProxy)	Step 29: editable method body
+method-body	both	io/simplekafka/lab/ConsistencyExperiments.java	ConsistencyExperiments#staleGroupSideEffect(ClusterHarness,TopicPartition,String,RecordData,EffectRecorder)	Step 29: editable method body
+method-body	both	io/simplekafka/client/IdempotentProducer.java	IdempotentProducer#send(TopicPartition,List<RecordData>,Acks,long)	Step 30: editable method body
+method-body	both	io/simplekafka/client/IdempotentProducer.java	IdempotentProducer#retry(TopicPartition)	Step 30: editable method body
+method-body	both	io/simplekafka/replication/IdempotentAppender.java	IdempotentAppender#append(long,int,long,List<RecordData>)	Step 30: editable method body
+method-body	both	io/simplekafka/replication/IdempotentAppender.java	IdempotentAppender#recover()	Step 30: editable method body
+method-body	both	io/simplekafka/replication/ReplicatedPartition.java	ReplicatedPartition#produceIdempotent(List<RecordData>,Acks,int,long,long,int,long)	Step 30: editable method body
+method-body	both	io/simplekafka/client/DurableEffectStore.java	DurableEffectStore#apply(BusinessEvent)	Step 31: editable method body
+method-body	both	io/simplekafka/client/DurableEffectStore.java	DurableEffectStore#recover()	Step 31: editable method body
+private-member	reference	io/simplekafka/broker/BrokerHandler.java	BrokerHandler#idempotentProduce(Messages.IdempotentProduceRequest)	Step 30 implementation-only request handler
+private-member	reference	io/simplekafka/lab/ConsistencyExperiments.java	ConsistencyExperiments#field:RPC_TIMEOUT_MILLIS	Step 29 experiment support
+private-member	reference	io/simplekafka/lab/ConsistencyExperiments.java	ConsistencyExperiments#field:POLL_RECORDS	Step 29 experiment support
+private-member	reference	io/simplekafka/lab/ConsistencyExperiments.java	ConsistencyExperiments#field:POLL_BYTES	Step 29 experiment support
+private-member	reference	io/simplekafka/lab/ConsistencyExperiments.java	ConsistencyExperiments#requireInitial(ClusterHarness,TopicPartition,RecordData,String,EffectRecorder)	Step 29 experiment support
+private-member	reference	io/simplekafka/lab/ConsistencyExperiments.java	ConsistencyExperiments#requireProxy(ClusterHarness,FaultProxy)	Step 29 experiment support
+private-member	reference	io/simplekafka/lab/ConsistencyExperiments.java	ConsistencyExperiments#routedClients(ClusterHarness,FaultProxy)	Step 29 experiment support
+private-member	reference	io/simplekafka/lab/ConsistencyExperiments.java	ConsistencyExperiments#expectProduceFailure(SimpleProducer,TopicPartition,RecordData,ErrorCode)	Step 29 experiment support
+private-member	reference	io/simplekafka/lab/ConsistencyExperiments.java	ConsistencyExperiments#produce(ClusterHarness,TopicPartition,int,int,Acks,long,RecordData)	Step 29 experiment support
+private-member	reference	io/simplekafka/lab/ConsistencyExperiments.java	ConsistencyExperiments#requireEmptyPoll(SimpleConsumer,TopicPartition,String)	Step 29 experiment support
+private-member	reference	io/simplekafka/lab/ConsistencyExperiments.java	ConsistencyExperiments#requireRecords(List<LogRecord>,List<LogRecord>,String)	Step 29 experiment support
+private-member	reference	io/simplekafka/lab/ConsistencyExperiments.java	ConsistencyExperiments#requirePhysicalLog(ClusterHarness,TopicPartition,int,List<LogRecord>,String)	Step 29 experiment support
+private-member	reference	io/simplekafka/lab/ConsistencyExperiments.java	ConsistencyExperiments#fetch(RpcClient,TopicPartition,long,GroupToken)	Step 29 experiment support
+private-member	reference	io/simplekafka/lab/ConsistencyExperiments.java	ConsistencyExperiments#requireOwner(GroupAssignment,String,TopicPartition)	Step 29 experiment support
+private-member	reference	io/simplekafka/lab/ConsistencyExperiments.java	ConsistencyExperiments#requireSuccess(Messages.Reply,String)	Step 29 experiment support
+private-member	reference	io/simplekafka/lab/ConsistencyExperiments.java	ConsistencyExperiments#requireError(Messages.Reply,ErrorCode,String)	Step 29 experiment support
+private-member	reference	io/simplekafka/lab/ConsistencyExperiments.java	ConsistencyExperiments#requireBody(Messages.Reply,Class<T>,String)	Step 29 experiment support
+private-member	reference	io/simplekafka/lab/ConsistencyExperiments.java	ConsistencyExperiments#invalid(String)	Step 29 experiment support
+private-member	reference	io/simplekafka/client/IdempotentProducer.java	IdempotentProducer#validateAndFreeze(TopicPartition,List<RecordData>,Acks,long,long)	Step 30 producer support
+private-member	reference	io/simplekafka/client/IdempotentProducer.java	IdempotentProducer#partitionMetadata(TopicPartition)	Step 30 producer support
+private-member	reference	io/simplekafka/client/IdempotentProducer.java	IdempotentProducer#deliver(TopicPartition,PartitionMetadata,Pending)	Step 30 producer support
+private-member	reference	io/simplekafka/replication/IdempotentAppender.java	IdempotentAppender#field:MAX_RECORD_BYTES	Step 30 replay support
+private-member	reference	io/simplekafka/replication/IdempotentAppender.java	IdempotentAppender#field:producers	Step 30 replay support
+private-member	reference	io/simplekafka/replication/IdempotentAppender.java	IdempotentAppender#field:cacheValid	Step 30 replay support
+private-member	reference	io/simplekafka/replication/IdempotentAppender.java	IdempotentAppender#field:cachedPrefixVersion	Step 30 replay support
+private-member	reference	io/simplekafka/replication/IdempotentAppender.java	IdempotentAppender#field:scannedLeo	Step 30 replay support
+private-member	reference	io/simplekafka/replication/IdempotentAppender.java	IdempotentAppender#field:partial	Step 30 replay support
+private-member	reference	io/simplekafka/replication/IdempotentAppender.java	IdempotentAppender#validateRequest(long,int,long,List<RecordData>)	Step 30 replay support
+private-member	reference	io/simplekafka/replication/IdempotentAppender.java	IdempotentAppender#sequenceEnd(long,int)	Step 30 replay support
+private-member	reference	io/simplekafka/replication/IdempotentAppender.java	IdempotentAppender#checkedOffsetEnd(long,int)	Step 30 replay support
+private-member	reference	io/simplekafka/replication/IdempotentAppender.java	IdempotentAppender#ensureCache()	Step 30 replay support
+private-member	reference	io/simplekafka/replication/IdempotentAppender.java	IdempotentAppender#rebuild(long,long)	Step 30 replay support
+private-member	reference	io/simplekafka/replication/IdempotentAppender.java	IdempotentAppender#scan(long,long)	Step 30 replay support
+private-member	reference	io/simplekafka/replication/IdempotentAppender.java	IdempotentAppender#replayRecord(LogRecord)	Step 30 replay support
+private-member	reference	io/simplekafka/replication/IdempotentAppender.java	IdempotentAppender#beginReplayBatch(ProducerStamp,long)	Step 30 replay support
+private-member	reference	io/simplekafka/replication/IdempotentAppender.java	IdempotentAppender#continuePartial(long,int,long,List<RecordData>,byte[],long)	Step 30 replay support
+private-member	reference	io/simplekafka/replication/IdempotentAppender.java	IdempotentAppender#verifyPartialPrefix(List<RecordData>)	Step 30 replay support
+private-member	reference	io/simplekafka/replication/IdempotentAppender.java	IdempotentAppender#stampBatch(long,int,long,List<RecordData>,byte[],int)	Step 30 replay support
+private-member	reference	io/simplekafka/replication/IdempotentAppender.java	IdempotentAppender#validateNextBatch(ProducerState,int,long)	Step 30 replay support
+private-member	reference	io/simplekafka/replication/IdempotentAppender.java	IdempotentAppender#sameBatch(ProducerStamp,ProducerStamp)	Step 30 replay support
+private-member	reference	io/simplekafka/replication/IdempotentAppender.java	IdempotentAppender#sameContent(RecordData,RecordData)	Step 30 replay support
+private-member	reference	io/simplekafka/replication/IdempotentAppender.java	IdempotentAppender#isUncertainStorageFailure(RuntimeException)	Step 30 replay support
+private-member	reference	io/simplekafka/replication/IdempotentAppender.java	IdempotentAppender#invalidateCache()	Step 30 replay support
+private-member	reference	io/simplekafka/replication/IdempotentAppender.java	IdempotentAppender#failure(ErrorCode,String)	Step 30 replay support
+private-member	reference	io/simplekafka/replication/IdempotentAppender.java	IdempotentAppender#type:ProducerState	Step 30 replay support
+private-member	reference	io/simplekafka/replication/IdempotentAppender.java	IdempotentAppender#type:CompletedBatch	Step 30 replay support
+private-member	reference	io/simplekafka/replication/IdempotentAppender.java	IdempotentAppender#type:PartialBatch	Step 30 replay support

@@ -120,23 +120,29 @@ tasks.register('compile') {
     }
 }
 
+def courseRows = {
+    rootProject.file('course/steps.tsv').readLines('UTF-8').drop(1)
+}
+
 def selectedStep = { boolean required ->
     String value = rootProject.providers.gradleProperty('step').orNull
+    int stepCount = courseRows().size()
     if (value == null) {
         if (required) {
             throw new GradleException('usage: ./gradlew :stepTest -Pstep=N')
         }
-        return 28
+        return stepCount
     }
     if (!(value ==~ /[0-9]+/)) {
-        throw new GradleException("step must be an integer in 1..28: ${value}")
+        throw new GradleException("step must be an integer in 1..${stepCount}: ${value}")
     }
     BigInteger number = new BigInteger(value)
-    if (number < BigInteger.ONE || number > BigInteger.valueOf(28)) {
-        throw new GradleException("step must be an integer in 1..28: ${value}")
+    if (number < BigInteger.ONE || number > BigInteger.valueOf(stepCount)) {
+        throw new GradleException("step must be an integer in 1..${stepCount}: ${value}")
     }
     return number.intValue()
 }
+
 
 def registerCourseTestTask = { String taskName, String projectName, String mode, boolean single ->
     Project implementation = project(projectName)
@@ -202,17 +208,24 @@ def registerCourseTestTask = { String taskName, String projectName, String mode,
                 )
             } else {
                 int completed = selectedStep(false)
-                if (completed == 28) {
+                List<String> rows = courseRows()
+                if (completed == rows.size()) {
                     println 'Course complete'
-                } else if (completed % 4 == 0) {
-                    println String.format(
-                        'Chapter %d complete; next: Chapter %d / Step %d',
-                        completed.intdiv(4),
-                        completed.intdiv(4) + 1,
-                        completed + 1
-                    )
                 } else {
-                    println String.format('Step %d passed; next: Step %d', completed, completed + 1)
+                    String[] current = rows[completed - 1].split('\t', -1)
+                    String[] next = rows[completed].split('\t', -1)
+                    int currentChapter = Integer.parseInt(current[1])
+                    int nextChapter = Integer.parseInt(next[1])
+                    if (currentChapter != nextChapter) {
+                        println String.format(
+                            'Chapter %d complete; next: Chapter %d / Step %d',
+                            currentChapter,
+                            nextChapter,
+                            completed + 1
+                        )
+                    } else {
+                        println String.format('Step %d passed; next: Step %d', completed, completed + 1)
+                    }
                 }
             }
         }
@@ -223,19 +236,21 @@ registerCourseTestTask('test', 'exercises', 'student', false)
 registerCourseTestTask('stepTest', 'exercises', 'student', true)
 registerCourseTestTask('referenceTest', 'reference', 'reference', false)
 
-def registerDemoTask = { String taskName, String projectName ->
+def registerDemoTask = { String taskName, String projectName, String mainClassName ->
     Project implementation = project(projectName)
     tasks.register(taskName, JavaExec) {
         group = 'application'
         description = "Run the ${projectName} TCP/failover scenario."
         dependsOn ':validateCourse', "${implementation.path}:classes"
         classpath = implementation.sourceSets.main.runtimeClasspath
-        mainClass.set('io.simplekafka.cli.CourseDemo')
+        mainClass.set(mainClassName)
     }
 }
 
-registerDemoTask('demo', 'exercises')
-registerDemoTask('referenceDemo', 'reference')
+registerDemoTask('demo', 'exercises', 'io.simplekafka.cli.CourseDemo')
+registerDemoTask('referenceDemo', 'reference', 'io.simplekafka.cli.CourseDemo')
+registerDemoTask('consistencyDemo', 'exercises', 'io.simplekafka.cli.ConsistencyDemo')
+registerDemoTask('referenceConsistencyDemo', 'reference', 'io.simplekafka.cli.ConsistencyDemo')
 
 def javaSources = fileTree(rootProject.projectDir) {
     include 'exercises/src/main/java/**/*.java'

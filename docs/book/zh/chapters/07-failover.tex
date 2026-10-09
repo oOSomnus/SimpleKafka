@@ -1,5 +1,5 @@
 \chapter{epoch围栏、干净选举、分叉修复与重新入组}
-最后一章将副本状态变化串成受控故障切换。这里开始必须再次牢记模型限制：本课程的 authority 是单 JVM 内可信的 metadata/HW 控制面，leader 切换由课程显式触发，不是 KRaft 控制器共识，也不覆盖网络分区下的双主仲裁。follower 通过真实 TCP 读 leader 数据，每个 broker 仍写自己的独立日志。课程选择干净候选，不以数据丢失换取可用性；没有候选时服务必须保持不可用。
+本章将副本状态变化串成受控故障切换。这里必须牢记模型限制：本课程的 authority 是单 JVM 内可信的 metadata/HW 控制面，leader 切换由课程显式触发，不是 KRaft 控制器共识，也不覆盖网络分区下的双主仲裁。follower 通过真实 TCP 读取 leader 数据，每个 broker 仍写自己的独立日志。课程选择干净候选，不以数据丢失换取可用性；没有候选时服务必须保持不可用。
 
 \begin{figure}[ht]
 \centering
@@ -45,7 +45,7 @@
 \lessoncontract{refresh 只读 metadata 并按 bootstrap 顺序容错；call 使用缓存 endpoint 和 epoch。\method{NOT_LEADER}/\method{FENCED_EPOCH} 可触发 refresh，但必须传播最初响应，不得重发 produce/fetch/commit。其他网络与存储错误不自动重试。后续新的独立请求才使用新缓存。}
 \lessonhints{明确一个 call 有且只有一次业务 request attempt，刷新是控制面动作，不是重试。}{不同 endpoint 失败顺序对初始 metadata 查询有什么影响？}{模拟旧缓存写入被拒但服务端可能已追加，检查刷新后旧 receipt 与记录数，再发下一次显式请求。}
 \expected{旧 metadata 指向 A/epoch 0；A 停止后第一次路由请求收到刷新相关错误，客户端刷新到 B/epoch 1 但把该错误返回。显式第二次新请求只向 B 写入一份。若 broker 已追加但响应丢失，客户端报错且不会自动生成第二条。对应 \method{Step27Test}。}
-\pitfalls{把 \method{NOT_LEADER} 当作“肯定没有写入”会造成 duplicate produce；只刷新缓存却向调用方返回成功又会伪造 receipt。真实 Kafka 客户端有重试策略与幂等生产者语义；课程禁止自动重试，暴露不确定性以便学习端到端保证。}
+\pitfalls{把 \method{NOT_LEADER} 当作“肯定没有写入”会造成 duplicate produce；只刷新缓存却向调用方返回成功又会伪造 receipt。\method{MetadataRouter} 会刷新但不会重放请求，\method{SimpleProducer} 也不会自动重试。第 8 章另设 \method{IdempotentProducer}，由调用方显式 retry 并沿用持久化 batch identity；它不会改变普通 producer 契约，也不提供事务或端到端 exactly-once 保证。}
 \lessoncommand{27}
 \lessonquestions{为什么刷新 metadata 与重放业务请求是两个不同的动作？}{客户端看到错误时，为什么不能断定服务端没有产生副作用？}
 

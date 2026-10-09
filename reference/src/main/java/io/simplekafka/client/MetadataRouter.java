@@ -117,12 +117,15 @@ public final class MetadataRouter implements AutoCloseable {
         Objects.requireNonNull(tp, "tp");
         Objects.requireNonNull(request, "request");
         if (request instanceof Messages.ProduceRequest produce && !tp.equals(produce.tp())
-                || request instanceof Messages.FetchRequest fetch && !tp.equals(fetch.tp())) {
+                || request instanceof Messages.FetchRequest fetch && !tp.equals(fetch.tp())
+                || request instanceof Messages.IdempotentProduceRequest idempotent
+                        && !tp.equals(idempotent.tp())) {
             throw new CourseException(
                     ErrorCode.INVALID_REQUEST, "request topic-partition does not match route");
         }
         if (!(request instanceof Messages.ProduceRequest)
-                && !(request instanceof Messages.FetchRequest)) {
+                && !(request instanceof Messages.FetchRequest)
+                && !(request instanceof Messages.IdempotentProduceRequest)) {
             throw new CourseException(
                     ErrorCode.INVALID_REQUEST, "only produce and fetch use data routing");
         }

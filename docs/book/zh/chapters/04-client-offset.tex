@@ -8,7 +8,7 @@
 \lessoncontract{相同 partition 保持 send 顺序，分区间 batch 可独立；batch 满时同步发送该分区。receipt 保存 topic-partition 与 [firstOffset,nextOffset)；显式 flush 返回自动发送和本次发送的 receipt。produce RPC/回复处理一旦开始，任何失败都使追加结果未知：保留首次错误且禁止重放 batch。此后 send、flush 或 \pathcode{setAcks} 均报 \method{REQUEST_TIMEOUT}，直到关闭 producer。metadata 查询或请求准备阶段、进入该路径前的失败不会 poison producer。}
 \lessonhints{先明确“发送请求”“得到确认”“向调用者交还 receipt”是三个不同时间点。}{用 TopicPartition 作为缓冲键，检查 flush 顺序和空 batch 行为。}{让 broker 追加后再返回错误，或延迟响应直到 timeout；验证客户端不会再产生第二份数据。}
 \expected{配置 3 partitions 和 batchRecords=2，连续发送同 key 数据应路由至同一分区并保序；null key 分散按实例轮转。达到两条时发送一次，调用 flush 可取得包含自动发送 receipt 的结果。追加后返回错误时保留首次错误；后续 send、flush、\pathcode{setAcks} 报 \method{REQUEST_TIMEOUT} 且不重放。对应 \method{Step13Test} 与 \method{Step27Test}。}
-\pitfalls{若自动 flush 的 receipt 被丢弃，调用者无法知道已经成功的 offset 区间；若把 RPC/回复错误当作“肯定未追加”并重试，可能重复。真实 Kafka producer 有异步 I/O、重试、幂等协议与更完整线程安全保证；课程故意同步发送且不自动重试，未知结果是设计不是缺陷。}
+\pitfalls{若自动 flush 的 receipt 被丢弃，调用者无法知道已经成功的 offset 区间；若把 RPC/回复错误当作“肯定未追加”并重试，可能重复。本章的 \method{SimpleProducer} 刻意同步发送且不自动重试。第 8 章新增独立的 \method{IdempotentProducer}，调用方可用稳定 producer identity 显式重试 batch；这不会改变普通 producer 的结果未知契约。}
 \lessoncommand{13}
 \lessonquestions{为何 timeout 不足以证明 broker 没有追加？}{如果同一个 batch 的错误回复被重试，调用方如何识别重复？本课程为何不做这个机制？}
 
@@ -41,6 +41,6 @@
 \lessoncontract{返回成功处理的记录数。记录处理按稳定分区顺序与 offset 顺序调用；全部成功后才提交。任一 processor 异常原样传播且本轮不提交任何分区。失败后调用者应关闭这个 consumer 并从 store 重建，禁止将 poll 已推进 position 当作已持久进度。}
 \lessonhints{写出“poll、外部副作用、commit、崩溃”的时间线，并找出唯一可出现重复的窗口。}{判断跨多个分区批次时，提交部分分区会不会违反本题全部成功才 commit 的契约。}{分别在第 1 条处理失败与所有处理成功之后重启，比较观察到的投递序列。}
 \expected{处理 offset 0 成功，处理 offset 1 抛异常；重建 consumer 后再次获得 0、1。两条均成功处理并提交后再重建，不会再次投递。测试记录第一次副作用并断言 0/1 的重放与最终 offset；对应 \method{Step16Test}。}
-\pitfalls{把处理函数抛错吞掉再 commit 会产生数据丢失；继续使用失败实例会跳过重放。至少一次并不等于 exactly-once，幂等外部副作用也不由 broker 自动提供。真实 Kafka 可与特定 Kafka 输出事务做原子处理/offset 交付；课程没有事务，不把本地 OffsetStore 说成事务边界。}
+\pitfalls{把处理函数抛错吞掉再 commit 会产生数据丢失；继续使用失败实例会跳过重放。至少一次并不等于 exactly-once，broker 也不会自动让外部副作用幂等。第 8 章说明应用如何通过稳定业务 event id 使本地持久化效果幂等；但不会让副作用和 offset commit 变成一个事务。课程没有事务，也不把本地 OffsetStore 说成事务边界。}
 \lessoncommand{16}
 \lessonquestions{在副作用成功与 offset 持久化之间崩溃，为什么出现重复是合理的？}{要避免继续运行失败 consumer，关键是内存 position 还是持久化 offset？为什么？}

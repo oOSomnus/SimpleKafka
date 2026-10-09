@@ -20,6 +20,8 @@ key/value & variable & Variable-length fields follow in the order described abov
 \end{tabular}
 \end{center}
 The fixed-length part of each record (excluding the length prefix) contains the CRC, offset, timestamp, and two lengths, for a total of 28 bytes; the length prefix makes the minimum total size 32 bytes. The lower bound for the length field remains 28 because its count starts at the CRC. Each segment's sparse-index entry is \pathcode{offset:int64,position:int64}, totaling 16 bytes; one index point is written for every intervalRecords records, and the first record always has a point. The index may be discarded and rebuilt from the log.
+Ordinary records retain this layout. A stamped record inserts the following 64-byte producer identity after timestamp and before keyLength: \pathcode{marker:int32=-2 | producerId:int64 | producerEpoch:int32 | firstSequence:int64 | batchSize:int32 | batchIndex:int32 | batchHash:32 bytes}. Its full layout is \pathcode{length | crc32c | offset | timestamp | marker | producerId | producerEpoch | firstSequence | batchSize | batchIndex | batchHash | keyLength | valueLength | key | value}. The minimum total size is 96 bytes, and the 1 MiB maximum includes the stamp. CRC32C covers offset through the final value byte, including the stamp. Ordinary record bytes are unchanged.
+The supplied \method{ProducerStamp.ENCODED_OVERHEAD} is 64 bytes and is included in the 1 MiB record bound for both disk and \method{MessageCodec} wire records.
 
 The directory convention is \pathcode{<root>/<topic>/<partition>/<baseOffset:020d>.log}, with the paired index suffix \pathcode{.index}. The retained range is [logStartOffset,LEO), and fetch is left-closed/right-open. LEO is the next writable offset; HW is the highest committed boundary visible to ordinary consumers (only offsets < HW are visible). A group committed offset is also a next offset, but is not the same as HW.
 
@@ -37,10 +39,11 @@ ID & API & ID & API \\
 3 & FETCH & 8 & \method{LEAVE_GROUP} \\
 4 & \method{COMMIT_OFFSET} & 9 & \method{GROUP_ASSIGNMENT} \\
 5 & \method{FETCH_OFFSET} & 10 & \method{REPLICA_FETCH} \\
+11 & \method{IDEMPOTENT_PRODUCE} & & \\
 \bottomrule
 \end{tabular}
 \end{center}
-MessageCodec uses big-endian primitive fields; strings are an int32 UTF-8 byte length followed by bytes, collections are an int32 count followed by each item, Optional values use a boolean followed by the value, and byte[] uses an int32 length (only key may be -1). Request and successful-response fields are encoded in the declaration order of the provided Messages nested records; map results are sorted by key. When the reply header has error=NONE, the body is the corresponding success record; on error, the body is ErrorBody(message), and the error code appears only in the frame header. Field schemas are fixed by \pathcode{provided/.../protocol/Messages.java}; students do not need to redefine the ten message formats.
+MessageCodec uses big-endian primitive fields; strings are an int32 UTF-8 byte length followed by bytes, collections are an int32 count followed by each item, Optional values use a boolean followed by the value, and byte[] uses an int32 length (only key may be -1). Request and successful-response fields are encoded in the declaration order of the provided Messages nested records; map results are sorted by key. When the reply header has error=NONE, the body is the corresponding success record; on error, the body is ErrorBody(message), and the error code appears only in the frame header. Field schemas are fixed by \pathcode{provided/.../protocol/Messages.java}; students do not need to redefine the eleven message formats. A stamped RecordData on FETCH or \pathcode{REPLICA_FETCH} wire uses \pathcode{marker=-2 | producerId | producerEpoch | firstSequence | batchSize | batchIndex | batchHash[32] | keyLength | key | valueLength | value | timestamp}; an ordinary record's wire encoding is unchanged.
 
 \subsection{Message Body Field Order}
 The requests and responses below are encoded by MessageCodec in the order of the declared parameters in each record. Collection lengths and string/byte lengths are all big-endian int32; list items have no extra tag and are inlined in the declared order for each value type. GroupToken is nullable, encoded as a boolean present followed by group, member, and generation; Acks is int16, with LEADER=1 and ALL=-1.
@@ -53,6 +56,7 @@ API & Request record and fields & Successful-response record and fields \\
 \endhead
 \method{METADATA} & MetadataRequest: topic & MetadataBody: partitions \\
 \method{PRODUCE} & ProduceRequest: tp, epoch, acks, timeoutMillis, records & ProduceBody: result \\
+\method{IDEMPOTENT_PRODUCE} & IdempotentProduceRequest: tp, epoch, acks, timeoutMillis, producerId, producerEpoch, firstSequence, records & ProduceBody: result \\
 \method{FETCH} & FetchRequest: tp, epoch, offset, maxRecords, maxBytes, token & FetchBody: records, logStartOffset, logEndOffset, highWatermark, epoch \\
 \method{COMMIT_OFFSET} & CommitOffsetRequest: key, nextOffset, token & EmptyBody \\
 \method{FETCH_OFFSET} & FetchOffsetRequest: key & OffsetBody: nextOffset (OptionalLong) \\
@@ -71,13 +75,15 @@ API & Request record and fields & Successful-response record and fields \\
 Record & Fields in declaration order \\
 \midrule
 \method{TopicPartition} & \method{topic}, \method{partition} \\
-\method{RecordData} & \method{key}, \method{value}, \method{timestamp} \\
+\method{RecordData} & \method{key}, \method{value}, \method{timestamp}, nullable \method{producerStamp} \\
 \method{LogRecord} & \method{offset}, \method{data} \\
 \method{AppendResult} & \method{firstOffset}, \method{nextOffset} \\
 \method{OffsetKey} & \method{group}, \method{tp} \\
 \method{Endpoint} & \method{host}, \method{port} \\
 \method{GroupAssignment} & \method{generation}, \method{assignments} \\
 \method{PartitionMetadata} & \method{tp}, \method{leaderId}, \method{epoch}, \method{replicas}, \method{isr}, \method{leader} \\
+\method{ProducerStamp} & \method{producerId}, \method{producerEpoch}, \method{firstSequence}, \method{batchSize}, \method{batchIndex}, \method{batchHash} \\
+\method{BusinessEvent} & \method{eventId}, \method{account}, \method{delta} \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -85,9 +91,16 @@ Record & Fields in declaration order \\
 Each byte array is length-prefixed; only key may be null (length -1), while value is always present but may be empty.
 
 OffsetStore entries use \method{MessageCodec.encodeOffsetEntry}, with null key and timestamp 0. The record's physical log offset is independent of committed nextOffset.
+Business-event values use \method{MessageCodec.encodeBusinessEvent}: \pathcode{version:uint8=1 | eventId:identifier | account:identifier | delta:int64}. Both identifiers are non-empty strict UTF-8 strings of at most 255 bytes; delta may be negative, zero, or positive.
 \subsection{Identifiers and Value Types}
 topic, group, and member are non-empty UTF-8 identifiers with a maximum length of 255 bytes; topic may contain only ASCII letters, digits, periods, underscores, and hyphens, and \pathcode{.} and \pathcode{..} are rejected. TopicPartition's partition is nonnegative. RecordData's key may be null, value may not be null (but may be an empty array), and timestamp is nonnegative; LogRecord offset is nonnegative. Once array ownership is transferred to a value object, the receiver owns it, so it need not be copied repeatedly. All offsets that denote the next item use half-open boundaries; see the relevant chapters for the details.
 
+\section{Idempotent Append and Durable Effects}
+API id 11 is the separate \method{IDEMPOTENT_PRODUCE} request; ordinary \method{PRODUCE} remains non-idempotent and rejects stamped client input. The request carries \pathcode{tp, epoch, acks, timeoutMillis, producerId, producerEpoch, firstSequence, records}; the broker stamps each record with the request's batch identity and a streamed SHA-256 fingerprint of the record count and timestamp/key/value contents. The caller manages producer id and epoch. A new producer epoch starts at sequence zero and takes effect only when a record is persisted. An exact completed duplicate returns its original offset range without appending; same identity with different content is a conflict; sequence gaps and unknown old sequences are rejected. A matching partial batch can be completed by appending only its missing suffix. Derived state is recovered from retained log history; when \method{logStartOffset} is nonzero, idempotent requests fail with \method{PRODUCER_STATE_EXPIRED}. There is no producer-state snapshot or client session WAL.
+
+\method{IdempotentProducer} sends once per call. A failed call retains its pending batch; only the caller's explicit \method{retry} refreshes metadata and sends that same identity, sequence, and payload once. Duplicate requests still pass the normal ACK precheck and wait, including ALL's ISR/HW/deadline rules. This does not change \method{SimpleProducer}, which never retries automatically.
+
+\method{DurableEffectStore} applies one \method{BusinessEvent} as one forced local log record. The first event id appends and updates its account balance; an identical id/content replay returns false without another append; an id reused with different content or a checked-balance overflow is rejected. Recovery rebuilds event identities and balances from the retained log and requires log start zero. This local ledger is not atomically coordinated with \method{ProcessingLoop}'s offset commit: the callback may run again after a commit failure, while a stable event id prevents a duplicate local accounting effect. Group fencing cannot undo an effect that already happened.
 \section{Fixed Error Codes}
 \begin{longtable}{r p{.27\textwidth} p{.55\textwidth}}
 \toprule
@@ -108,11 +121,16 @@ Wire ID & Name & Purpose \\
 11 & \method{NOT_ASSIGNED} & The operation involves an unassigned partition.\\
 12 & \method{NO_ELIGIBLE_LEADER} & No candidate satisfies the clean-election conditions.\\
 13 & \method{STORAGE_ERROR} & I/O failure; the underlying cause is retained.\\
+14 & \method{FENCED_PRODUCER_EPOCH} & The request uses an older producer epoch.\\
+15 & \method{OUT_OF_ORDER_SEQUENCE} & The batch sequence or boundary is invalid.\\
+16 & \method{DUPLICATE_SEQUENCE_CONFLICT} & A repeated batch identity has different content.\\
+17 & \method{PRODUCER_STATE_EXPIRED} & Required producer history is outside the retained log prefix.\\
+18 & \method{INCOMPLETE_BATCH} & An unrelated append would cross an incomplete producer batch.\\
 \bottomrule
 \end{longtable}
 An unknown ID is not mapped to success; I/O errors do not swallow the cause; network-error bodies do not return the server stack trace.
 
-\section{The 28 Steps and Edit Entry Points}
+\section{The 31 Steps and Edit Entry Points}
 All paths are relative to the repository root. Students modify the specified methods under \pathcode{exercises/src/main/java/io/simplekafka/}. The cumulative command for each step is \coursecmd{./gradlew :test -Pstep=N}; the single-step diagnostic is \coursecmd{./gradlew :stepTest -Pstep=N}, which does not prove progression.
 \begin{longtable}{r p{.20\textwidth} p{.68\textwidth}}
 \toprule
@@ -147,9 +165,12 @@ Step & Course title & Edit methods \\
 26 & Divergent log reconciliation & replication/ReplicaReconciler: reconcile \\
 27 & Metadata routing refresh & client/MetadataRouter: refresh, call \\
 28 & Replica readmission to ISR & replication/ReplicaAdmission: tryAdd \\
+29 & Cross-layer consistency experiments & lab/ConsistencyExperiments: producerOutcomeUnknown, leaderAckLoss, allAckTimeout, consumerReplay, staleGroupSideEffect \\
+30 & Idempotent producer & client/IdempotentProducer: send, retry;\newline replication/IdempotentAppender: append, recover;\newline replication/ReplicatedPartition: produceIdempotent;\newline broker/BrokerHandler: handle(\method{IDEMPOTENT_PRODUCE});\newline client/MetadataRouter: call;\newline storage/RecordCodec: encode, decode;\newline storage/SegmentLog: append, recover;\newline storage/PartitionLog: append, deleteBefore, truncateTo \\
+31 & Idempotent consumer effects & client/DurableEffectStore: apply, recover \\
 \bottomrule
 \end{longtable}
-Chapters are numbered by groups of four steps; the cumulative pass points at chapter ends are 4, 8, 12, 16, 20, 24, and 28. If an earlier step has not passed, a later test will usually fail as well, because the course develops one evolving system rather than unrelated demo programs.
+The first seven chapters cover four steps each; Chapter 8 covers Steps 29–31. The cumulative pass points at chapter ends are 4, 8, 12, 16, 20, 24, 28, and 31. If an earlier step has not passed, a later test will usually fail as well, because the course develops one evolving system rather than unrelated demo programs.
 
 \section{Course Simplifications and Differences from Kafka}
 \begin{enumerate}
@@ -160,7 +181,7 @@ Chapters are numbered by groups of four steps; the cumulative pass points at cha
 \item \textbf{Offsets:} the local OffsetStore is not the highly available, replicated/compacted \pathcode{__consumer_offsets}.
 \item \textbf{Replication and control plane:} each broker fetches over real TCP and writes to an independent directory, but the authority/coordinator is single and trusted in the same JVM. This is not KRaft and does not guarantee cluster recovery after controller/authority failure or consensus under arbitrary partitions.
 \item \textbf{Visibility assumption:} the course retains the committed prefix and requires a clean candidate's LEO to be no lower than the authority HW, so the known commit boundary does not move backward during a controlled failover. This is stronger than real Kafka's HW behavior across epochs and must not be generalized into a claim that Kafka is always monotonic.
-\item \textbf{Retries and transactions:} the producer does not retry automatically, and a timeout may follow an append. There is no compaction, transaction, idempotent producer, fire-and-forget, or ELR. At-least-once allows duplicates and does not claim exactly-once.
+\item \textbf{Retries, idempotence, and transactions:} the ordinary \method{SimpleProducer} never retries automatically and a timeout may follow an append. The separate \method{IdempotentProducer} supports caller-managed producer identity and explicit retry, using batch stamps persisted in the log; it does not implement Kafka PID allocation, a transaction coordinator, client session WAL, or producer-state snapshots, and retention can expire the required prefix. The local \method{DurableEffectStore} deduplicates by stable business event id but is not atomic with consumer-offset commits. There are no Kafka transactions or \method{read_committed} guarantees, compaction, fire-and-forget, or ELR. At-least-once allows duplicates; this teaching subset does not claim end-to-end exactly-once.
 \item \textbf{Recovery:} Step 26's full-prefix comparison is an O(n) teaching simplification; real systems use leader-epoch history to narrow the divergent-log search range.
 \end{enumerate}
 

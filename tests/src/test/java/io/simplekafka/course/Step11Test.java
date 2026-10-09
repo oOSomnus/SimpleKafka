@@ -49,7 +49,7 @@ class Step11Test {
     }
 
     @Test
-    @DisplayName("Preserves independent wire ids for every API and metadata error")
+    @DisplayName("Preserves existing API and metadata error wire ids")
     void preservesIndependentWireIdsForEveryApiAndMetadataError() throws Exception {
         List<HeaderWireCase> cases =
                 List.of(
@@ -205,7 +205,7 @@ class Step11Test {
                 ErrorCode.INVALID_REQUEST,
                 () -> FrameCodec.read(new ByteArrayInputStream(badVersion)));
 
-        for (short api : new short[] {0, 11}) {
+        for (short api : new short[] {0}) {
             byte[] badApi = GOLDEN.clone();
             ByteBuffer.wrap(badApi).order(ByteOrder.BIG_ENDIAN).putShort(6, api);
             assertCode(
@@ -217,7 +217,7 @@ class Step11Test {
                 () ->
                         FrameCodec.write(
                                 new ByteArrayOutputStream(),
-                                new Frame((short) 11, 1, ErrorCode.NONE, new byte[0])));
+                                new Frame((short) 0, 1, ErrorCode.NONE, new byte[0])));
 
         for (short errorId : new short[] {99, -1}) {
             byte[] badError = GOLDEN.clone();

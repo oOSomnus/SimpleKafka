@@ -3,6 +3,7 @@ package io.simplekafka.replication;
 import io.simplekafka.CourseException;
 import io.simplekafka.ErrorCode;
 import io.simplekafka.ExerciseNotImplementedException;
+import io.simplekafka.broker.IdempotentProduceBackend;
 import io.simplekafka.broker.PartitionBackend;
 import io.simplekafka.cluster.ClusterAuthority;
 import io.simplekafka.cluster.ClusterAuthority.PartitionState;
@@ -18,12 +19,14 @@ import java.util.List;
 import java.util.Objects;
 
 /** Step 24: connects the local log, replica progress, and acknowledgement policy. */
-public final class ReplicatedPartition implements PartitionBackend, ReplicaFetchBackend {
+public final class ReplicatedPartition
+        implements PartitionBackend, ReplicaFetchBackend, IdempotentProduceBackend {
     private final PartitionLog log;
     private final ReplicaState replicaState;
     private final ReplicationTracker tracker;
     private final AckPolicy ackPolicy;
     private final PartitionState state;
+    private final IdempotentAppender idempotentAppender;
 
     /**
      * Creates a backend for the supplied partition and replication components.
@@ -47,6 +50,7 @@ public final class ReplicatedPartition implements PartitionBackend, ReplicaFetch
         this.replicaState = Objects.requireNonNull(replicaState, "replicaState");
         this.tracker = Objects.requireNonNull(tracker, "tracker");
         this.ackPolicy = Objects.requireNonNull(ackPolicy, "ackPolicy");
+        this.idempotentAppender = new IdempotentAppender(log);
         this.state = tracker.state();
         if (!tp.equals(tracker.tp()))
             throw new IllegalArgumentException("tracker partition mismatch");
@@ -78,6 +82,24 @@ public final class ReplicatedPartition implements PartitionBackend, ReplicaFetch
     public AppendResult produce(
             List<RecordData> records, Acks acks, int epoch, long timeoutMillis) {
         throw new ExerciseNotImplementedException(24, "ReplicatedPartition.produce");
+    }
+
+    /**
+     * Step 30: append or resolve a durable idempotent batch and then apply the original ACK
+     * condition. Validate leader/minISR on every duplicate; do not hold either lock while waiting.
+     *
+     * @throws ExerciseNotImplementedException while the Step 30 exercise method is a skeleton
+     */
+    @Override
+    public AppendResult produceIdempotent(
+            List<RecordData> records,
+            Acks acks,
+            int leaderEpoch,
+            long timeoutMillis,
+            long producerId,
+            int producerEpoch,
+            long firstSequence) {
+        throw new ExerciseNotImplementedException(30, "ReplicatedPartition.produceIdempotent");
     }
 
     /**

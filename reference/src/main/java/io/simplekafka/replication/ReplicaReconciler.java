@@ -14,7 +14,6 @@ import io.simplekafka.storage.PartitionLog;
 import io.simplekafka.transport.RpcClient;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -237,12 +236,7 @@ public final class ReplicaReconciler {
     }
 
     private static boolean sameRecord(LogRecord left, LogRecord right) {
-        if (left.offset() != right.offset()) return false;
-        RecordData a = left.data();
-        RecordData b = right.data();
-        return a.timestamp() == b.timestamp()
-                && Arrays.equals(a.key(), b.key())
-                && Arrays.equals(a.value(), b.value());
+        return left.offset() == right.offset() && left.data().equals(right.data());
     }
 
     /** The proof includes the exact leader LEO captured by the latest successful reconciliation. */

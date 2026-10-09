@@ -14,7 +14,8 @@ public final class Api {
             HEARTBEAT = 7,
             LEAVE_GROUP = 8,
             GROUP_ASSIGNMENT = 9,
-            REPLICA_FETCH = 10;
+            REPLICA_FETCH = 10,
+            IDEMPOTENT_PRODUCE = 11;
 
     private Api() {}
 
@@ -22,11 +23,11 @@ public final class Api {
      * Tests whether an identifier is one of the defined course API ids.
      *
      * @param id API identifier to test
-     * @return {@code true} when {@code id} is between {@link #METADATA} and {@link #REPLICA_FETCH},
-     *     inclusive
+     * @return {@code true} when {@code id} is between {@link #METADATA} and {@link
+     *     #IDEMPOTENT_PRODUCE}, inclusive
      */
     public static boolean known(short id) {
-        return id >= METADATA && id <= REPLICA_FETCH;
+        return id >= METADATA && id <= IDEMPOTENT_PRODUCE;
     }
 
     /**

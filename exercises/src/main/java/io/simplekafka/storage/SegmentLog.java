@@ -5,6 +5,7 @@ import io.simplekafka.ErrorCode;
 import io.simplekafka.ExerciseNotImplementedException;
 import io.simplekafka.model.AppendResult;
 import io.simplekafka.model.LogRecord;
+import io.simplekafka.model.ProducerStamp;
 import io.simplekafka.model.RecordData;
 
 import java.io.IOException;
@@ -25,6 +26,7 @@ public final class SegmentLog implements AutoCloseable {
     private final ReentrantLock lock = new ReentrantLock();
     private final long baseOffset;
     private long nextOffset;
+    private ProducerStamp tailProducerStamp;
     private boolean closed;
 
     private SegmentLog(Path path, FileChannel channel, long baseOffset) {
@@ -190,6 +192,16 @@ public final class SegmentLog implements AutoCloseable {
         }
     }
 
+    ProducerStamp tailProducerStamp() {
+        lock.lock();
+        try {
+            ensureOpen();
+            return tailProducerStamp;
+        } finally {
+            lock.unlock();
+        }
+    }
+
     /**
      * Returns the current segment file size in bytes.
      *
@@ -229,12 +241,14 @@ public final class SegmentLog implements AutoCloseable {
             long fileSize = channel.size();
             long position = 0;
             long expectedOffset = baseOffset;
+            ProducerStamp retainedTail = null;
             while (position < fileSize) {
                 if (expectedOffset == offset) break;
                 RecordAt found = readRecordAt(position, fileSize);
                 if (found.record().offset() != expectedOffset)
                     throw new CourseException(
                             ErrorCode.CORRUPT_RECORD, "segment offsets are not contiguous");
+                retainedTail = found.record().data().producerStamp();
                 position += found.bytes();
                 expectedOffset++;
             }
@@ -244,6 +258,7 @@ public final class SegmentLog implements AutoCloseable {
             channel.truncate(position);
             channel.force(false);
             nextOffset = offset;
+            tailProducerStamp = retainedTail;
         } catch (IOException exception) {
             throw storageError("truncate segment " + path, exception);
         } finally {

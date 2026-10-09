@@ -5,7 +5,7 @@
 
 三个 Java source root 是课程设计的一部分。\pathcode{provided/} 放数据类型、I/O、传输、序列化样板、生命周期和测试夹具；它让注意力集中在算法而非重复搭框架。\pathcode{exercises/} 是学生唯一需要逐步补全的工作区，所有步骤的类型和公开签名预先可见，尚未到达的方法会抛出带步骤号的 \method{ExerciseNotImplementedException}。\pathcode{reference/} 是隔离的完整答案，供对照和课程验证；它与练习代码类名相同，因此学生和参考源根绝不能同次编译。测试在两种模式下复用同一套黑盒契约；学生运行时 classpath 不含参考 classes。
 
-项目并非生产级 Kafka：没有 Kafka 线协议兼容、事务、压缩、compaction、幂等生产者、完整控制器共识或 controller HA。其 authority 是单 JVM 内的可信教学控制面；三台 broker 虽各有 TCP server、线程和磁盘目录，副本仍共享这个 authority。它可展示有控制的故障切换，不可用来声称任意网络分区下具备共识或生产级可用性。具体差异在附录和相关步骤反复标出。
+项目并非生产级 Kafka：没有 Kafka 线协议兼容、事务、压缩、compaction、完整控制器共识或 controller HA。第 8 章教学的是有限幂等生产者协议与本地持久化效果账本，它们不是 Kafka 生产协议，也不构成端到端事务。其 authority 是单 JVM 内的可信教学控制面；三台 broker 虽各有 TCP server、线程和磁盘目录，副本仍共享这个 authority。它可展示有控制的故障切换，不可用来声称任意网络分区下具备共识或生产级可用性。具体差异在附录和相关步骤反复标出。
 
 \section{准备 Java 21 与课程命令}
 项目使用 Gradle Wrapper \coursecmd{./gradlew}；Gradle 9.8.1 可运行于 Java 17+，Java 编译、测试和 demo 任务需要 Java 21+ JDK，并以 \pathcode{--release 21} 编译。不需要 Maven、Docker 或已启动的 Kafka。脚本使用 Bash 3.2+、\pathcode{find}、\pathcode{awk}、\pathcode{curl} 与 \pathcode{sha256sum} 或 \pathcode{shasum}；仅准备 Tectonic 时需要 \pathcode{tar} 和 \pathcode{install}。先检查 \coursecmd{java -version}、\coursecmd{javac -version} 与 \coursecmd{./gradlew --version}。可通过 \pathcode{JAVA_HOME} 或 \pathcode{PATH} 使用任意符合要求的 JDK；SDKMAN 可选，项目不会静默修改 SDKMAN、系统软件或 shell 配置。
@@ -27,16 +27,17 @@
 \toprule
 命令 & 意义 \\
 \midrule
-\coursecmd{./gradlew :list} & 显示 28 步、编辑方法与前置关系。\\
+\coursecmd{./gradlew :list} & 显示 31 步、编辑方法与前置关系。\\
 \coursecmd{./gradlew :stepTest -Pstep=12} & 只定位第 12 步；失败时辅助找当前问题。\\
 \coursecmd{./gradlew :test -Pstep=12} & 累计运行 Step01Test 至 Step12Test。\\
-\coursecmd{./gradlew :referenceTest -Pstep=28} & 对隔离参考实现运行完整 28 步契约。\\
+\coursecmd{./gradlew :referenceTest -Pstep=31} & 对隔离参考实现运行完整 31 步契约。\\
 \coursecmd{./gradlew :referenceDemo} & 运行完整参考 TCP/failover 场景。\\
+\coursecmd{./gradlew :referenceConsistencyDemo} & 运行第 8 章真实 TCP 与磁盘一致性场景。\\
 \bottomrule
 \end{tabular}
 \end{center}
 
-步骤编号接受 1–28 的十进制数字，可有前导零（例如 \pathcode{-Pstep=1} 或 \pathcode{-Pstep=01}）。章节边界是第 4、8、12、16、20、24、28 步：只有该边界累计测试全绿，才算章节完成。\coursecmd{./gradlew :test -Pstep=8} 通过意味着第 1–8 步全部通过；\coursecmd{./gradlew :stepTest -Pstep=8} 仅定位第 8 步，不授予晋级。全课程测试不应把参考源放进学生 classpath，参考模式也不能代替自己的练习进度。
+步骤编号接受 1–31 的十进制数字，可有前导零（例如 \pathcode{-Pstep=1} 或 \pathcode{-Pstep=01}）。章节边界是第 4、8、12、16、20、24、28、31 步：只有该边界累计测试全绿，才算章节完成。\coursecmd{./gradlew :test -Pstep=8} 通过意味着第 1–8 步全部通过；\coursecmd{./gradlew :stepTest -Pstep=8} 仅定位第 8 步，不授予晋级。全课程测试不应把参考源放进学生 classpath，参考模式也不能代替自己的练习进度。
 
 \section{系统不变量先行}
 阅读后续章节时牢记以下四条边界：一，日志保留范围内 offset 连续，LEO 是下一条写入位点，fetch 使用左闭右开区间；二，普通消费者可见范围不能越过 HW，group committed offset 是另一个状态量；三，锁按 authority partition lock 到本地 log lock 的顺序获取，网络 I/O 不在该锁内等待；四，错误必须有意义，尤其 epoch 或 generation 失效时不以静默重试伪造 exactly-once。每章都会说明它新引入了什么不变量以及由谁验证。

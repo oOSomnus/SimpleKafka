@@ -5,6 +5,7 @@ import io.simplekafka.ErrorCode;
 import io.simplekafka.ExerciseNotImplementedException;
 import io.simplekafka.model.AppendResult;
 import io.simplekafka.model.LogRecord;
+import io.simplekafka.model.ProducerStamp;
 import io.simplekafka.model.RecordData;
 
 import java.io.IOException;
@@ -12,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Stream;
@@ -25,6 +27,9 @@ public final class PartitionLog implements AutoCloseable {
     private final TreeMap<Long, SegmentEntry> segments = new TreeMap<>();
     private boolean closed;
     private long mutationVersion;
+    private ProducerStamp tailProducerStamp;
+    private long prefixVersion;
+    private boolean failed;
 
     /**
      * Creates the directory, opens its numbered segments, recovers each log, and rebuilds each
@@ -165,6 +170,26 @@ public final class PartitionLog implements AutoCloseable {
         }
     }
 
+    public ProducerStamp tailProducerStamp() {
+        lock.lock();
+        try {
+            ensureOpen();
+            return tailProducerStamp;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public long prefixVersion() {
+        lock.lock();
+        try {
+            ensureOpen();
+            return prefixVersion;
+        } finally {
+            lock.unlock();
+        }
+    }
+
     private void initialize() {
         try {
             Files.createDirectories(directory);
@@ -227,12 +252,26 @@ public final class PartitionLog implements AutoCloseable {
                 }
             }
             if (segments.isEmpty()) createSegment(0);
+            refreshTailProducerStamp();
         } catch (IOException exception) {
             closeAfterInitializationFailure(exception);
             throw storageError("initialize partition log " + directory, exception);
         } catch (RuntimeException exception) {
             closeAfterInitializationFailure(exception);
             throw exception;
+        }
+    }
+
+    private void refreshTailProducerStamp() {
+        tailProducerStamp = null;
+        Map.Entry<Long, SegmentEntry> tail = segments.lastEntry();
+        while (tail != null) {
+            SegmentLog log = tail.getValue().log;
+            if (log.logEndOffset() > log.baseOffset()) {
+                tailProducerStamp = log.tailProducerStamp();
+                return;
+            }
+            tail = segments.lowerEntry(tail.getKey());
         }
     }
 
@@ -291,6 +330,16 @@ public final class PartitionLog implements AutoCloseable {
         if (closed)
             throw new CourseException(
                     ErrorCode.STORAGE_ERROR, "partition log is closed: " + directory);
+        if (failed)
+            throw new CourseException(
+                    ErrorCode.STORAGE_ERROR,
+                    "partition log is failed and must be reopened: " + directory);
+    }
+
+    private static boolean poisonsAfterMutation(RuntimeException exception) {
+        return exception instanceof CourseException courseException
+                && (courseException.code() == ErrorCode.STORAGE_ERROR
+                        || courseException.code() == ErrorCode.CORRUPT_RECORD);
     }
 
     /**

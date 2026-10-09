@@ -1,11 +1,11 @@
 \title{从零理解 simpleKafka\\\large 一门面向源码的中文渐进式课程}
 \author{simpleKafka 教学项目}
-\date{课程版本：Java 21 · 28 个可运行步骤}
+\date{课程版本：Java 21 · 31 个可运行步骤}
 \hypersetup{pageanchor=false}
 \maketitle
 \hypersetup{pageanchor=true}
 \chapter*{写在开始之前}
-本书用一章课程地图和七个实现章节，展开二十八步。读者会亲自完成记录格式、日志、网络请求、消费位点、消费组和受控副本切换；不是通过连接真实 Kafka 来“假装实现”，也不是把生产级 Kafka 缩成几个空洞名词。每一步都对应一个明确的 Java 方法、行为测试、失败边界和可重复命令。请从第一步开始按序推进；本书正文、课程清单与测试类共用相同编号。
+本书用一章课程地图和八个实现章节，展开 31 步。读者会亲自完成记录格式、日志、网络请求、消费位点、消费组、受控副本切换，以及跨 producer、broker、consumer 的一致性实验；不是通过连接真实 Kafka 来“假装实现”，也不是把生产级 Kafka 缩成几个空洞名词。每一步都对应一个明确的 Java 方法、行为测试、失败边界和可重复命令。请从第一步开始按序推进；本书正文、课程清单与测试类共用相同编号。
 
 课程代码刻意分成 \pathcode{provided/}、\pathcode{exercises/}、\pathcode{reference/} 三个源根。学生入口编译前两者，参考入口编译第一和第三者；两套实现具有相同全限定类名，绝不可把两个答案源根放进同一次编译。参考实现用于在尝试后对照契约，并非学生测试 classpath 的后门。详细的开发环境、测试读取方法和晋级规则见本书第一章。
 \tableofcontents

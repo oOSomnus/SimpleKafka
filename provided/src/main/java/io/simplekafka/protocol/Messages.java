@@ -30,6 +30,7 @@ public final class Messages {
     public sealed interface Request
             permits MetadataRequest,
                     ProduceRequest,
+                    IdempotentProduceRequest,
                     FetchRequest,
                     CommitOffsetRequest,
                     FetchOffsetRequest,
@@ -167,6 +168,42 @@ public final class Messages {
         @Override
         public short apiId() {
             return Api.PRODUCE;
+        }
+    }
+
+    /**
+     * Request to append one explicitly sequenced producer batch.
+     *
+     * <p>The constructor copies the list structure into an immutable list; it does not validate the
+     * other components.
+     *
+     * @param tp target topic-partition
+     * @param epoch leader epoch expected by the broker
+     * @param acks acknowledgment mode requested for the append
+     * @param timeoutMillis acknowledgment timeout in milliseconds
+     * @param producerId caller-managed producer identity
+     * @param producerEpoch caller-managed producer session epoch
+     * @param firstSequence first sequence number in this batch
+     * @param records unstamped records to append in list order
+     */
+    public record IdempotentProduceRequest(
+            TopicPartition tp,
+            int epoch,
+            Acks acks,
+            long timeoutMillis,
+            long producerId,
+            int producerEpoch,
+            long firstSequence,
+            List<RecordData> records)
+            implements Request {
+        /** Copies the records list for this request. */
+        public IdempotentProduceRequest {
+            records = List.copyOf(records);
+        }
+
+        @Override
+        public short apiId() {
+            return Api.IDEMPOTENT_PRODUCE;
         }
     }
 

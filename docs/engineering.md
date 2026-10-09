@@ -10,11 +10,12 @@ The shell scripts require Bash 3.2+, `find`, `awk`, `curl`, and either `sha256su
 
 ## Tasks and test reports
 
-`./gradlew :compile` compiles the student skeleton and shared tests; a successful compile does not mean the exercise methods are implemented. `./gradlew :test -Pstep=N` runs the student contract cumulatively through step `N`. `./gradlew :stepTest -Pstep=N` runs one step for diagnosis only; it does not establish chapter completion. Chapter-end cumulative steps are 4, 8, 12, 16, 20, 24, and 28. Run the complete answer contract and the real TCP/failover scenario with:
+`./gradlew :compile` compiles the student skeleton and shared tests; a successful compile does not mean the exercise methods are implemented. `./gradlew :test -Pstep=N` runs the student contract cumulatively through step `N`. `./gradlew :stepTest -Pstep=N` runs one step for diagnosis only; it does not establish chapter completion. The course has 8 chapters and 31 steps; chapter-end cumulative steps are 4, 8, 12, 16, 20, 24, 28, and 31. Run the complete answer contract and the real TCP scenarios with:
 
 ```sh
-./gradlew :referenceTest -Pstep=28
+./gradlew :referenceTest -Pstep=31
 ./gradlew :referenceDemo
+./gradlew :referenceConsistencyDemo
 ```
 
 Course tasks run `CourseTestRunner` through `JavaExec`, print plain-text results, and write legacy JUnit XML under `build/student/reports/` or `build/reference/reports/`. The standard `:exercises:test` and `:reference:test` tasks remain available for IDE and `--tests` debugging; their XML and HTML reports are under `build/<mode>/gradle-test-results/` and `build/<mode>/gradle-test-reports/`. Report text is English regardless of `COURSE_LANG`. The runner honors the `NO_COLOR` and `TERM=dumb` color gate.
@@ -70,6 +71,6 @@ Each `StepNNTest` is registered in [`course/steps.tsv`](../course/steps.tsv). Th
 | [Clients and offsets](book/en/chapters/04-client-offset.tex), 13–16 | Producer batches and partition order; no replay after append with a timed-out response; consumer total budgets, positions, and error boundaries; offset rewind and restart recovery; at-least-once duplicate windows after processor or commit failure. |
 | [Consumer groups](book/en/chapters/05-consumer-groups.tex), 17–20 | Lexicographic assignment and empty members; generation, heartbeat, and expiry; real TCP token FETCH/COMMIT rejection for stale, future, non-owner, and empty-owner cases; revoked/retained positions and committed-offset recovery after restart. |
 | [Replication and acknowledgments](book/en/chapters/06-replication.tex), 21–24 | Real TCP fetch, retained-start/offline-requester rejection, bad responses, and in-flight role/epoch changes; ISR/HW monotonicity and exact timeout boundaries, including invalid negative timeouts; ACK waits/interruption; concurrent append, HW visibility, and cross-broker progress. |
-| [Election and repair](book/en/chapters/07-failover.tex), 25–28 | Clean-candidate eligibility and unchanged state when no candidate exists; HW conflicts, batched repair, and invalid proofs; metadata refresh without replay and topic/partition routing isolation; proofs bound to log identity/version, stale after truncation or same-LEO rewrite, retention invalidation, readmission deadlines, plus minISR/HW/waiter recovery. |
+| [Consistency across layers](book/en/chapters/08-consistency.tex), 29–31 | Real TCP fault windows across producer ACKs, broker replication/HW, consumer position/commit, and stale group generations; stamped producer-batch identity, explicit retry and disk recovery; durable event-id deduplication across callback replay. |
 
-Run the complete answer contract with `./gradlew :referenceTest -Pstep=28`. After implementing the corresponding student steps, use `./gradlew :test -Pstep=N` with the desired step number.
+Run the complete answer contract with `./gradlew :referenceTest -Pstep=31`, then the demonstrations with `./gradlew :referenceDemo` and `./gradlew :referenceConsistencyDemo`. After implementing the corresponding student steps, use `./gradlew :test -Pstep=N` with the desired step number.

@@ -142,6 +142,25 @@ public final class PartitionCatalog implements AutoCloseable {
         backends.put(tp, backend);
     }
 
+    /** Closes and reopens one partition log from the same catalog path and settings. */
+    public synchronized PartitionLog reopenPartition(TopicPartition tp) {
+        requireOpen();
+        if (tp == null)
+            throw new CourseException(ErrorCode.INVALID_REQUEST, "topic partition is required");
+        PartitionLog old = partitions.remove(tp);
+        if (old == null) throw unknownPartition(tp);
+        backends.remove(tp);
+        old.close();
+        Path directory =
+                root.resolve(tp.topic()).resolve(Integer.toString(tp.partition())).normalize();
+        if (!directory.startsWith(root))
+            throw new CourseException(ErrorCode.INVALID_REQUEST, "topic path escapes catalog root");
+        PartitionLog reopened = new PartitionLog(directory, SEGMENT_BYTES, INDEX_INTERVAL);
+        partitions.put(tp, reopened);
+        backends.put(tp, new LocalPartitionBackend(reopened));
+        return reopened;
+    }
+
     /**
      * Returns this catalog's configured broker identifier.
      *

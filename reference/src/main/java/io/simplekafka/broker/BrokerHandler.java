@@ -42,6 +42,8 @@ public final class BrokerHandler {
             Objects.requireNonNull(request, "request");
             if (request instanceof Messages.MetadataRequest metadata) return metadata(metadata);
             if (request instanceof Messages.ProduceRequest produce) return produce(produce);
+            if (request instanceof Messages.IdempotentProduceRequest idempotent)
+                return idempotentProduce(idempotent);
             if (request instanceof Messages.FetchRequest fetch) return fetch(fetch);
             if (request instanceof Messages.CommitOffsetRequest commit) return commit(commit);
             if (request instanceof Messages.FetchOffsetRequest fetchOffset)
@@ -87,6 +89,42 @@ public final class BrokerHandler {
                         request.acks(),
                         request.epoch(),
                         request.timeoutMillis());
+        return Messages.Reply.success(new Messages.ProduceBody(result));
+    }
+
+    private Messages.Reply idempotentProduce(Messages.IdempotentProduceRequest request) {
+        TopicPartition tp = requirePartition(request.tp());
+        if (request.acks() == null
+                || request.records() == null
+                || request.timeoutMillis() < 0
+                || request.producerId() < 0
+                || request.producerEpoch() < 0
+                || request.firstSequence() < 0
+                || request.records().isEmpty())
+            throw invalid("invalid idempotent produce parameters");
+        try {
+            Math.addExact(request.firstSequence(), request.records().size());
+        } catch (ArithmeticException exception) {
+            throw new CourseException(
+                    ErrorCode.INVALID_REQUEST, "producer sequence range overflows", exception);
+        }
+        for (var record : request.records()) {
+            if (record == null || record.producerStamp() != null)
+                throw invalid("producer records must be valid and unstamped");
+        }
+        PartitionBackend backend = catalog.backend(tp);
+        requireLeader(tp, request.epoch(), backend);
+        if (!(backend instanceof IdempotentProduceBackend idempotentBackend))
+            throw invalid("partition backend does not support idempotent produce");
+        AppendResult result =
+                idempotentBackend.produceIdempotent(
+                        request.records(),
+                        request.acks(),
+                        request.epoch(),
+                        request.timeoutMillis(),
+                        request.producerId(),
+                        request.producerEpoch(),
+                        request.firstSequence());
         return Messages.Reply.success(new Messages.ProduceBody(result));
     }
 

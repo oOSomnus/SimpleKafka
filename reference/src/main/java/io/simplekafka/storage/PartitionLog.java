@@ -5,6 +5,7 @@ import io.simplekafka.ErrorCode;
 import io.simplekafka.model.AppendResult;
 import io.simplekafka.model.IndexEntry;
 import io.simplekafka.model.LogRecord;
+import io.simplekafka.model.ProducerStamp;
 import io.simplekafka.model.RecordData;
 
 import java.io.IOException;
@@ -27,6 +28,9 @@ public final class PartitionLog implements AutoCloseable {
     private final TreeMap<Long, SegmentEntry> segments = new TreeMap<>();
     private boolean closed;
     private long mutationVersion;
+    private ProducerStamp tailProducerStamp;
+    private long prefixVersion;
+    private boolean failed;
 
     public PartitionLog(Path directory, long segmentBytes, int indexInterval) {
         if (directory == null || segmentBytes <= 0 || indexInterval <= 0)
@@ -39,16 +43,21 @@ public final class PartitionLog implements AutoCloseable {
     }
 
     public synchronized AppendResult append(List<RecordData> records) {
-        if (records == null || records.isEmpty())
-            throw new CourseException(ErrorCode.INVALID_REQUEST, "append batch must not be empty");
         lock.lock();
+        boolean mutationStarted = false;
         try {
             ensureOpen();
+            if (records == null || records.isEmpty())
+                throw new CourseException(
+                        ErrorCode.INVALID_REQUEST, "append batch must not be empty");
             long firstOffset = logEndOffsetLocked();
             int[] recordSizes = new int[records.size()];
+            boolean hasStampedRecords = false;
             long candidateNext = firstOffset;
             for (int i = 0; i < records.size(); i++) {
-                recordSizes[i] = RecordCodec.encodedSize(records.get(i));
+                RecordData record = records.get(i);
+                recordSizes[i] = RecordCodec.encodedSize(record);
+                hasStampedRecords |= record.producerStamp() != null;
                 try {
                     candidateNext = Math.addExact(candidateNext, 1L);
                 } catch (ArithmeticException exception) {
@@ -56,7 +65,10 @@ public final class PartitionLog implements AutoCloseable {
                             ErrorCode.INVALID_REQUEST, "log end offset overflow", exception);
                 }
             }
+            if (tailProducerStamp != null || hasStampedRecords)
+                ProducerBatchSupport.validateAppend(tailProducerStamp, records);
             markMutation();
+            mutationStarted = true;
 
             long nextOffset = firstOffset;
             int index = 0;
@@ -108,18 +120,23 @@ public final class PartitionLog implements AutoCloseable {
                 throw new CourseException(
                         ErrorCode.CORRUPT_RECORD,
                         "partition append returned an invalid next offset");
+            tailProducerStamp = records.getLast().producerStamp();
             return new AppendResult(firstOffset, nextOffset);
+        } catch (RuntimeException exception) {
+            if (mutationStarted && poisonsAfterMutation(exception)) failed = true;
+            throw exception;
         } finally {
             lock.unlock();
         }
     }
 
     public List<LogRecord> read(long offset, int maxRecords, int maxBytes) {
-        if (maxRecords <= 0 || maxBytes <= 0)
-            throw new CourseException(ErrorCode.INVALID_REQUEST, "read limits must be positive");
         lock.lock();
         try {
             ensureOpen();
+            if (maxRecords <= 0 || maxBytes <= 0)
+                throw new CourseException(
+                        ErrorCode.INVALID_REQUEST, "read limits must be positive");
             long startOffset = logStartOffsetLocked();
             long endOffset = logEndOffsetLocked();
             if (offset < startOffset || offset > endOffset)
@@ -165,12 +182,13 @@ public final class PartitionLog implements AutoCloseable {
     }
 
     public synchronized long deleteBefore(long offset) {
-        if (offset < 0)
-            throw new CourseException(
-                    ErrorCode.INVALID_REQUEST, "retention offset must be nonnegative");
         lock.lock();
+        boolean mutationStarted = false;
         try {
             ensureOpen();
+            if (offset < 0)
+                throw new CourseException(
+                        ErrorCode.INVALID_REQUEST, "retention offset must be nonnegative");
             boolean mutationMarked = false;
             while (segments.size() > 1) {
                 Map.Entry<Long, SegmentEntry> first = segments.firstEntry();
@@ -178,13 +196,19 @@ public final class PartitionLog implements AutoCloseable {
                 if (entry.log.logEndOffset() > offset) break;
                 if (!mutationMarked) {
                     markMutation();
+                    prefixVersion++;
                     mutationMarked = true;
+                    mutationStarted = true;
                 }
                 closeEntry(entry);
                 deleteEntryFiles(entry);
                 segments.remove(first.getKey());
             }
+            refreshTailProducerStamp();
             return logStartOffsetLocked();
+        } catch (RuntimeException exception) {
+            if (mutationStarted && poisonsAfterMutation(exception)) failed = true;
+            throw exception;
         } finally {
             lock.unlock();
         }
@@ -192,6 +216,7 @@ public final class PartitionLog implements AutoCloseable {
 
     public synchronized void truncateTo(long nextOffset) {
         lock.lock();
+        boolean mutationStarted = false;
         try {
             ensureOpen();
             long startOffset = logStartOffsetLocked();
@@ -210,6 +235,8 @@ public final class PartitionLog implements AutoCloseable {
                 throw new CourseException(
                         ErrorCode.CORRUPT_RECORD, "partition segments contain an offset gap");
             markMutation();
+            prefixVersion++;
+            mutationStarted = true;
 
             target.log.truncateToOffset(nextOffset);
             target.index.rebuild(target.log.path(), target.log.baseOffset());
@@ -220,6 +247,10 @@ public final class PartitionLog implements AutoCloseable {
                 deleteEntryFiles(entry.getValue());
                 segments.remove(entry.getKey());
             }
+            refreshTailProducerStamp();
+        } catch (RuntimeException exception) {
+            if (mutationStarted && poisonsAfterMutation(exception)) failed = true;
+            throw exception;
         } finally {
             lock.unlock();
         }
@@ -250,6 +281,26 @@ public final class PartitionLog implements AutoCloseable {
         try {
             ensureOpen();
             return mutationVersion;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public ProducerStamp tailProducerStamp() {
+        lock.lock();
+        try {
+            ensureOpen();
+            return tailProducerStamp;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public long prefixVersion() {
+        lock.lock();
+        try {
+            ensureOpen();
+            return prefixVersion;
         } finally {
             lock.unlock();
         }
@@ -317,12 +368,26 @@ public final class PartitionLog implements AutoCloseable {
                 }
             }
             if (segments.isEmpty()) createSegment(0);
+            refreshTailProducerStamp();
         } catch (IOException exception) {
             closeAfterInitializationFailure(exception);
             throw storageError("initialize partition log " + directory, exception);
         } catch (RuntimeException exception) {
             closeAfterInitializationFailure(exception);
             throw exception;
+        }
+    }
+
+    private void refreshTailProducerStamp() {
+        tailProducerStamp = null;
+        Map.Entry<Long, SegmentEntry> tail = segments.lastEntry();
+        while (tail != null) {
+            SegmentLog log = tail.getValue().log;
+            if (log.logEndOffset() > log.baseOffset()) {
+                tailProducerStamp = log.tailProducerStamp();
+                return;
+            }
+            tail = segments.lowerEntry(tail.getKey());
         }
     }
 
@@ -406,6 +471,16 @@ public final class PartitionLog implements AutoCloseable {
         if (closed)
             throw new CourseException(
                     ErrorCode.STORAGE_ERROR, "partition log is closed: " + directory);
+        if (failed)
+            throw new CourseException(
+                    ErrorCode.STORAGE_ERROR,
+                    "partition log is failed and must be reopened: " + directory);
+    }
+
+    private static boolean poisonsAfterMutation(RuntimeException exception) {
+        return exception instanceof CourseException courseException
+                && (courseException.code() == ErrorCode.STORAGE_ERROR
+                        || courseException.code() == ErrorCode.CORRUPT_RECORD);
     }
 
     private void markMutation() {

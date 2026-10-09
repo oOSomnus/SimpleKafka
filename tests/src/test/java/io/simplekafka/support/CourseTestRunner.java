@@ -33,7 +33,7 @@ import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
-/** Runs course tests and reports results in the vocabulary of the 28-step curriculum. */
+/** Runs course tests and reports results in the vocabulary of the course manifest. */
 public final class CourseTestRunner {
     private static final String COURSE_PACKAGE = "io.simplekafka.course.";
     private static final String ORDER_PARAMETER = "junit.jupiter.testclass.order.default";
@@ -75,11 +75,7 @@ public final class CourseTestRunner {
         try {
             maxStep = Integer.parseInt(args[2]);
         } catch (NumberFormatException exception) {
-            throw new IllegalArgumentException(
-                    "maxStep must be an integer from 1 to 28", exception);
-        }
-        if (maxStep < 1 || maxStep > 28) {
-            throw new IllegalArgumentException("maxStep must be from 1 to 28: " + args[2]);
+            throw new IllegalArgumentException("maxStep must be an integer", exception);
         }
 
         Path manifestPath = Path.of(args[3]);
@@ -90,6 +86,10 @@ public final class CourseTestRunner {
         } catch (IOException exception) {
             throw new IllegalArgumentException(
                     "cannot read course manifest: " + manifestPath, exception);
+        }
+        if (maxStep < 1 || maxStep > manifest.size()) {
+            throw new IllegalArgumentException(
+                    "maxStep must be from 1 to " + manifest.size() + ": " + args[2]);
         }
         List<String> selectedClasses = List.copyOf(Arrays.asList(args).subList(5, args.length));
         validateSelection(scope, maxStep, selectedClasses, manifest);
@@ -178,6 +178,7 @@ public final class CourseTestRunner {
         }
         Map<String, StepInfo> byClass = new HashMap<>();
         int expectedStep = 1;
+        int previousChapter = 0;
         for (int index = 1; index < lines.size(); index++) {
             String[] columns = lines.get(index).split("\t", -1);
             if (columns.length != 7) {
@@ -193,9 +194,14 @@ public final class CourseTestRunner {
                 throw new IllegalArgumentException(
                         "manifest line " + (index + 1) + " has invalid step/chapter", exception);
             }
+            boolean chapterSequenceValid =
+                    expectedStep == 1
+                            ? chapter == 1
+                            : chapter == previousChapter || chapter == previousChapter + 1;
             if (step != expectedStep
-                    || chapter < 1
+                    || !chapterSequenceValid
                     || columns[2].isBlank()
+                    || columns[3].isBlank()
                     || columns[4].isBlank()
                     || columns[5].isBlank()
                     || columns[6].isBlank()) {
@@ -209,11 +215,11 @@ public final class CourseTestRunner {
                 throw new IllegalArgumentException(
                         "duplicate test class in manifest: " + className);
             }
+            previousChapter = chapter;
             expectedStep++;
         }
-        if (expectedStep != 29) {
-            throw new IllegalArgumentException(
-                    "manifest must contain 28 steps; found " + (expectedStep - 1));
+        if (byClass.isEmpty()) {
+            throw new IllegalArgumentException("manifest must contain at least one step");
         }
         return Map.copyOf(byClass);
     }

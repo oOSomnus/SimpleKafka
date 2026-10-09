@@ -27,3 +27,6 @@ step	chapter	title_en	title_zh	editable_methods	test_class	prerequisites
 26	7	Divergent log reconciliation	分叉日志修复	ReplicaReconciler.reconcile	Step26Test	25
 27	7	Metadata routing refresh	元数据路由刷新	MetadataRouter.refresh;MetadataRouter.call	Step27Test	26
 28	7	Replica readmission to ISR	副本重新入ISR	ReplicaAdmission.tryAdd	Step28Test	27
+29	8	Cross-layer consistency experiments	三层一致性故障实验	ConsistencyExperiments.producerOutcomeUnknown;ConsistencyExperiments.leaderAckLoss;ConsistencyExperiments.allAckTimeout;ConsistencyExperiments.consumerReplay;ConsistencyExperiments.staleGroupSideEffect	Step29Test	28
+30	8	Idempotent producer	幂等生产者	IdempotentProducer.send;IdempotentProducer.retry;IdempotentAppender.append;IdempotentAppender.recover;ReplicatedPartition.produceIdempotent;BrokerHandler.handle(IDEMPOTENT_PRODUCE);MetadataRouter.call;RecordCodec.encode;RecordCodec.decode;SegmentLog.append;SegmentLog.recover;PartitionLog.append;PartitionLog.deleteBefore;PartitionLog.truncateTo	Step30Test	29
+31	8	Idempotent consumer effects	消费副作用幂等	DurableEffectStore.apply;DurableEffectStore.recover	Step31Test	30

@@ -2,6 +2,7 @@ package io.simplekafka.client;
 
 import io.simplekafka.CourseException;
 import io.simplekafka.ErrorCode;
+import io.simplekafka.model.ProducerStamp;
 import io.simplekafka.protocol.Messages;
 
 import java.util.Objects;
@@ -37,6 +38,7 @@ final class ClientSupport {
     static int recordBytes(io.simplekafka.model.LogRecord record) {
         var data = record.data();
         int keyBytes = data.key() == null ? 0 : data.key().length;
-        return Math.addExact(32, Math.addExact(keyBytes, data.value().length));
+        int stampBytes = data.producerStamp() == null ? 0 : ProducerStamp.ENCODED_OVERHEAD;
+        return Math.addExact(32 + stampBytes, Math.addExact(keyBytes, data.value().length));
     }
 }

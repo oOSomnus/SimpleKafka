@@ -21,7 +21,7 @@ Supported: Linux, macOS, and Windows WSL2 on x86_64 or arm64; native Windows is 
 
 ## Incremental steps
 
-The course has 7 chapters and 28 steps. `exercises/` is the student workspace; `reference/` contains isolated complete answers and is never loaded onto the student classpath. Import the repository root as a Gradle Wrapper project in an IDE, and use `exercises` as the learning project. Tests run cumulatively through prerequisites; chapter boundaries are Steps 4, 8, 12, 16, 20, 24, and 28.
+The course has 8 chapters and 31 steps. `exercises/` is the student workspace; `reference/` contains isolated complete answers and is never loaded onto the student classpath. Import the repository root as a Gradle Wrapper project in an IDE, and use `exercises` as the learning project. Tests run cumulatively through prerequisites; chapter boundaries are Steps 4, 8, 12, 16, 20, 24, 28, and 31.
 
 ```sh
 ./gradlew :test -Pstep=1        # the empty exercise skeleton is expected to fail
@@ -35,7 +35,8 @@ COURSE_LANG=zh ./gradlew :list  # show Chinese step titles
 - [Engineering guide](docs/engineering.md) · [简体中文工程指南](docs/engineering.zh-CN.md)
 - Textbook sources: [English entry](docs/book/simpleKafka.tex) · [Chinese entry](docs/book/simpleKafka-zh.tex)
 - Chapter 00: [English guide](docs/book/en/chapters/00-guide.tex) · [中文指南](docs/book/zh/chapters/00-guide.tex)
+- Chapter 08: [Consistency experiments and idempotence](docs/book/en/chapters/08-consistency.tex) · [一致性实验与幂等性](docs/book/zh/chapters/08-consistency.tex)
 
 ## Scope
 
-The project implements a teaching subset: three real TCP brokers in one JVM, separate disk logs and threads, and one trusted authority. It is not Kafka-wire compatible and does not provide controller high availability, consensus under network partitions, transactions, idempotent producers, compression, compaction, production-grade consumer-group rebalancing, or end-to-end exactly-once semantics. The textbook explains these boundaries step by step.
+The project implements a teaching subset: three real TCP brokers in one JVM, separate disk logs and threads, and one trusted authority. It teaches a limited idempotent-producer protocol with caller-managed identity and a durable local consumer-effect ledger, but these do not provide transactions or end-to-end exactly-once semantics. The project is not Kafka-wire compatible and does not provide controller high availability, consensus under network partitions, Kafka transactions, compression, compaction, production-grade consumer-group rebalancing, or production-grade exactly-once guarantees. The textbook explains these boundaries step by step.

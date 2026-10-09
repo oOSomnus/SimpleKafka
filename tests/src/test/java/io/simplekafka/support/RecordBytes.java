@@ -1,6 +1,7 @@
 package io.simplekafka.support;
 
 import io.simplekafka.model.LogRecord;
+import io.simplekafka.model.ProducerStamp;
 import io.simplekafka.model.RecordData;
 
 import java.io.IOException;
@@ -21,6 +22,38 @@ public final class RecordBytes {
     private static final int FIXED_BYTES = 32;
 
     private RecordBytes() {}
+
+    /** Encodes ordinary or stamped records independently from the production codec. */
+    public static byte[] record(long offset, RecordData data) {
+        if (data == null) throw new IllegalArgumentException("record data must not be null");
+        if (data.producerStamp() == null)
+            return record(offset, data.key(), data.value(), data.timestamp());
+
+        byte[] key = data.key();
+        byte[] value = data.value();
+        var stamp = data.producerStamp();
+        int keyBytes = key == null ? 0 : key.length;
+        int totalBytes = Math.addExact(32 + 64, Math.addExact(keyBytes, value.length));
+        byte[] bytes = new byte[totalBytes];
+        ByteBuffer output = ByteBuffer.wrap(bytes).order(ByteOrder.BIG_ENDIAN);
+        output.putInt(bytes.length - Integer.BYTES);
+        output.putInt(0);
+        output.putLong(offset);
+        output.putLong(data.timestamp());
+        output.putInt(-2);
+        output.putLong(stamp.producerId());
+        output.putInt(stamp.producerEpoch());
+        output.putLong(stamp.firstSequence());
+        output.putInt(stamp.batchSize());
+        output.putInt(stamp.batchIndex());
+        output.put(stamp.batchHash());
+        output.putInt(key == null ? -1 : key.length);
+        output.putInt(value.length);
+        if (key != null) output.put(key);
+        output.put(value);
+        repairCrc(bytes);
+        return bytes;
+    }
 
     public static byte[] record(long offset, byte[] key, byte[] value, long timestamp) {
         return record(offset, key, value, timestamp, key == null ? -1 : key.length, value.length);
@@ -151,10 +184,45 @@ public final class RecordBytes {
                                 end - position - Integer.BYTES * 2)
                         .slice()
                         .order(ByteOrder.BIG_ENDIAN);
+        if (input.remaining() < Long.BYTES * 2 + Integer.BYTES)
+            throw new AssertionError("record header is incomplete at byte " + position);
         long offset = input.getLong();
         long timestamp = input.getLong();
-        int keyLength = input.getInt();
-        int valueLength = input.getInt();
+        int keyOrMarker = input.getInt();
+        ProducerStamp stamp = null;
+        int keyLength;
+        int valueLength;
+        if (keyOrMarker == -2) {
+            if (input.remaining() < Long.BYTES * 2 + Integer.BYTES * 5 + 32)
+                throw new AssertionError("stamped record header is incomplete at byte " + position);
+            long producerId = input.getLong();
+            int producerEpoch = input.getInt();
+            long firstSequence = input.getLong();
+            int batchSize = input.getInt();
+            int batchIndex = input.getInt();
+            byte[] batchHash = new byte[32];
+            input.get(batchHash);
+            keyLength = input.getInt();
+            valueLength = input.getInt();
+            try {
+                stamp =
+                        new ProducerStamp(
+                                producerId,
+                                producerEpoch,
+                                firstSequence,
+                                batchSize,
+                                batchIndex,
+                                batchHash);
+            } catch (IllegalArgumentException exception) {
+                throw new AssertionError("invalid producer stamp at byte " + position, exception);
+            }
+        } else {
+            keyLength = keyOrMarker;
+            if (input.remaining() < Integer.BYTES)
+                throw new AssertionError(
+                        "record byte-array header is incomplete at byte " + position);
+            valueLength = input.getInt();
+        }
         if (offset < 0 || timestamp < 0 || keyLength < -1 || valueLength < 0)
             throw new AssertionError("invalid record fields at byte " + position);
         long payloadBytes = (keyLength < 0 ? 0L : keyLength) + (long) valueLength;
@@ -167,7 +235,7 @@ public final class RecordBytes {
         }
         byte[] value = new byte[valueLength];
         input.get(value);
-        return new LogRecord(offset, new RecordData(key, value, timestamp));
+        return new LogRecord(offset, new RecordData(key, value, timestamp, stamp));
     }
 
     private static void repairCrc(byte[] bytes) {

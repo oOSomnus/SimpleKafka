@@ -26,6 +26,7 @@ import io.simplekafka.transport.RpcClient;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -48,6 +49,7 @@ public final class ClusterHarness implements AutoCloseable {
     private final ClusterAuthority authority;
     private final Map<Integer, BrokerNode> nodes = new TreeMap<>();
     private final Map<TopicPartition, ReplicationTracker> trackers = new TreeMap<>();
+    private final Map<TopicPartition, AckPolicy> ackPolicies = new TreeMap<>();
     private final Map<String, TopicSpec> topics = new TreeMap<>();
     private OffsetStore offsets;
     private GroupCoordinator groups;
@@ -217,6 +219,7 @@ public final class ClusterHarness implements AutoCloseable {
                             clock,
                             DEFAULT_LAG_TIMEOUT_MILLIS);
             AckPolicy policy = new AckPolicy(tracker);
+            ackPolicies.put(tp, policy);
             trackers.put(tp, tracker);
             for (BrokerNode node : nodes.values()) {
                 ReplicaState replica =
@@ -329,6 +332,86 @@ public final class ClusterHarness implements AutoCloseable {
             }
         } catch (RuntimeException failure) {
             server.close();
+            throw failure;
+        }
+    }
+
+    /**
+     * Replaces one broker's log and replica backends with fresh objects recovered from the same
+     * catalog paths, then restarts its socket. Authority, group coordinator, and offset store
+     * remain in memory; reopened followers must re-replicate and prove recovery before ISR
+     * admission.
+     */
+    public synchronized void reopenBrokerFromDisk(int brokerId) {
+        requireStarted();
+        BrokerNode node = node(brokerId);
+        stopBroker(brokerId);
+        node.handler.set(null);
+        authority.setBrokerOnline(brokerId, false);
+        for (ReplicaState replica : node.replicaStates.values())
+            replica.update(replica.epoch(), replica.isLeader(), false);
+        List<PartitionLog> reopenedLogs = new ArrayList<>();
+        try {
+            for (Map.Entry<String, TopicSpec> topic : topics.entrySet()) {
+                for (int partition = 0; partition < topic.getValue().partitions(); partition++) {
+                    TopicPartition tp = new TopicPartition(topic.getKey(), partition);
+                    PartitionLog log = node.catalog.reopenPartition(tp);
+                    reopenedLogs.add(log);
+                    ReplicationTracker tracker =
+                            Objects.requireNonNull(trackers.get(tp), "tracker");
+                    AckPolicy policy = Objects.requireNonNull(ackPolicies.get(tp), "ack policy");
+                    ClusterAuthority.PartitionState state = authority.partitionState(tp);
+                    state.lock.lock();
+                    try {
+                        boolean leader = state.leaderId == brokerId;
+                        if (leader) {
+                            long leo = log.logEndOffset();
+                            long reported = state.reportedLEO.getOrDefault(brokerId, 0L);
+                            if (leo < state.highWatermark || leo < reported)
+                                throw new CourseException(
+                                        ErrorCode.CORRUPT_RECORD,
+                                        "reopened leader log is behind committed or reported progress");
+                        } else {
+                            state.isr.remove(brokerId);
+                            state.reportedLEO.put(brokerId, 0L);
+                            state.lastCaughtUpMillis.remove(brokerId);
+                            state.changed.signalAll();
+                        }
+                        RecoveryProofRegistry.clear(authority, tp, brokerId);
+                        ReplicaState replica =
+                                new ReplicaState(brokerId, state.epoch, leader, false);
+                        node.replicaStates.put(tp, replica);
+                        node.catalog.installBackend(
+                                tp, new ReplicatedPartition(tp, log, replica, tracker, policy));
+                    } finally {
+                        state.lock.unlock();
+                    }
+                }
+            }
+            node.handler.set(new BrokerHandler(node.catalog, authority, groups, offsets));
+            restartBroker(brokerId);
+        } catch (RuntimeException failure) {
+            node.handler.set(null);
+            try {
+                authority.setBrokerOnline(brokerId, false);
+            } catch (RuntimeException offlineFailure) {
+                failure.addSuppressed(offlineFailure);
+            }
+            if (node.server != null) {
+                try {
+                    node.server.close();
+                } catch (RuntimeException closeFailure) {
+                    failure.addSuppressed(closeFailure);
+                }
+                node.server = null;
+            }
+            for (PartitionLog log : reopenedLogs) {
+                try {
+                    log.close();
+                } catch (RuntimeException closeFailure) {
+                    failure.addSuppressed(closeFailure);
+                }
+            }
             throw failure;
         }
     }

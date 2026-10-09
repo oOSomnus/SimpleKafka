@@ -4,12 +4,14 @@ import io.simplekafka.CourseException;
 import io.simplekafka.ErrorCode;
 import io.simplekafka.model.Acks;
 import io.simplekafka.model.AppendResult;
+import io.simplekafka.model.BusinessEvent;
 import io.simplekafka.model.Endpoint;
 import io.simplekafka.model.GroupAssignment;
 import io.simplekafka.model.GroupToken;
 import io.simplekafka.model.LogRecord;
 import io.simplekafka.model.OffsetKey;
 import io.simplekafka.model.PartitionMetadata;
+import io.simplekafka.model.ProducerStamp;
 import io.simplekafka.model.RecordData;
 import io.simplekafka.model.TopicPartition;
 
@@ -99,6 +101,7 @@ public final class MessageCodec {
                     switch (api) {
                         case Api.METADATA -> new Messages.MetadataRequest(input.readTopic());
                         case Api.PRODUCE -> readProduceRequest(input);
+                        case Api.IDEMPOTENT_PRODUCE -> readIdempotentProduceRequest(input);
                         case Api.FETCH -> readFetchRequest(input);
                         case Api.COMMIT_OFFSET -> readCommitOffsetRequest(input);
                         case Api.FETCH_OFFSET ->
@@ -225,7 +228,8 @@ public final class MessageCodec {
             Messages.Response response =
                     switch (api) {
                         case Api.METADATA -> new Messages.MetadataBody(input.readMetadataList());
-                        case Api.PRODUCE -> new Messages.ProduceBody(input.readAppendResult());
+                        case Api.PRODUCE, Api.IDEMPOTENT_PRODUCE ->
+                                new Messages.ProduceBody(input.readAppendResult());
                         case Api.FETCH -> readFetchBody(input);
                         case Api.COMMIT_OFFSET, Api.HEARTBEAT -> new Messages.EmptyBody();
                         case Api.FETCH_OFFSET -> new Messages.OffsetBody(input.readOptionalLong());
@@ -307,15 +311,68 @@ public final class MessageCodec {
         }
     }
 
+    /** Encodes one versioned application event as a compact record value. */
+    public static byte[] encodeBusinessEvent(BusinessEvent event) {
+        if (event == null) throw invalid("business event is null");
+        Writer sizing = new Writer(null);
+        sizing.putByte(1);
+        sizing.putIdentifier(event.eventId(), "event id");
+        sizing.putIdentifier(event.account(), "account");
+        sizing.putLong(event.delta());
+        byte[] payload = new byte[sizing.position];
+        Writer output = new Writer(payload);
+        output.putByte(1);
+        output.putIdentifier(event.eventId(), "event id");
+        output.putIdentifier(event.account(), "account");
+        output.putLong(event.delta());
+        return payload;
+    }
+
+    /** Decodes one versioned application event and rejects malformed or trailing bytes. */
+    public static BusinessEvent decodeBusinessEvent(byte[] payload) {
+        Reader input = new Reader(payload);
+        try {
+            if (input.readUnsignedByte() != 1) throw invalid("unknown business event version");
+            BusinessEvent event =
+                    new BusinessEvent(
+                            input.readIdentifier("event id"),
+                            input.readIdentifier("account"),
+                            input.readLong());
+            input.requireEnd();
+            return event;
+        } catch (CourseException exception) {
+            throw exception;
+        } catch (IllegalArgumentException | NullPointerException exception) {
+            throw invalid("invalid business event", exception);
+        }
+    }
+
     private static void writeRequest(Writer output, Messages.Request request) {
         if (request instanceof Messages.MetadataRequest value) {
             output.putTopic(value.topic());
         } else if (request instanceof Messages.ProduceRequest value) {
+            requireUnstampedRecords(value.records());
             output.writeTopicPartition(value.tp());
             output.putInt(value.epoch());
             if (value.acks() == null) throw invalid("acks is null");
             output.putShort(value.acks().wireId());
             output.putLong(value.timeoutMillis());
+            output.writeRecordDataList(value.records());
+        } else if (request instanceof Messages.IdempotentProduceRequest value) {
+            validateIdempotentProducerFields(
+                    value.timeoutMillis(),
+                    value.producerId(),
+                    value.producerEpoch(),
+                    value.firstSequence(),
+                    value.records());
+            output.writeTopicPartition(value.tp());
+            output.putInt(value.epoch());
+            if (value.acks() == null) throw invalid("acks is null");
+            output.putShort(value.acks().wireId());
+            output.putLong(value.timeoutMillis());
+            output.putLong(value.producerId());
+            output.putInt(value.producerEpoch());
+            output.putLong(value.firstSequence());
             output.writeRecordDataList(value.records());
         } else if (request instanceof Messages.FetchRequest value) {
             output.writeTopicPartition(value.tp());
@@ -390,8 +447,24 @@ public final class MessageCodec {
         int epoch = input.readInt();
         Acks acks = Acks.fromWireId(input.readShort());
         long timeoutMillis = input.readLong();
-        return new Messages.ProduceRequest(
-                tp, epoch, acks, timeoutMillis, input.readRecordDataList());
+        List<RecordData> records = input.readRecordDataList();
+        requireUnstampedRecords(records);
+        return new Messages.ProduceRequest(tp, epoch, acks, timeoutMillis, records);
+    }
+
+    private static Messages.IdempotentProduceRequest readIdempotentProduceRequest(Reader input) {
+        TopicPartition tp = input.readTopicPartition();
+        int epoch = input.readInt();
+        Acks acks = Acks.fromWireId(input.readShort());
+        long timeoutMillis = input.readLong();
+        long producerId = input.readLong();
+        int producerEpoch = input.readInt();
+        long firstSequence = input.readLong();
+        List<RecordData> records = input.readRecordDataList();
+        validateIdempotentProducerFields(
+                timeoutMillis, producerId, producerEpoch, firstSequence, records);
+        return new Messages.IdempotentProduceRequest(
+                tp, epoch, acks, timeoutMillis, producerId, producerEpoch, firstSequence, records);
     }
 
     private static Messages.FetchRequest readFetchRequest(Reader input) {
@@ -432,6 +505,43 @@ public final class MessageCodec {
     private static Messages.ReplicaFetchBody readReplicaFetchBody(Reader input) {
         return new Messages.ReplicaFetchBody(
                 input.readLogRecordList(), input.readInt(), input.readLong(), input.readLong());
+    }
+
+    private static void validateIdempotentProducerFields(
+            long timeoutMillis,
+            long producerId,
+            int producerEpoch,
+            long firstSequence,
+            List<RecordData> records) {
+        if (timeoutMillis < 0
+                || producerId < 0
+                || producerEpoch < 0
+                || firstSequence < 0
+                || records == null
+                || records.isEmpty()) throw invalid("invalid idempotent producer request");
+        try {
+            Math.addExact(firstSequence, records.size());
+        } catch (ArithmeticException exception) {
+            throw invalid("producer sequence range overflows", exception);
+        }
+        requireUnstampedRecords(records);
+        for (RecordData record : records) {
+            long recordLength =
+                    RECORD_FIXED_LENGTH
+                            + ProducerStamp.ENCODED_OVERHEAD
+                            + (record.key() == null ? 0L : record.key().length)
+                            + record.value().length;
+            if (recordLength > MAX_RECORD_LENGTH)
+                throw invalid("idempotent producer record exceeds maximum length");
+        }
+    }
+
+    private static void requireUnstampedRecords(List<RecordData> records) {
+        if (records == null) throw invalid("record list is null");
+        for (RecordData record : records) {
+            if (record == null || record.producerStamp() != null)
+                throw invalid("producer request records must be unstamped");
+        }
     }
 
     private static void requireValidTopic(String topic) {
@@ -568,10 +678,26 @@ public final class MessageCodec {
         private void writeRecordData(RecordData data) {
             if (data == null || data.value() == null)
                 throw invalid("record data is null or has a null value");
+            ProducerStamp stamp = data.producerStamp();
             long keyLength = data.key() == null ? 0 : data.key().length;
-            if (RECORD_FIXED_LENGTH + keyLength + data.value().length > MAX_RECORD_LENGTH)
-                throw invalid("record exceeds maximum length");
+            long recordLength =
+                    RECORD_FIXED_LENGTH
+                            + keyLength
+                            + data.value().length
+                            + (stamp == null ? 0 : ProducerStamp.ENCODED_OVERHEAD);
+            if (recordLength > MAX_RECORD_LENGTH) throw invalid("record exceeds maximum length");
             if (data.timestamp() < 0) throw invalid("record timestamp is negative");
+            if (stamp != null) {
+                putInt(-2);
+                putLong(stamp.producerId());
+                putInt(stamp.producerEpoch());
+                putLong(stamp.firstSequence());
+                putInt(stamp.batchSize());
+                putInt(stamp.batchIndex());
+                int start = reserve(stamp.batchHash().length);
+                if (bytes != null)
+                    System.arraycopy(stamp.batchHash(), 0, bytes, start, stamp.batchHash().length);
+            }
             putBytes(data.key(), true, "record key");
             putBytes(data.value(), false, "record value");
             putLong(data.timestamp());
@@ -779,18 +905,41 @@ public final class MessageCodec {
 
         private RecordData readRecordData() {
             int keyLength = readInt();
-            if (keyLength < -1
-                    || (keyLength >= 0
-                            && RECORD_FIXED_LENGTH + (long) keyLength > MAX_RECORD_LENGTH))
+            ProducerStamp stamp = null;
+            if (keyLength == -2) {
+                long producerId = readLong();
+                int producerEpoch = readInt();
+                long firstSequence = readLong();
+                int batchSize = readInt();
+                int batchIndex = readInt();
+                byte[] batchHash = readBytes(32, "producer batch hash");
+                try {
+                    stamp =
+                            new ProducerStamp(
+                                    producerId,
+                                    producerEpoch,
+                                    firstSequence,
+                                    batchSize,
+                                    batchIndex,
+                                    batchHash);
+                } catch (IllegalArgumentException exception) {
+                    throw invalid("invalid producer stamp", exception);
+                }
+                keyLength = readInt();
+            }
+            if (keyLength < -1) throw invalid("invalid record key length");
+            long stampBytes = stamp == null ? 0 : ProducerStamp.ENCODED_OVERHEAD;
+            long keyBytes = keyLength < 0 ? 0L : keyLength;
+            if (RECORD_FIXED_LENGTH + stampBytes + keyBytes > MAX_RECORD_LENGTH)
                 throw invalid("invalid record key length");
             byte[] key = keyLength == -1 ? null : readBytes(keyLength, "record key");
             int valueLength = readInt();
-            if (valueLength < 0
-                    || RECORD_FIXED_LENGTH + (keyLength < 0 ? 0L : keyLength) + valueLength
-                            > MAX_RECORD_LENGTH) throw invalid("invalid record value length");
+            long recordLength = RECORD_FIXED_LENGTH + stampBytes + keyBytes + valueLength;
+            if (valueLength < 0 || recordLength > MAX_RECORD_LENGTH)
+                throw invalid("invalid record value length");
             byte[] value = readBytes(valueLength, "record value");
             long timestamp = readLong();
-            return new RecordData(key, value, timestamp);
+            return new RecordData(key, value, timestamp, stamp);
         }
 
         private List<RecordData> readRecordDataList() {

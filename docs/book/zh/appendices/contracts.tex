@@ -20,6 +20,8 @@ key/value & 变长 & 按前述长度紧跟在字段后。\\
 \end{tabular}
 \end{center}
 每条记录的固定长度部分（不含 length 前缀）包含 CRC、offset、timestamp、两个 length，共 28 bytes；长度前缀使最小总占用为 32 bytes。length 字段值下限仍是 28，因为其统计从 CRC 开始。每条 segment 的稀疏索引条目是 \pathcode{offset:int64,position:int64}，共 16 bytes；索引每 intervalRecords 条记录写一个点，首条总有点。索引可以丢弃并由日志重建。
+普通记录保持原布局。stamped record 在 timestamp 后、keyLength 前插入以下 64-byte producer identity：\pathcode{marker:int32=-2 | producerId:int64 | producerEpoch:int32 | firstSequence:int64 | batchSize:int32 | batchIndex:int32 | batchHash:32 bytes}。完整布局为 \pathcode{length | crc32c | offset | timestamp | marker | producerId | producerEpoch | firstSequence | batchSize | batchIndex | batchHash | keyLength | valueLength | key | value}。最小总长为 96 bytes，1 MiB 上限包含 stamp。CRC32C 覆盖 offset 到最后一个 value byte，包含 stamp。普通 record 字节不变。
+已提供的 \method{ProducerStamp.ENCODED_OVERHEAD} 为 64 bytes，磁盘与 \method{MessageCodec} wire record 的 1 MiB 上限均包含这部分开销。
 
 目录约定为 \pathcode{<root>/<topic>/<partition>/<baseOffset:020d>.log}，配对索引后缀为 \pathcode{.index}。保留范围是 [logStartOffset,LEO)，fetch 左闭右开；LEO 是下一条可写 offset，HW 是普通 consumer 能观察的最高提交边界（仅 offset < HW 可见）。group committed offset 也是 next offset，但不等于 HW。
 
@@ -37,10 +39,11 @@ ID & API & ID & API \\
 3 & FETCH & 8 & \method{LEAVE_GROUP} \\
 4 & \method{COMMIT_OFFSET} & 9 & \method{GROUP_ASSIGNMENT} \\
 5 & \method{FETCH_OFFSET} & 10 & \method{REPLICA_FETCH} \\
+11 & \method{IDEMPOTENT_PRODUCE} & & \\
 \bottomrule
 \end{tabular}
 \end{center}
-MessageCodec 使用大端基础字段；字符串为 int32 UTF-8 byte 长度后接 bytes，集合为 int32 数量后逐项，Optional 值用 boolean 再接值，byte[] 用 int32 长度（仅 key 可 -1）。请求/成功响应字段按 provided Messages nested record 声明顺序编码；map 结果按 key 排序。Reply 头部 error=NONE 时 body 是相应成功 record；错误时 body 为 ErrorBody(message)，错误码只在 frame header 出现。字段 schema 由 \pathcode{provided/.../protocol/Messages.java} 固定，学生不需重新定义十组消息格式。
+MessageCodec 使用大端基础字段；字符串为 int32 UTF-8 byte 长度后接 bytes，集合为 int32 数量后逐项，Optional 值用 boolean 再接值，byte[] 用 int32 长度（仅 key 可 -1）。请求/成功响应字段按 provided Messages nested record 声明顺序编码；map 结果按 key 排序。Reply 头部 error=NONE 时 body 是相应成功 record；错误时 body 为 ErrorBody(message)，错误码只在 frame header 出现。字段 schema 由 \pathcode{provided/.../protocol/Messages.java} 固定，学生不需重新定义十一种消息格式。FETCH 或 \pathcode{REPLICA_FETCH} wire 上的 stamped RecordData 为 \pathcode{marker=-2 | producerId | producerEpoch | firstSequence | batchSize | batchIndex | batchHash[32] | keyLength | key | valueLength | value | timestamp}；普通 record 的 wire 编码不变。
 \subsection{消息 body 字段顺序}
 下面的请求与响应由 MessageCodec 按表内参数声明顺序编码。集合长度和字符串/byte 长度均为大端 int32；列表项无额外 tag，按各 value type 声明顺序内联。GroupToken nullable，用 boolean present 后跟 group、member、generation；Acks 为 int16，LEADER=1、ALL=-1。
 \setlength{\tabcolsep}{3pt}
@@ -53,6 +56,7 @@ API & 请求记录与字段 & 成功响应记录与字段 \\
 \method{METADATA} & MetadataRequest: topic & MetadataBody: partitions \\
 \method{PRODUCE} & ProduceRequest: tp, epoch, acks, timeoutMillis, records & ProduceBody: result \\
 \method{FETCH} & FetchRequest: tp, epoch, offset, maxRecords, maxBytes, token & FetchBody: records, logStartOffset, logEndOffset, highWatermark, epoch \\
+\method{IDEMPOTENT_PRODUCE} & IdempotentProduceRequest: tp, epoch, acks, timeoutMillis, producerId, producerEpoch, firstSequence, records & ProduceBody: result \\
 \method{COMMIT_OFFSET} & CommitOffsetRequest: key, nextOffset, token & EmptyBody \\
 \method{FETCH_OFFSET} & FetchOffsetRequest: key & OffsetBody: nextOffset (OptionalLong) \\
 \method{JOIN_GROUP} & JoinGroupRequest: group, member, topic & GroupBody: assignment \\
@@ -70,13 +74,15 @@ API & 请求记录与字段 & 成功响应记录与字段 \\
 Record & Fields in declaration order \\
 \midrule
 \method{TopicPartition} & \method{topic}, \method{partition} \\
-\method{RecordData} & \method{key}, \method{value}, \method{timestamp} \\
+\method{RecordData} & \method{key}, \method{value}, \method{timestamp}, nullable \method{producerStamp} \\
 \method{LogRecord} & \method{offset}, \method{data} \\
 \method{AppendResult} & \method{firstOffset}, \method{nextOffset} \\
 \method{OffsetKey} & \method{group}, \method{tp} \\
 \method{Endpoint} & \method{host}, \method{port} \\
 \method{GroupAssignment} & \method{generation}, \method{assignments} \\
 \method{PartitionMetadata} & \method{tp}, \method{leaderId}, \method{epoch}, \method{replicas}, \method{isr}, \method{leader} \\
+\method{ProducerStamp} & \method{producerId}, \method{producerEpoch}, \method{firstSequence}, \method{batchSize}, \method{batchIndex}, \method{batchHash} \\
+\method{BusinessEvent} & \method{eventId}, \method{account}, \method{delta} \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -84,11 +90,18 @@ Record & Fields in declaration order \\
 Each byte array is length-prefixed; only key may be null (length -1), while value is always present but may be empty.
 
 OffsetStore entries use \method{MessageCodec.encodeOffsetEntry}, with null key and timestamp 0. The record's physical log offset is independent of committed nextOffset.
+BusinessEvent value 使用 \method{MessageCodec.encodeBusinessEvent} 编码：\pathcode{version:uint8=1 | eventId:identifier | account:identifier | delta:int64}。两个标识均为非空、严格 UTF-8 且最长 255 bytes；delta 可正、可负或为零。
 \subsection{标识符与值类型}
 topic、group、member 是非空 UTF-8 标识且最长 255 bytes；topic 只能包含 ASCII 字母数字、点、下划线、连字符，并拒绝 \pathcode{.} 与 \pathcode{..}。TopicPartition 的 partition 非负。RecordData 的 key 可以 null、value 不可 null（允许空数组），timestamp 非负；LogRecord offset 非负。数组所有权移交值对象后由接收方持有，不需要反复复制。所有 offset 表示下一条时都使用 half-open 边界，具体区别见正文各章。
 
+\section{幂等追加与持久化副作用}
+API id 11 是独立的 \method{IDEMPOTENT_PRODUCE} 请求；普通 \method{PRODUCE} 仍为非幂等模式，并拒绝带 stamp 的 client 输入。请求携带 \pathcode{tp, epoch, acks, timeoutMillis, producerId, producerEpoch, firstSequence, records}；broker 为每条记录加入请求的 batch identity，并对记录数量与 timestamp/key/value 内容流式计算 SHA-256 指纹。producer id 与 epoch 由调用方管理。新 producer epoch 从 sequence 0 开始，且只有记录持久化后才生效。完全相同的已完成请求返回原 offset 区间，不追加；相同 identity 携带不同内容会冲突；sequence gap 与未知的旧 sequence 会被拒绝。匹配的部分 batch 可只追加缺失后缀来完成。派生状态从保留日志历史恢复；当 \method{logStartOffset} 非零时，幂等请求报 \method{PRODUCER_STATE_EXPIRED}。本课程没有 producer-state snapshot 或 client session WAL。
+
+\method{IdempotentProducer} 每次调用只发送一次。调用失败会保留 pending batch；只有调用方显式调用 \method{retry} 才刷新 metadata，并以同一 identity、sequence 和 payload 重发一次。重复请求仍通过普通 ACK precheck 并等待确认，包括 ALL 的 ISR/HW/deadline 条件。这不改变从不自动重试的 \method{SimpleProducer}。
+
+\method{DurableEffectStore} 将一条 \method{BusinessEvent} 作为一条本地日志记录 force 写入。首次 event id 会追加并更新账户余额；id 与内容都相同的重放返回 false，不再追加；同 id 不同内容或 checked balance 溢出会被拒绝。恢复从保留日志重建事件身份和余额，并要求日志起点为零。该本地账本不与 \method{ProcessingLoop} 的 offset commit 原子协调：commit 失败后 callback 可再次运行，而稳定 event id 可防止本地记账重复。group fencing 不能撤销已经发生的副作用。
 \section{固定错误码}
-\begin{longtable}{rll}
+\begin{longtable}{r p{.27\textwidth} p{.55\textwidth}}
 \toprule
 Wire id & 名称 & 用途 \\
 \midrule
@@ -106,12 +119,17 @@ Wire id & 名称 & 用途 \\
 10 & \method{UNKNOWN_MEMBER} & 消费组 member 未登记。\\
 11 & \method{NOT_ASSIGNED} & 操作涉及未分配 partition。\\
 12 & \method{NO_ELIGIBLE_LEADER} & 无满足干净选举条件的候选。\\
-13 & \method{STORAGE_ERROR} & I/O 失败，底层 cause 保留。\\
+13 & \method{STORAGE_ERROR} & I/O 失败；保留底层 cause。\\
+14 & \method{FENCED_PRODUCER_EPOCH} & 请求使用旧 producer epoch。\\
+15 & \method{OUT_OF_ORDER_SEQUENCE} & batch sequence 或边界无效。\\
+16 & \method{DUPLICATE_SEQUENCE_CONFLICT} & 重复 batch identity 的内容不同。\\
+17 & \method{PRODUCER_STATE_EXPIRED} & 所需 producer 历史已不在保留日志前缀中。\\
+18 & \method{INCOMPLETE_BATCH} & 无关追加会跨越未完成的 producer batch。\\
 \bottomrule
 \end{longtable}
 未知 ID 不映射为成功；I/O 错误不吞 cause；网络错误 body 不回传服务器堆栈。
 
-\section{二十八步与编辑入口}
+\section{三十一步与编辑入口}
 所有路径均相对于仓库根目录，学生修改 \pathcode{exercises/src/main/java/io/simplekafka/} 下指定方法。每步累积命令为 \coursecmd{./gradlew :test -Pstep=N}；单步定位命令为 \coursecmd{./gradlew :stepTest -Pstep=N}，它不是晋级证明。
 \begin{longtable}{r p{.20\textwidth} p{.68\textwidth}}
 \toprule
@@ -146,9 +164,12 @@ Wire id & 名称 & 用途 \\
 26 & 分叉日志修复 & replication/ReplicaReconciler: reconcile \\
 27 & 元数据路由刷新 & client/MetadataRouter: refresh, call \\
 28 & 副本重新入ISR & replication/ReplicaAdmission: tryAdd \\
+29 & 三层一致性故障实验 & lab/ConsistencyExperiments: producerOutcomeUnknown, leaderAckLoss, allAckTimeout, consumerReplay, staleGroupSideEffect \\
+30 & 幂等生产者 & client/IdempotentProducer: send, retry;\newline replication/IdempotentAppender: append, recover;\newline replication/ReplicatedPartition: produceIdempotent;\newline broker/BrokerHandler: handle(\method{IDEMPOTENT_PRODUCE});\newline client/MetadataRouter: call;\newline storage/RecordCodec: encode, decode;\newline storage/SegmentLog: append, recover;\newline storage/PartitionLog: append, deleteBefore, truncateTo \\
+31 & 消费副作用幂等 & client/DurableEffectStore: apply, recover \\
 \bottomrule
 \end{longtable}
-章节按每四步编号；章节末累计通过点依次为 4、8、12、16、20、24、28。若前一步未通过，后一步测试通常也会失败，因为课程采用同一持续演进的系统而非互不相干的演示程序。
+前七章各含四步；第 8 章含第 29–31 步。章节末累计通过点依次为 4、8、12、16、20、24、28、31。若前一步未通过，后一步测试通常也会失败，因为课程采用同一持续演进的系统而非互不相干的演示程序。
 
 \section{课程简化与 Kafka 的差异}
 \begin{enumerate}
@@ -159,7 +180,7 @@ Wire id & 名称 & 用途 \\
 \item \textbf{offset：}本地 OffsetStore 不是高可用复制压缩的 \pathcode{__consumer_offsets}。
 \item \textbf{复制与控制面：}各 broker 用真实 TCP 拉取并写独立目录；authority/coordinator 却在同 JVM 且单一可信，不是 KRaft，不保证 controller/authority 故障后的集群恢复或任意分区下共识。
 \item \textbf{可见性假设：}本课程保留已提交前缀，要求干净候选 LEO 不低于 authority HW，使受控切换的已知提交边界不回退；这比对真实 Kafka 跨 epoch HW 行为更强，不可推广成 Kafka 永远单调的结论。
-\item \textbf{重试与事务：}producer 不自动重试，timeout 可能已追加；没有压缩、compaction、事务、幂等 producer、fire-and-forget 或 ELR。at-least-once 允许重复，不声称 exactly-once。
+\item \textbf{重试、幂等与事务：}普通 \method{SimpleProducer} 从不自动重试，timeout 可能已追加。独立的 \method{IdempotentProducer} 支持由调用方管理 producer identity 并显式重试，batch stamp 持久化在日志中；但它不实现 Kafka PID 分配、transaction coordinator、client session WAL 或 producer-state snapshot，retention 可能使所需前缀过期。本地 \method{DurableEffectStore} 按稳定业务 event id 去重，但与 consumer offset commit 不原子协调。没有 Kafka 事务或 \method{read_committed} 保证、compaction、fire-and-forget 或 ELR。at-least-once 容许重复；本教学子集不声称端到端 exactly-once。
 \item \textbf{恢复：}第 26 步全量比较前缀为 O(n) 教学简化；真实系统利用 leader epoch 历史缩小分叉搜索范围。
 \end{enumerate}
 
