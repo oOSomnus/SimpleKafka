@@ -37,6 +37,17 @@ COURSE_LANG=zh ./gradlew :list  # show Chinese step titles
 - Chapter 00: [English guide](docs/book/en/chapters/00-guide.tex) · [中文指南](docs/book/zh/chapters/00-guide.tex)
 - Chapter 08: [Consistency experiments and idempotence](docs/book/en/chapters/08-consistency.tex) · [一致性实验与幂等性](docs/book/zh/chapters/08-consistency.tex)
 
+### Prebuilt textbooks
+
+Repository clones and source ZIPs include the compiled books; reading requires no Java or build tools.
+
+| Language | PDF | EPUB |
+|---|---|---|
+| English | [PDF](docs/book/dist/en/simpleKafka.pdf) | [EPUB](docs/book/dist/en/simpleKafka.epub) |
+| 简体中文 | [PDF](docs/book/dist/zh/simpleKafka-zh.pdf) | [EPUB](docs/book/dist/zh/simpleKafka-zh.epub) |
+
+Maintainers rebuild the artifacts with `./gradlew :book` and `COURSE_LANG=zh ./gradlew :book`, then commit them alongside the TeX sources.
+
 ## Scope
 
 The project implements a teaching subset: three real TCP brokers in one JVM, separate disk logs and threads, and one trusted authority. It teaches a limited idempotent-producer protocol with caller-managed identity and a durable local consumer-effect ledger, but these do not provide transactions or end-to-end exactly-once semantics. The project is not Kafka-wire compatible and does not provide controller high availability, consensus under network partitions, Kafka transactions, compression, compaction, production-grade consumer-group rebalancing, or production-grade exactly-once guarantees. The textbook explains these boundaries step by step.

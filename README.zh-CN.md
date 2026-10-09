@@ -37,6 +37,17 @@ COURSE_LANG=zh ./gradlew :list  # 显示中文步骤标题
 - 第 00 章：[English guide](docs/book/en/chapters/00-guide.tex) · [中文指南](docs/book/zh/chapters/00-guide.tex)
 - 第 08 章：[Consistency experiments and idempotence](docs/book/en/chapters/08-consistency.tex) · [一致性实验与幂等性](docs/book/zh/chapters/08-consistency.tex)
 
+### 已编译教材
+
+Git 克隆与源码 ZIP 均包含已编译教材；阅读 PDF/EPUB 无需 Java、Gradle 或排版工具。
+
+| 语言 | PDF | EPUB |
+|---|---|---|
+| English | [PDF](docs/book/dist/en/simpleKafka.pdf) | [EPUB](docs/book/dist/en/simpleKafka.epub) |
+| 简体中文 | [PDF](docs/book/dist/zh/simpleKafka-zh.pdf) | [EPUB](docs/book/dist/zh/simpleKafka-zh.epub) |
+
+维护者更新教材时运行 `./gradlew :book` 与 `COURSE_LANG=zh ./gradlew :book`，再将成品与 TeX 源码一起提交。
+
 ## 边界
 
 课程实现的是教学机制子集：单 JVM 内的三个真实 TCP broker、独立磁盘日志和线程、一个可信 authority。课程会教学一个由调用方管理身份的有限幂等生产者协议，以及持久化的本地消费副作用账本；但它们不提供事务或端到端 exactly-once 语义。本项目不兼容 Kafka wire protocol，也不提供 controller 高可用、网络分区下共识、Kafka 事务、压缩、compaction、生产级消费组再平衡或生产级 exactly-once 保证。教材会逐步解释这些边界。

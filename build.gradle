@@ -321,7 +321,7 @@ tasks.register('list', Exec) {
 
 tasks.register('doctor', Exec) {
     group = 'help'
-    description = 'Check the Java and optional PDF build environment.'
+    description = 'Check the Java and optional textbook PDF/EPUB build environment.'
     workingDir rootProject.projectDir
     commandLine 'bash', 'scripts/course.sh', 'doctor'
     doFirst {
@@ -332,14 +332,14 @@ tasks.register('doctor', Exec) {
 
 tasks.register('setupBook', Exec) {
     group = 'build setup'
-    description = 'Prepare the pinned Tectonic PDF engine.'
+    description = 'Prepare the pinned Tectonic and Pandoc textbook engines and Poppler check.'
     workingDir rootProject.projectDir
     commandLine 'bash', 'scripts/setup.sh', 'book'
 }
 
 tasks.register('book', Exec) {
     group = 'documentation'
-    description = 'Build the selected textbook PDF.'
+    description = 'Build the selected textbook PDF and EPUB.'
     workingDir rootProject.projectDir
     commandLine 'bash', 'scripts/book.sh'
 }

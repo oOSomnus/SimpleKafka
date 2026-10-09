@@ -36,6 +36,81 @@ tectonic_target() {
   esac
 }
 
+pandoc_target() {
+  local os arch
+  os=$(uname -s) || return 2
+  arch=$(uname -m) || return 2
+  case "$os:$arch" in
+    Linux:x86_64|Linux:amd64) printf '%s\n' 'linux-amd64' ;;
+    Linux:aarch64|Linux:arm64) printf '%s\n' 'linux-arm64' ;;
+    Darwin:x86_64|Darwin:amd64) printf '%s\n' 'x86_64-macOS' ;;
+    Darwin:arm64|Darwin:aarch64) printf '%s\n' 'arm64-macOS' ;;
+    *) printf 'Pandoc is unsupported on %s/%s; supported platforms are Linux and macOS on x86_64 or arm64. Set PANDOC to a compatible executable to override.\n' "$os" "$arch" >&2; return 2 ;;
+  esac
+}
+
+pandoc_version_ok() {
+  local candidate=$1 version
+  if ! version=$("$candidate" --version 2>&1); then
+    printf 'Pandoc executable failed: %s\n' "$candidate" >&2
+    return 1
+  fi
+  if [[ "${version%%$'\n'*}" != 'pandoc 3.12.1' ]]; then
+    printf 'Pandoc 3.12.1 is required; found %s at %s. Run ./gradlew :setupBook.\n' "${version%%$'\n'*}" "$candidate" >&2
+    return 1
+  fi
+}
+
+resolve_pandoc() {
+  local repo_root=$1 caller_dir=$2 target candidate
+  if [[ ${PANDOC+x} ]]; then
+    if [[ -z "$PANDOC" ]]; then
+      printf 'PANDOC is set but empty; set it to an executable name or path.\n' >&2
+      return 127
+    fi
+    if [[ "$PANDOC" == */* ]]; then
+      candidate=$PANDOC
+      [[ "$candidate" == /* ]] || candidate="$caller_dir/$candidate"
+      if [[ -f "$candidate" && -x "$candidate" ]]; then
+        pandoc_version_ok "$candidate" || return 127
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+    else
+      candidate=$(type -P "$PANDOC") || candidate=
+      if [[ -n "$candidate" ]]; then
+        [[ "$candidate" == /* ]] || candidate="$caller_dir/$candidate"
+        if [[ -f "$candidate" && -x "$candidate" ]]; then
+          pandoc_version_ok "$candidate" || return 127
+          printf '%s\n' "$candidate"
+          return 0
+        fi
+      fi
+    fi
+    printf 'Pandoc executable is unavailable: %s\n' "$PANDOC" >&2
+    return 127
+  fi
+
+  target=$(pandoc_target) || return $?
+  candidate="$repo_root/.tools/pandoc-3.12.1/$target/pandoc"
+  if [[ -f "$candidate" && -x "$candidate" ]]; then
+    pandoc_version_ok "$candidate" || return 127
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+  candidate=$(type -P pandoc) || candidate=
+  if [[ -n "$candidate" ]]; then
+    [[ "$candidate" == /* ]] || candidate="$caller_dir/$candidate"
+    if [[ -f "$candidate" && -x "$candidate" ]]; then
+      pandoc_version_ok "$candidate" || return 127
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  fi
+  printf 'Pandoc 3.12.1 is unavailable; run ./gradlew :setupBook or set PANDOC to a compatible executable.\n' >&2
+  return 127
+}
+
 resolve_tectonic() {
   local repo_root=$1 caller_dir=$2 target candidate
   if [[ ${TECTONIC+x} ]]; then

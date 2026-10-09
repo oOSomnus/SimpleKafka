@@ -68,12 +68,30 @@ case "$ACTION" in
       if [[ ${TECTONIC+x} ]]; then
         fail 'the TECTONIC override is unavailable or unsupported'
       elif (( resolve_status == 127 )); then
-        printf 'Tectonic: not prepared (PDF-only; run ./gradlew :setupBook)\n'
+        printf 'Tectonic: not prepared (book builds only; run ./gradlew :setupBook)\n'
       else
         fail 'cannot resolve Tectonic for this platform'
       fi
     fi
-    printf 'PDF fonts come from the Tectonic bundle; the first book build needs network access. Warm both languages before BOOK_OFFLINE=1.\n'
+    if pandoc_bin=$(resolve_pandoc "$ROOT" "$caller_dir"); then
+      printf 'Pandoc: '
+      "$pandoc_bin" --version
+    else
+      resolve_status=$?
+      if [[ ${PANDOC+x} ]]; then
+        fail 'the PANDOC override is unavailable or not version 3.12.1'
+      elif (( resolve_status == 127 )); then
+        printf 'Pandoc 3.12.1: not prepared (book builds only; run ./gradlew :setupBook)\n'
+      else
+        fail 'cannot resolve Pandoc for this platform'
+      fi
+    fi
+    if command -v pdftoppm >/dev/null 2>&1; then
+      printf 'pdftoppm: available\n'
+    else
+      printf 'pdftoppm: missing (install Poppler for EPUB builds)\n'
+    fi
+    printf 'PDF fonts come from the Tectonic bundle; EPUB diagrams use Poppler. The first book build needs network access. Warm both languages before BOOK_OFFLINE=1.\n'
     ;;
   list)
     if [[ "$COURSE_LANG" == en ]]; then

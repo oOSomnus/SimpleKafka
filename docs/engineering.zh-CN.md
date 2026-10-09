@@ -6,7 +6,7 @@
 
 Gradle 9.8.1 Wrapper 可由 Java 17+ 启动；Java 编译、测试、demo 和源码一致性校验需要 Java 21+ JDK。无需安装系统 Gradle。SDKMAN 可选；项目不会自动切换 JDK 或安装系统软件。
 
-Shell 脚本需要 Bash 3.2+、`find`、`awk`、`curl`，以及 `sha256sum` 或 `shasum`。准备可选 PDF 工具还会使用 `tar` 和 `install`。`./gradlew :setup` 通过 Gradle dependency verification 解析 JUnit 1.11.4；首次解析需要联网。课程测试不需要 PDF 引擎或系统字体。`./gradlew :setupBook` 单独准备固定版本 Tectonic 0.17.0。首次 PDF 构建会下载 TeX bundle 和 Latin Modern/Fandol 字体。Noto、fontconfig、xelatex、latexmk、Maven、Docker、Kafka 均不是项目依赖。
+Shell 脚本需要 Bash 3.2+、`find`、`awk`、`curl`，以及 `sha256sum` 或 `shasum`。准备固定版本的 Tectonic/Pandoc 使用 `install` 和 `tar`；macOS 解压 Pandoc 还需要 `unzip`。`./gradlew :setupBook` 将 checksum 校验后的 Tectonic 0.17.0 与 Pandoc 3.12.1 安装到 `.tools/`，并检查 Poppler 的 `pdftoppm`，但不安装系统软件。Linux/WSL 使用 `sudo apt-get install poppler-utils`，macOS 使用 `brew install poppler` 安装 Poppler。课程测试不需要教材工具或系统字体。首次 PDF/EPUB 构建会下载 TeX bundle 和 Latin Modern/Fandol 字体。Noto、fontconfig、xelatex、latexmk、Maven、Docker、Kafka 均不是项目依赖。
 
 ## 任务与测试报告
 
@@ -48,16 +48,33 @@ java --source 21 scripts/SourceParity.java self-test
 ./gradlew :formatCheck
 ```
 
-## 教材 PDF 与离线构建
+## 教材 PDF/EPUB 构建与分发
 
-`./gradlew :setupBook` 准备固定版本的 PDF 引擎。`./gradlew :book` 默认构建英文版；设置 `COURSE_LANG=zh` 构建中文版。输出文件分别为 `build/book/en/simpleKafka.pdf` 和 `build/book/zh/simpleKafka-zh.pdf`。Wrapper 启动 PDF 任务需要 Java 17+，但 `:book` 不编译 Java，也不解析 JUnit。先在线构建两种语言，再离线构建：
+`./gradlew :setupBook` 准备固定版本的 Tectonic 与 Pandoc；Poppler（`pdftoppm`）需要单独安装。`./gradlew :book` 默认构建英文版，设置 `COURSE_LANG=zh` 构建中文版。每条命令会生成 PDF 和 EPUB 到 `build/book/<lang>/`，并且只更新所选语言的两个 `docs/book/dist/<lang>/` 分发文件：
+
+| 语言 | 构建输出 | 随源码分发 |
+|---|---|---|
+| English | `build/book/en/simpleKafka.{pdf,epub}` | `docs/book/dist/en/simpleKafka.{pdf,epub}` |
+| 简体中文 | `build/book/zh/simpleKafka-zh.{pdf,epub}` | `docs/book/dist/zh/simpleKafka-zh.{pdf,epub}` |
+
+仓库克隆和源码 ZIP 都包含四份已提交成品，读者无需 Java、Gradle、Tectonic、Pandoc 或 Poppler。维护者使用以下命令重建两种语言：
 
 ```sh
+./gradlew :book
+COURSE_LANG=zh ./gradlew :book
+```
+
+将生成文件与 TeX 源码一起提交。Wrapper 启动这些任务需要 Java 17+，但 `:book` 不编译 Java，也不解析 JUnit。
+
+离线构建前先准备工具并在线构建两种语言，再运行：
+
+```sh
+./gradlew :setupBook
 BOOK_OFFLINE=1 ./gradlew :book --offline
 COURSE_LANG=zh BOOK_OFFLINE=1 ./gradlew :book --offline
 ```
 
-`BOOK_OFFLINE=1` 选择缓存中的 TeX bundle；Gradle `--offline` 独立控制 Gradle 依赖解析。语言相关的自定义构建选项见[英文契约附录](book/en/appendices/contracts.tex)和[中文契约附录](book/zh/appendices/contracts.tex)。
+`BOOK_OFFLINE=1` 为两次 Tectonic 调用启用 TeX bundle only-cached 模式；Gradle `--offline` 独立控制 Gradle 依赖解析。`PANDOC` 可指定可执行文件，但版本必须是 3.12.1；`TECTONIC` 与 `TEX_BUNDLE` 保留原有覆盖行为。语言相关的自定义构建选项见[英文契约附录](book/en/appendices/contracts.tex)和[中文契约附录](book/zh/appendices/contracts.tex)。
 
 ## 验收与行为覆盖
 

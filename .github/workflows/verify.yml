@@ -23,6 +23,33 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+
+      - name: Verify distributed books are tracked
+        shell: bash
+        run: |
+          set -euo pipefail
+          for book in \
+            docs/book/dist/en/simpleKafka.pdf \
+            docs/book/dist/en/simpleKafka.epub \
+            docs/book/dist/zh/simpleKafka-zh.pdf \
+            docs/book/dist/zh/simpleKafka-zh.epub
+          do
+            test -s "$book"
+            git ls-files --error-unmatch -- "$book" >/dev/null
+          done
+
+      - name: Set up Python for book validation
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install Poppler on Linux
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils
+
+      - name: Install Poppler on macOS
+        if: runner.os == 'macOS'
+        run: brew install poppler
       - name: Set up Java 21
         uses: actions/setup-java@v4
         with:
@@ -44,5 +71,9 @@ jobs:
           ./gradlew :referenceConsistencyDemo
           ./gradlew :book
           COURSE_LANG=zh ./gradlew :book
+          python3 scripts/verify-books.py build/book
+          python3 scripts/verify-books.py docs/book/dist
           BOOK_OFFLINE=1 ./gradlew :book --offline
           COURSE_LANG=zh BOOK_OFFLINE=1 ./gradlew :book --offline
+          python3 scripts/verify-books.py build/book
+          python3 scripts/verify-books.py docs/book/dist

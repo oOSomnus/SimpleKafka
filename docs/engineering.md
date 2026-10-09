@@ -6,7 +6,7 @@
 
 The Gradle 9.8.1 Wrapper can start with Java 17 or newer. Java compilation, tests, demos, and source-parity checks require a Java 21+ JDK. No system Gradle installation is needed. SDKMAN is optional; the project does not switch JDKs or install system packages.
 
-The shell scripts require Bash 3.2+, `find`, `awk`, `curl`, and either `sha256sum` or `shasum`. Preparing the optional PDF tool also uses `tar` and `install`. `./gradlew :setup` resolves JUnit 1.11.4 through Gradle dependency verification; the first resolution needs network access. Course tests do not need the PDF engine or system fonts. `./gradlew :setupBook` separately prepares the pinned Tectonic 0.17.0 engine. The first PDF build downloads its TeX bundle and Latin Modern/Fandol fonts. Noto, fontconfig, xelatex, latexmk, Maven, Docker, and Kafka are not project dependencies.
+The shell scripts require Bash 3.2+, `find`, `awk`, `curl`, and either `sha256sum` or `shasum`. Preparing the pinned Tectonic/Pandoc tools uses `install` and `tar`; macOS Pandoc extraction also uses `unzip`. `./gradlew :setupBook` installs checksum-verified Tectonic 0.17.0 and Pandoc 3.12.1 under `.tools/`, and checks for Poppler's `pdftoppm` without installing system packages. Install Poppler with `sudo apt-get install poppler-utils` on Linux/WSL or `brew install poppler` on macOS. Course tests do not need book tools or system fonts. The first PDF/EPUB build downloads its TeX bundle and Latin Modern/Fandol fonts. Noto, fontconfig, xelatex, latexmk, Maven, Docker, and Kafka are not project dependencies.
 
 ## Tasks and test reports
 
@@ -48,16 +48,33 @@ Use the existing Google Java Format 1.28.0 configuration. `:format` and `:format
 ./gradlew :formatCheck
 ```
 
-## Textbook PDFs and offline builds
+## Textbook PDF/EPUB builds and distribution
 
-`./gradlew :setupBook` prepares the pinned PDF engine. `./gradlew :book` builds English by default; set `COURSE_LANG=zh` for the Chinese edition. The output files are `build/book/en/simpleKafka.pdf` and `build/book/zh/simpleKafka-zh.pdf`. The Wrapper needs Java 17+ to launch these tasks, but `:book` does not compile Java or resolve JUnit. For offline builds, first build both languages online, then run:
+`./gradlew :setupBook` prepares the pinned Tectonic and Pandoc engines; Poppler (`pdftoppm`) must be installed separately. `./gradlew :book` builds English by default; set `COURSE_LANG=zh` for Chinese. Each command produces a PDF and EPUB under `build/book/<lang>/` and updates only that language's pair under `docs/book/dist/<lang>/`:
+
+| Language | Build outputs | Committed distribution |
+|---|---|---|
+| English | `build/book/en/simpleKafka.{pdf,epub}` | `docs/book/dist/en/simpleKafka.{pdf,epub}` |
+| 简体中文 | `build/book/zh/simpleKafka-zh.{pdf,epub}` | `docs/book/dist/zh/simpleKafka-zh.{pdf,epub}` |
+
+Repository clones and source ZIPs contain all four committed files, so readers do not need Java, Gradle, Tectonic, Pandoc, or Poppler. Maintainers rebuild both pairs with:
 
 ```sh
+./gradlew :book
+COURSE_LANG=zh ./gradlew :book
+```
+
+Commit the generated files alongside the TeX sources. The Wrapper needs Java 17+ to launch these tasks, but `:book` does not compile Java or resolve JUnit.
+
+For offline builds, first prepare the tools and build both languages online, then run:
+
+```sh
+./gradlew :setupBook
 BOOK_OFFLINE=1 ./gradlew :book --offline
 COURSE_LANG=zh BOOK_OFFLINE=1 ./gradlew :book --offline
 ```
 
-`BOOK_OFFLINE=1` selects the cached TeX bundle; Gradle's `--offline` separately controls Gradle dependency resolution. The language-specific build options are documented in [the English contract appendix](book/en/appendices/contracts.tex) and [the Chinese contract appendix](book/zh/appendices/contracts.tex).
+`BOOK_OFFLINE=1` selects the cached TeX bundle for both Tectonic invocations; Gradle's `--offline` separately controls Gradle dependency resolution. `PANDOC` can select an executable, but it must be version 3.12.1; `TECTONIC` and `TEX_BUNDLE` retain their existing overrides. The language-specific build options are documented in [the English contract appendix](book/en/appendices/contracts.tex) and [the Chinese contract appendix](book/zh/appendices/contracts.tex).
 
 ## Acceptance and behavioral coverage
 
