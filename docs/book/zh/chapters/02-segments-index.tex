@@ -1,5 +1,5 @@
 \chapter{分段、索引、保留与截断}
-单文件日志随时间增长，会令启动扫描越来越慢，也无法单独删除旧数据。Kafka 风格的日志用多个 segment 组成一个分区：旧 segment 封闭，当前段承接追加；稀疏索引把逻辑 offset 映射到某个段内字节边界。索引是可重建的加速结构，不是记录真相。日志保留和截断是不同操作：前者删除旧的封闭前缀，后者把尾部回退到某个位点以修复分叉。
+单个日志文件增长后，重启扫描会越来越长；若只想清理旧数据，也无法在文件中间删除而不重写其余内容。分区日志因此由多个 segment（段文件）首尾组成：每段存一段连续 offset，当前 active segment 接收追加，已封闭的段不再追加。段内 byte position 是文件字节数，不是分区 offset。sparse index（稀疏索引）只保存若干 offset→byte position 提示，可从主日志重建；它加快查找，却不保存记录真相。retention（保留）删除旧的完整段前缀；truncation（截断）删除某个 nextOffset 之后的尾部，两者方向和目的不同。
 
 \begin{figure}[ht]
 \centering
@@ -17,45 +17,100 @@
 \end{figure}
 
 \lessonsection{5}{稀疏索引}
-\goals{构建可恢复的 offset 到 byte-position 稀疏映射。}{理解 floor 查找、记录边界与日志扫描恢复。}
-\background{索引项格式是两个大端 int64：\pathcode{offset, position}，每项 16 字节。每隔 intervalRecords 条记录写一个点，第一条记录总要有索引项。查找目标 offset 时，floor 返回不大于目标的最大 offset，使读取可从近处合法边界开始并继续顺扫。不存在合适项时，\pathcode{(baseOffset,0)} 是安全起点。索引可能丢失、截短或含非法项；主日志仍是事实来源，恢复时应扫描日志重建索引。}
-\providededit{索引文件路径、段 baseOffset、interval 和生命周期已在 \method{SparseIndex} 提供；\method{SegmentLog} 可从记录重扫。}{\pathcode{exercises/src/main/java/io/simplekafka/storage/SparseIndex.java}：\method{add(long,long)}、\method{floor(long)}、\method{rebuild(Path,long)}。}
-\lessoncontract{添加项按 offset 严格递增且 position 非负；floor 返回最大 offset<=目标，找不到时返回段起点的零位置。索引缺失、文件长度不是 16 的倍数或条目非法时从日志重建；日志本身损坏仍须失败。重建不能把错误索引伪装成可信日志数据。}
-\lessonhints{先写清楚 floor 的数学定义：候选集合是哪些 offset，空集合的约定是什么。}{把索引读取失败分成“索引可丢弃”和“主日志不可恢复”两类。}{用多段记录构造间隔索引，删除索引文件后再通过真实读取观察恢复效果，而不只检查内存 map。}
-\expected{interval=4 时，对 offset 0、4、8 建项；floor(6) 返回 offset 4 对应的物理位置。删去 \pathcode{.index} 后 reopen 并读取 offset 6，仍得到正确记录。非法长度索引文件也可重建；有损坏日志仍报错。对应 \method{Step05Test}。}
-\pitfalls{索引项若指向记录内部，读取会把任意 payload 当作 header；floor 误用 ceiling 会跳过目标前的边界。索引若成为唯一数据来源，缺索引就丢日志。Kafka 的索引组织与精度/字节偏移模型更复杂；课程每 intervalRecords 条记录索引一次，不是按固定字节间隔。}
+\goals{构建可持久化、可重建的 offset 到 byte-position 稀疏映射。}{理解严格递增观察、floor 查找和主日志扫描。}
+\background{一个索引项是两个大端 int64：\pathcode{offset, position}，每项 16 字节。索引不是每条记录都存点，而是按段内逻辑 offset 与 base 的距离每隔 intervalRecords 条保存一个点；首条记录总要保存。floor(target) 选择不大于目标的最大已保存 offset，让后续扫描从已知记录边界开始。即使没有索引项，也能从 \pathcode{(baseOffset,0)} 安全扫描。索引缺失或损坏可从主日志重建，主日志损坏则不能靠索引修好。}
+\providededit{\method{SparseIndex} 的路径、baseOffset、intervalRecords、持久文件、加载和关闭已提供；\method{SegmentLog} 可供重扫主日志。}{实现 \pathcode{exercises/src/main/java/io/simplekafka/storage/SparseIndex.java} 的 \method{public synchronized void add(long offset,long position)}、\method{public synchronized IndexEntry floor(long offset)} 和 \method{public synchronized void rebuild(Path logFile,long requestedBaseOffset)}。}
+\subsubsection*{开始前先读}
+完成 \stepref{4}{崩溃恢复}，能从主日志验证完整记录、CRC 与连续 offset。索引项中的 position 单位是该段文件的字节，offset 是分区内记录编号；两者不能互换。
+\subsubsection*{输入、输出与状态}
+\begin{itemize}
+\item \method{add} 接收一条已观察记录的逻辑 offset 与其段内 byte position。首次观察必须是 (baseOffset,0)；后续每次观察的 offset 与 position 都必须严格递增，position 非负。即使某次观察不落盘，它仍参与下一次顺序检查。
+\item 只有 \pathcode{(offset-baseOffset) mod intervalRecords = 0} 的观察持久化；首次 (baseOffset,0) 一定持久化。拒绝的观察报 \method{INVALID_REQUEST}，不改变索引文件或顺序状态。索引关闭或底层 I/O 失败报 \method{STORAGE_ERROR}。\method{floor} 若索引已关闭也报 \method{STORAGE_ERROR}。
+\item \method{floor} 返回不大于 target 的最大索引项；若没有合格项（包括 target 小于 base），返回 (baseOffset,0)。\method{rebuild} 接收主日志路径与必须匹配的 base，清除旧索引后扫描并验证主日志，重建所有应保存的点；日志内容本身不改。base 不匹配/路径非法报 \method{INVALID_REQUEST}，日志损坏报 \method{CORRUPT_RECORD}，已关闭索引或底层 I/O 失败报 \method{STORAGE_ERROR}。
+\end{itemize}
+\lessoncontract{索引文件每项按大端顺序保存 8-byte offset 与 8-byte position。所有观察用于严格递增校验，落盘频率按 offset 相对 base 的间隔计算，而不是按 add 调用次数或固定 byte 间隔计算。丢失、截短、陈旧或非法索引必须可从当前日志重建；重建不能使坏日志看似有效。}
+\subsubsection*{手算索引项与 floor}
+假定 baseOffset=8、intervalRecords=2，段中有 offsets 8、9、10、11 四条记录，每条 null key、1-byte value，故每条 33 bytes，起始 position 分别为 0、33、66、99。依次观察四项：offset 8 的第一项写入 (8,0)，9 的观察只校验顺序，10 与 base 相差 2 因而写入 (10,66)，11 仍只校验顺序。索引文件恰含两个 16-byte 项；floor(11)=(10,66)，floor(9)=(8,0)，floor(7) 的无候选约定也是 (8,0)。删掉索引后从四条仍完好的日志扫描，会重新得到同样两项。
+\expected{\method{Step05Test}：\pathcode{writesBigEndianEntriesAtIntervalAndFloorsSafely} 检查 16-byte 项、间隔和 floor；\pathcode{supportsNonzeroBasesAndReopensPersistedPoints} 检查非零 base 与重开；\pathcode{rejectedObservationsLeaveTheIndexAndOrderingStateUnchanged} 检查拒绝后状态不变；\pathcode{rebuildsMissingTruncatedAndStaleIndexesFromTheCurrentLog} 与 \pathcode{rebuildRejectsMalformedLogsWithoutChangingTheirBytes} 分别检查索引重建和坏日志拒绝。}
+\pitfalls{floor 不是“最接近的任意项”：只能取不晚于目标的项。索引位置必须指向记录开头，否则读者会把 payload 当 header。索引可以丢弃重建，主日志不可以用猜测替代。}
+\lessonhints{写出候选条件 offset\(\le\)target，再定义没有候选时的结果：(base,0)。}{把每个 observation 的顺序状态与该位置是否已持久化分开；区间以 offset-base 为准。}{删除索引文件，再创建 SparseIndex，通过真实日志读取观察重建，而不只检查内存 floor。}
 \lessoncommand{5}
-\lessonquestions{为什么找到 floor entry 后仍要扫描记录？}{损坏的 index 和损坏的 log 为何不能采用同一种恢复策略？}
+\lessonquestions{为什么 floor 找到索引项后仍要逐条扫描主日志？}{索引坏了可以重建，为什么主日志坏了不能采用同一种恢复方式？}
+\paragraph*{自检参考解释}
+索引只提供一个不越过目标的搜索起点，通常没有目标本身的精确项，所以仍要验证并扫描记录。索引是冗余提示，可由记录事实重算；坏日志中的记录内容没有另一个可信来源可推导。
 
 \lessonsection{6}{分段日志}
-\goals{把单段日志组合成可滚动的分区日志，并让读取跨 segment 连续工作。}{理解段边界、容量估算、索引与全局 LEO。}
-    \background{PartitionLog 按 baseOffset 排序持有多个 SegmentLog。活动段若容纳不了下一条合法记录，就封闭当前段并新建 base=当前 LEO 的段；单条记录即使大于配置 segmentBytes，只要记录自身合法，也应独占新段而非永远无法追加。一次 batch 可以横跨段边界，offset 在整个 partition 范围连续。读取先定位目标段，然后用该段索引 floor 得到提示，顺扫后如有需要进入下一段，并把 maxRecords/maxBytes 作为跨段总预算。创建新文件前需要预检整个 batch 的合法性，避免已知非法输入改变目录结构。版本标记在整批预检后、首次写盘或滚段前递增一次；无效输入不增加版本，写入尝试即使之后遇到 I/O 错误也已使旧 proof 失效。}
-    \providededit{每个 segment 的 create/open/recover、稀疏索引与资源关闭都已提供；PartitionLog 骨架提供 mutationVersion() 与私有 markMutation()，追加实现必须在正确位置调用。}{\pathcode{exercises/src/main/java/io/simplekafka/storage/PartitionLog.java}：\method{append(List<RecordData>)}、\method{read(long,int,int)}。}
-    \lessoncontract{append 返回整个 batch 的 [first,next) 区间，跨段 offset 仍无间隙。容量不足时只在追加前滚段；非法 batch 不得先滚段。读操作按 offset 顺序跨段，累计总记录与字节限制；段直接追加本身不负责滚动。重开已存在目录后恢复 LEO，不重复分配旧 offset。目录发现只处理约定 \pathcode{.log/.index} 文件，不删除陌生文件。每个有效追加批次对本打开的日志对象 mutationVersion 加一；这只是内存代数，不写入磁盘。}
-\lessonhints{容量判断应该使用编码后的完整记录字节数，而不是只计算 value 长度。}{决定一次 batch 的每条记录与段边界如何配合，同时保持全局 offset 连续。}{将测试分成初次 append、滚动后 append、关闭重开后的 append，再逐条核对所有 offset。}
-\expected{配置 256 字节段并追加十条记录，关闭重开再追加一条，读取范围应仍为 0 到 10 且没有重复 offset。测试也覆盖 batch 正好跨段、单条记录独占新段、非法超长记录前后目录/LEO不变；对应 \method{Step06Test}。}
-\pitfalls{容量只看原始 payload 会漏算固定头、长度和 CRC；只让每个 batch 单独检查 offset 会造成跨段冲突。真实 Kafka segment 更常按字节规模滚动并结合索引文件和时间策略；课程也用容量滚动，但索引间隔是记录数。单段 append 不自动滚段是有意分层。}
+\goals{把单段日志组合为按容量滚动的分区日志，并使读取跨段连续。}{理解 active segment、完整记录容量、索引提示和全局 LEO。}
+\background{PartitionLog 以 baseOffset 顺序持有多个 SegmentLog。一个 active segment（活动段）是当前可继续追加的最后一段；它装不下下一条完整记录时，先封闭旧段，再以当前分区 LEO 创建新段。容量以完整编码记录字节数计算，而不是 value 长度。若段为空，允许一条本身合法但超过 segmentBytes 的记录独占它；否则永远无法追加这种记录。跨段读取找到包含目标 offset 的段后用该段 index floor 作为 hint，再向后扫描；maxRecords/maxBytes 是整次读取的总预算，不在换段时重置。}
+\providededit{每个段的 create/open/recover、稀疏索引、文件发现和资源关闭路径已提供；\method{PartitionLog} 的 \method{mutationVersion()} 与私有 \method{markMutation()} 已给定。}{实现 \pathcode{exercises/src/main/java/io/simplekafka/storage/PartitionLog.java} 的 \method{public synchronized AppendResult append(List<RecordData> records)} 和 \method{public List<LogRecord> read(long offset,int maxRecords,int maxBytes)}。构造器 \method{PartitionLog(Path,long,int)} 已提供。}
+\subsubsection*{开始前先读}
+完成 \stepref{5}{稀疏索引}；需理解 SegmentLog 的追加/读取与 index 的 floor 提示。段文件名只认 20 位数字后缀 \pathcode{.log} 的普通文件，配对 \pathcode{.index} 属于索引；别的文件或目录不是可清理的 segment。
+\subsubsection*{输入、输出与状态}
+\begin{itemize}
+\item append 输入为顺序 batch，输出整批全局 \pathcode{[firstOffset,nextOffset)}；offset 在段边界仍连续。空/非法 batch 或 offset 溢出以 \method{INVALID_REQUEST} 拒绝，且不得先创建新段。段关闭或底层 I/O 失败报 \method{STORAGE_ERROR}；有效追加开始后的失败不保证回滚文件。
+\item read 的 offset 范围为保留区间 \pathcode{[logStartOffset,LEO]}，LEO 返回空；maxRecords/maxBytes 必须为正。返回 offset 有序且连续，跨所有段共享总记录数与完整编码字节预算。offset 越界为 \method{OFFSET_OUT_OF_RANGE}，发现段间缺口或坏记录为 \method{CORRUPT_RECORD}，I/O/关闭错误为 \method{STORAGE_ERROR}。首条超过 byte budget 时返回空。
+\item 每个通过完整预检的 append batch 在首次文件写入/滚段前令本打开对象的 mutationVersion 加 1，跨多个段也只加一次；无效输入不增加。它是内存变更代数，不写入磁盘；写入开始后的 I/O 失败也不能使旧 proof 继续可信。LEO 与段文件在成功追加后更新，读取不改它们。
+\end{itemize}
+\lessoncontract{只有非空 active 段放不下下一条完整记录时才滚段；空段可独占大于目标容量的合法单条记录。整批预检先于首次创建/滚动，避免无效 batch 留下空段。reopen 扫描已登记的段恢复 LEO；未知文件、目录必须保留。}
+\subsubsection*{手算滚段和跨段预算}
+情形 A：segmentBytes=64，三条普通记录各为 null key、空 value、总长 32 bytes。offset 0、1 正好占满 base 0 段 64 bytes；offset 2 前滚到 base 2，新段大小 32。一次 append 返回 [0,3)，bases=[0,2]、sizes=[64,32]。情形 B：三条依次占 32、132、32 bytes，segmentBytes 仍为 64；132-byte 记录不适合已有非空段，于 base 1 单独占段，随后 32-byte 记录在 base 2 开新段，三个段大小 [32,132,32]。段能超过目标值，但只有因为单条合法记录本身超限且段为空。
+\par 对情形 A，从 offset 0 调用 read(0,3,64) 只能返回 0、1；预算 96 可返回 0、1、2。切换到第二段时剩余预算为 32，不可重置为 64。
+\expected{\method{Step06Test}：\pathcode{rollsAtExactByteBoundariesAndWritesIndependentRecords} 检查滚段容量；\pathcode{appliesReadBudgetsAcrossSegmentsAndValidatesBoundsAndLimits} 检查跨段读取预算；\pathcode{invalidBatchDoesNotMutateAnExistingMultiSegmentLog} 检查非法 batch 不改目录；\pathcode{acceptsAnOversizedRecordBetweenRecordsInOneBatchAndReopensEverySegment} 检查超大单条独占段；\pathcode{recoversOnlyAnIncompleteActiveTailAndRebuildsIndexesOnReopen} 与 \pathcode{refusesCompleteCrcCorruptionAndSegmentBaseGapsWithoutChangingLogs} 检查恢复边界；\pathcode{concurrentBatchesStayContiguousAndSurviveReopen} 检查并发重开连续性。}
+\pitfalls{如果只计算 payload 会漏掉长度、CRC 与固定字段；如果每个 segment 都重新得到完整 maxBytes，跨段读取会超预算。单段 append 不负责滚段，滚段责任属于 PartitionLog。}
+\lessonhints{先用 \method{RecordCodec.encodedSize} 得到每条完整记录空间，再模拟当前 active 的剩余空间。}{沿 batch 逐条维护全局 nextOffset 和当前段字节数；在新段启动后仍保留同一读取预算。}{分别核对目录中的 base、每个段的精确大小、mutationVersion 与 reopen 后逐条读取结果。}
 \lessoncommand{6}
-\lessonquestions{为何要在创建任何新段之前验证整批记录？}{跨段 fetch 的字节预算应如何避免在段切换时被重置？}
+\lessonquestions{为什么非法 batch 必须在创建下一段之前拒绝？}{读取从一个段进入下一个段时，字节预算要带着什么状态继续？}
+\paragraph*{自检参考解释}
+先校验可避免无效请求产生空段或改变目录；byte budget 是一次调用的累计消耗，换物理文件不会把已经用掉的额度返还。
 
 \lessonsection{7}{日志保留}
-\goals{安全删除已过期的封闭段，同时保留 active segment 与当前 LEO。}{区分日志起点、消费进度和单条删除。}
-    \background{分区日志实际只有一段可保留范围 \pathcode{[logStartOffset, LEO)}。课程用显式调用进行保留，不运行后台定时器。\method{deleteBefore(offset)} 只删除最后记录 offset 小于阈值的封闭段，不能按记录切割一段，也不能移除活动段；新起点必须落在真实段边界。消费者若请求已经删除的数据会得到 \method{OFFSET_OUT_OF_RANGE}，不静默把 position 改到新起点。消费组 offset 提交与物理删日志独立，推进消费位点不会自动触发保留。只有确实删除至少一个段时才递增一次本日志对象的 mutationVersion；阈值无效或没有可删段的调用不变更版本。}
-    \providededit{多段目录扫描、日志起点和段关闭路径由 \method{PartitionLog} 骨架持有；\method{mutationVersion()} 与私有 \method{markMutation()} 已提供。}{\pathcode{exercises/src/main/java/io/simplekafka/storage/PartitionLog.java}：\method{deleteBefore(long)}。}
-    \lessoncontract{只删满足条件的封闭段及同 base 的 \pathcode{.index}，不删 active，不删除未知文件。返回实际新的 logStartOffset。LEO 不倒退；重开后新起点仍正确。若已有读取位点低于新起点，读取必须明确报范围错误，不自动 seek。发生删除前仅标记一次；no-op 不增加 mutationVersion。}
-\lessonhints{从段 base 与下一段 base 确认哪些逻辑 offset 属于可删前缀。}{空 active 段与有数据 active 段都要单独考虑，不能把“最后一个段”当成可删项。}{删除后关闭并重新打开，再从边界前后分别读取，以验证磁盘文件和内存起点一致。}
-\expected{构造三个段、保留最后一个活动段并删除旧封闭段后，实际 logStartOffset 移到保留边界；重开仍返回相同起点且 LEO 不变。低于新起点读取报 \method{OFFSET_OUT_OF_RANGE}。对应 \method{Step07Test}。}
-\pitfalls{只删 \pathcode{.log} 不删配对索引会制造悬空索引；按阈值删掉 active 会令后续追加失去起点。真实 Kafka 保留常由时间/大小配置与后台管理触发，并可能有 retention 与 consumer 独立关系；课程只提供明确同步调用，不替消费者重置位点。}
+\goals{删除已过期的封闭段前缀，同时保留活动段、日志末端和真实新起点。}{区分物理日志保留与消费者进度。}
+\background{PartitionLog 当前保留区间是 \pathcode{[logStartOffset,LEO)}。deleteBefore 是调用者显式触发的同步操作，不会因 consumer 已经提交位点而自动运行。段不可按单条记录切开；只能删除封闭段，而且最后一个段必须保留为 active 以便追加。新起点是删除后第一段的 base，可能小于传入阈值，因为段边界不必刚好落在阈值上。}
+\providededit{\pathcode{PartitionLog} 已提供多段发现、当前起点/末端、关闭路径，以及 \method{mutationVersion()} 和私有 \method{markMutation()}。}{实现 \method{public synchronized long deleteBefore(long offset)}，文件位于 \pathcode{exercises/src/main/java/io/simplekafka/storage/PartitionLog.java}。}
+\subsubsection*{开始前先读}
+完成 \stepref{6}{分段日志}，理解段 base 与下一段 base 界定的 offset 范围，以及 active 段不能删除。consumer commit 是另一种状态，不是本方法的输入。
+\subsubsection*{输入、输出与状态}
+\begin{itemize}
+\item offset 是非负 long 的保留下界；负值报 \method{INVALID_REQUEST} 且不改状态。方法返回实际 logStartOffset，不是原样返回请求阈值。
+\item 只删除 endOffset（下一段 base）不大于阈值的封闭段及同 base 的 \pathcode{.index}；active 段必须保留，至少保留一段。未知文件/目录不删除。删除不会移动 LEO、改变保留段内容或自动调整消费者位点。
+\item 实际删掉至少一段时，首次删除前对 mutationVersion 加 1（本次调用只加一次）。没有符合条件的段时返回当前起点且版本不变。删除后的 read 若 offset 小于新起点报 \method{OFFSET_OUT_OF_RANGE}，不得静默 seek 到起点。已关闭日志或底层 I/O 失败报 \method{STORAGE_ERROR}；若文件删除中途失败，不承诺将已经发生的删除回滚。
+\end{itemize}
+\lessoncontract{仅以完整封闭段作为删除单位，成对删除日志与索引，不能删除 active 或最后剩余段。重开后仍须恢复相同 logStartOffset 与 LEO；no-op 不增加 mutationVersion。}
+\subsubsection*{手算保留边界}
+假定 9 条记录 offsets 0–8，每条 null key、空 value，占 32 bytes；segmentBytes=96，所以三段为 base 0、3、6，每段 3 条、96 bytes，LEO=9，base 6 是 active。deleteBefore(4) 只删除 end=3 的 base 0 段，实际起点=3；deleteBefore(9) 再删除 end=6 的 base 3 段，起点=6；deleteBefore(1000) 仍保留 active base 6，起点仍=6。三次调用中 LEO 始终为 9；第三次没有删除，不增加 mutationVersion。阈值 4 不对应新起点 3，正因为删除单位是段。
+\expected{\method{Step07Test}：\pathcode{deletesOnlyEligibleClosedSegmentsAndKeepsTheActiveSegment} 检查 end<=threshold、配对索引、start/LEO 与未知文件；\pathcode{retentionKeepsTheOnlyActiveSegmentWhetherEmptyOrNonempty} 检查唯一段不删除；\pathcode{deletesClosedSegmentAtItsExactEndOffset} 检查等于阈值的边界可删。}
+\pitfalls{若只删 .log 会留下悬空索引；若把阈值当成“删除所有 offset<阈值”，会错误地切开段或删除 active。提交位点和日志文件删除互相独立。}
+\lessonhints{逐段写出 base、exclusive end 和 active 状态，再判断 end\(\le\)阈值。}{单独演算只有一个空段、只有一个非空段的情况，确保仍至少留下 active。}{删除后列出 .log/.index 文件名并重开，分别验证新起点前、边界处和 LEO 的读取。}
 \lessoncommand{7}
-\lessonquestions{为什么删除阈值通常不会恰好对应某条记录的 segment 边界？}{提交位点已经越过旧段，是否意味着系统可以自动删段？为什么？}
+\lessonquestions{为什么 deleteBefore(4) 可能返回 logStartOffset=3 而不是 4？}{即使某个 consumer 已提交到 9，为什么这本身不能触发删除？}
+\paragraph*{自检参考解释}
+retention 以完整 segment 为单位，base 3 才是可保留前缀的下一边界。提交 offset 只记录处理进度；它不会自动删除文件，也不证明其他 consumer 不再需要旧数据。
 
 \lessonsection{8}{尾部截断}
-\goals{把日志尾部截回某个下一条位点，删除分叉尾数据并恢复可追加状态。}{理解 half-open 区间、记录边界和段 base。}
-    \background{截断目标 \pathcode{nextOffset} 表示保留所有 offset<nextOffset 的记录；合法范围为 [logStartOffset,LEO]。若目标恰在已有段边界，应有可追加的 active segment 以该 base 开始；若位于某段内部，应截断到该记录的物理边界，删除后续 segment，并重建被保留段索引。截到 LEO 是无变化；截到 logStartOffset 留下空段，下一条 append 使用这个 offset。截断只改变本地日志尾，不会自动改变复制状态、HW 或消费位点。有效且非 no-op 的截断在首次写入/删除前递增一次本对象 mutationVersion，非法与 no-op 不增加。}
-    \providededit{段关闭、文件截断、索引重建和全局段表已由前面步骤建立；PartitionLog 骨架提供 mutationVersion() 与私有 markMutation()，有效截断实现须在首次文件变更前调用。}{\pathcode{exercises/src/main/java/io/simplekafka/storage/PartitionLog.java}：\method{truncateTo(long)}。}
-    \lessoncontract{只允许 [logStartOffset,LEO] 内的 nextOffset，超范围拒绝且日志不变。保留 offset<nextOffset，所有之后数据及其索引移除；LEO 更新到 nextOffset。成功之后可立刻追加且新记录的 offset 正好等于 nextOffset。未知文件不可删除。错误参数和截到当前 LEO 不增加 mutationVersion；任何有效内容变化均在首个 I/O 前标记。}
-\lessonhints{将目标理解成“下一条要写的 offset”，而不是要保留的最后一条 offset。}{分别列出截在段中、截在段边界、截在当前 LEO、截在 logStartOffset 的磁盘状态。}{重开截断后的目录并追加一条；只检查内存 nextOffset 不足以证明索引和文件同步。}
-\expected{写入 offset 0–8 后执行 \pathcode{truncateTo(5)}，offset 0–4 仍可读；已删除的 5–8 不会返回，读取新的 LEO 5 得到空结果，下一条追加得到 offset 5。\pathcode{truncateTo(LEO)} 不改变内容；截到起点后保留空 active 并从该起点追加。对应 \method{Step08Test}。}
-\pitfalls{误将 nextOffset 解释为最后保留记录，会产生 off-by-one；只 truncate 文件不重建索引，可能使之后读取跳到删除的分叉记录。真实 Kafka 截断往往与 leader epoch、HW 和副本协议联动；本步只提供日志原语，不允许拿它单独推断安全选举。}
+\goals{按 nextOffset 删除一段日志的分叉尾部，并使该日志可从目标位点继续追加。}{理解 half-open 范围、分段边界和索引同步。}
+\background{truncateTo(nextOffset) 的 nextOffset 是“下一条要写的位置”：保留所有 offset<nextOffset 的记录，移除其余尾部。它与 retention 相反——retention 删除旧前缀，truncation 删除新后缀。若目标位于段中，要截断该段到目标记录的 byte boundary 并重建索引；位于段 base 时要留下以该 base 为 active 的空段。这个本地日志操作本身不证明某个副本切换安全，也不改 consumer 位点。}
+\providededit{前几步已建立段关闭、文件截断、索引重建和全局段表；PartitionLog 的 \method{mutationVersion()} 与私有 \method{markMutation()} 已给定。}{实现 \method{public synchronized void truncateTo(long nextOffset)}，文件位于 \pathcode{exercises/src/main/java/io/simplekafka/storage/PartitionLog.java}。}
+\subsubsection*{开始前先读}
+完成 \stepref{7}{日志保留}，知道实际 logStartOffset 可能大于 0，也知道 LEO 是 exclusive end。截断只能发生在保留区间内，不可恢复已被 retention 删除的前缀。
+\subsubsection*{输入、输出与状态}
+\begin{itemize}
+\item nextOffset 合法范围为闭区间 \pathcode{[logStartOffset,LEO]}；超出范围报 \method{OFFSET_OUT_OF_RANGE}，且文件、索引、段表、LEO 与 mutationVersion 都不变。方法没有返回值。
+\item 成功保留所有 offset<nextOffset 的记录，删除之后的记录/段及对应索引，LEO 变成 nextOffset。nextOffset=LEO 是 no-op；有效改变在首次写或删文件前把 mutationVersion 增加一次，无效与 no-op 不增加。未知文件保留。已关闭日志或底层 I/O 失败报 \method{STORAGE_ERROR}；开始有效修改后的 I/O 失败不承诺回滚，已增加的 mutationVersion 不回退。
+\item 成功后可立刻 append，第一条新记录的 offset 必须正好等于 nextOffset。重开时索引与活动段状态须与截断后的日志一致。
+\end{itemize}
+\lessoncontract{截断边界永远表示下一条记录的 offset；没有“保留记录 5 并写 5”的含义。目标在段边界时必须保留能接收后续追加的 active 段；目标在段内时同步裁剪日志尾和索引。}
+\subsubsection*{手算四个截断结果}
+沿用 Step 7 的 fixture：假定记录 0–8 各为 32 bytes，segmentBytes=96，三个完整段 bases=[0,3,6]，sizes=[96,96,96]，LEO=9、start=0。四种独立初始状态相同、分别执行一次：
+\begin{enumerate}
+\item truncateTo(5)：保留 offsets 0–4；结果 bases=[0,3]、sizes=[96,64]、LEO=5。
+\item truncateTo(3)：保留 0–2；结果 bases=[0,3]、sizes=[96,0]，base 3 的空段接收后续 offset 3。
+\item truncateTo(0)：保留空日志；结果只有 base 0、size 0，下一次追加从 0 开始。
+\item truncateTo(9)：目标等于 LEO，无变化；bases/sizes 仍为 [0,3,6]/[96,96,96]，mutationVersion 不增加。
+\end{enumerate}
+\expected{\method{Step08Test}：\pathcode{truncatesAtBoundariesWithinSegmentsAtLeoAndAtLogStart} 检查段内、段边界、LEO 与起点；\pathcode{truncateRebuildsMixedSizeSegmentStateAndIndexPoints} 检查文件/索引同步；\pathcode{invalidAndRepeatedTruncationsPreserveTheRetainedFiles} 检查无效与 no-op；\pathcode{truncatesThenRetainsAcrossRestartAndContinuesAtTheReopenedEnd} 检查重开、保留和继续追加；\pathcode{fixedSeedOperationsMatchAnIndependentSegmentAndOffsetModel} 检查多次状态转换。}
+\pitfalls{truncateTo(5) 保留 offset 4，不是保留到 offset 5；5 是下一条的位点。只改 log 文件而不裁剪/重建 index，会让读者继续跳到已删分叉记录。}
+\lessonhints{先将 nextOffset 翻译成“保留 offset 小于它”，不要把它当作最后保留的 offset。}{分别画出目标位于段内、段 base、LEO 和 logStart 时应保留的 active 文件。}{检查磁盘文件与索引、关闭重开，再 append 一条并验证 offset 恰好等于目标。}
 \lessoncommand{8}
-\lessonquestions{截断到 5 时，为何下一条应写入 offset 5 而非 4？}{为什么清理文件尾之后还必须处理索引文件？}
+\lessonquestions{truncateTo(5) 后为什么下一条应写入 5 而不是 4？}{为什么截断记录文件尾后还需要处理稀疏索引？}
+\paragraph*{自检参考解释}
+half-open 范围保留所有 offset<5 的记录，因此最后保留 4、下一条为 5。索引是记录边界的物理提示，若留下旧尾索引，读取可能跳入已删除数据而不是当前日志。

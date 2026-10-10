@@ -87,10 +87,10 @@ Record & Fields in declaration order \\
 \end{tabular}
 \end{center}
 \normalsize
-Each byte array is length-prefixed; only key may be null (length -1), while value is always present but may be empty.
+所有 byte array 都带长度前缀；只有 key 可以为 null（长度为 -1），value 始终存在，但允许是空数组。
 
-OffsetStore entries use \method{MessageCodec.encodeOffsetEntry}, with null key and timestamp 0. The record's physical log offset is independent of committed nextOffset.
-BusinessEvent value 使用 \method{MessageCodec.encodeBusinessEvent} 编码：\pathcode{version:uint8=1 | eventId:identifier | account:identifier | delta:int64}。两个标识均为非空、严格 UTF-8 且最长 255 bytes；delta 可正、可负或为零。
+\method{OffsetStore} 条目使用 \method{MessageCodec.encodeOffsetEntry} 编码，key 为 null、timestamp 为 0。记录在日志中的物理 offset 与已提交的消费 nextOffset 相互独立。
+\method{BusinessEvent} 的 value 使用 \method{MessageCodec.encodeBusinessEvent} 编码：\pathcode{version:uint8=1 | eventId:identifier | account:identifier | delta:int64}。两个标识均为非空、严格 UTF-8 且最长 255 bytes；delta 可正、可负或为零。
 \subsection{标识符与值类型}
 topic、group、member 是非空 UTF-8 标识且最长 255 bytes；topic 只能包含 ASCII 字母数字、点、下划线、连字符，并拒绝 \pathcode{.} 与 \pathcode{..}。TopicPartition 的 partition 非负。RecordData 的 key 可以 null、value 不可 null（允许空数组），timestamp 非负；LogRecord offset 非负。数组所有权移交值对象后由接收方持有，不需要反复复制。所有 offset 表示下一条时都使用 half-open 边界，具体区别见正文各章。
 
@@ -192,10 +192,10 @@ Wire id & 名称 & 用途 \\
 \midrule
 \endhead
 Kafka 设计与持久化模型 & \href{https://kafka.apache.org/42/design/design/}{Kafka 4.2 Design} & 日志、复制、消费者位置的官方概览；本课程简化项见上节。\\
-消费位置与提交 & \href{https://kafka.apache.org/42/javadoc/org/apache/kafka/clients/consumer/KafkaConsumer.html}{KafkaConsumer 4.2 API} & 第 14–16 章：position、seek、commit 与线程约束。\\
-最小 ISR 配置 & \href{https://kafka.apache.org/43/configuration/topic-configs/}{Kafka 4.3 Topic Configs} & 第 22–24 章：min.insync.replicas 与写入确认。\\
-消费组协议差异 & \href{https://kafka.apache.org/43/operations/consumer-rebalance-protocol/}{Kafka 4.3 Rebalance Protocol} & 第 17–20 章：classic 与新协议背景；课程不实现完整协议。\\
-leader epoch 与截断 & \href{https://cwiki.apache.org/confluence/display/KAFKA/KIP-101+-+Alter+Replication+Protocol+to+use+Leader+Epoch+rather+than+High+Watermark+for+Truncation}{KIP-101} & 第 26 章：为何仅靠 HW 不足以定位分叉。\\
+消费位置与提交 & \href{https://kafka.apache.org/42/javadoc/org/apache/kafka/clients/consumer/KafkaConsumer.html}{KafkaConsumer 4.2 API} & 第 14–16 步：position、seek、commit 与线程约束。\\
+最小 ISR 配置 & \href{https://kafka.apache.org/43/configuration/topic-configs/}{Kafka 4.3 Topic Configs} & 第 22–24 步：min.insync.replicas 与写入确认。\\
+消费组协议差异 & \href{https://kafka.apache.org/43/operations/consumer-rebalance-protocol/}{Kafka 4.3 Rebalance Protocol} & 第 17–20 步：classic 与新协议背景；课程不实现完整协议。\\
+leader epoch 与截断 & \href{https://cwiki.apache.org/confluence/display/KAFKA/KIP-101+-+Alter+Replication+Protocol+to+use+Leader+Epoch+rather+than+High+Watermark+for+Truncation}{KIP-101} & 第 26 步：为何仅靠 HW 不足以定位分叉。\\
 JUnit 测试运行 & \href{https://docs.junit.org/5.11.4/user-guide/}{JUnit 5.11.4 User Guide} & 阅读实际 Step 行为失败与测试报告。\\
 Tectonic 编译选项 & \href{https://tectonic-typesetting.github.io/book/latest/v2cli/compile.html}{Tectonic compile} & 本书采用 XeTeX/CJK 与本地 cache 的构建入口。\\
 \bottomrule

@@ -1,5 +1,5 @@
 \chapter{记录与单段持久化}
-这一章回答一个基础但关键的问题：消息写进文件后，如何知道它完整、顺序正确，并能在进程重启后恢复？一个 Kafka partition 在概念上是只追加的日志；本课程先把每条记录直接编码到一个单段文件，然后再加入分段、索引和保留。这里的 offset 是逻辑位置，不能拿文件字节位置替代。
+本章从“进程退出后，怎样把一条消息从文件中原样找回来”开始。内存会随进程结束而消失，文件却只保存字节，不会自动记住哪些字节属于同一条记录。课程先定义每条记录的二进制边界，再把记录追加成只追加日志；后续用逻辑 offset（位点）标识记录，用文件 byte position（字节位置）找到它们。LEO（log end offset，日志末端位点）是下一条可写记录的 offset，不是最后一条记录的 offset，也不是文件字节数。这里的概念是课程格式，不是 Kafka 的磁盘格式。
 
 \begin{figure}[ht]
 \centering
@@ -18,45 +18,110 @@
 \end{figure}
 
 \lessonsection{1}{记录编解码}
-\goals{定义稳定的磁盘边界，使写入和读取方对字节有同一解释。}{理解有符号长度、固定宽度整数、UTF-8 字节与 CRC32C；不要求先会文件扫描。}
-\background{格式为大端 \pathcode{length:int32 | crc32c:int32 | offset:int64 | timestamp:int64 | keyLength:int32 | valueLength:int32 | key | value}。length 从 CRC 字段开始计，合法范围 28 到 1,048,576；keyLength=-1 表示 null，0 表示空 key。value 必须存在但允许长度 0。CRC32C 覆盖 offset 字节起至 value 末尾；length 前缀和 CRC 字段本身不参与校验。offset/timestamp 均非负。先验证长度再按声明字段取字节，才能区分恶意/损坏长度与真正不足的 buffer。解码恰消费一条记录，即便后面还有下一条记录也不能把后缀吞掉。}
-\providededit{\pathcode{LogRecord}、\pathcode{RecordData}、\pathcode{CourseException}、\pathcode{ErrorCode}、大端字段与 CRC32C 工具类型已经提供。数组所有权交给数据类型；不要为每次字段访问重复拷贝。}{\pathcode{exercises/src/main/java/io/simplekafka/storage/RecordCodec.java}：\method{encode(LogRecord)}、\method{decode(ByteBuffer)}。}
-\lessoncontract{编码应精确分配所需记录空间，记录的 offset/timestamp 不可为负，value 不可 null。解码输入不足是 \method{INVALID_REQUEST}；格式错误或 CRC 不匹配是 \method{CORRUPT_RECORD}。成功后 buffer position 正好位于该条记录之后，后续 bytes 原样留待下一次解码。Null key 与空 key 不可混淆。}
-\lessonhints{把格式表按“定长头部”和“变长尾部”拆开，先列每个字段的字节数。}{CRC 检验时明确它保护的起止边界；length 的定义与总分配字节数不是同一个量。}{编写往返和单字节破坏测试，再分别观察短 buffer、非法长度与校验失败应该属于哪类协议错误。}
-\expected{编码并解码一条 offset=7、key=null、timestamp=9 的记录，value 为“值”的 UTF-8 字节。解码后这些字段都应保持不变。value 任一位翻转都会报 \method{CORRUPT_RECORD}；输入不足一条完整记录时报 \method{INVALID_REQUEST}。这些对应 \method{Step01Test}，也验证解码未吞掉紧随其后的记录。}
-\pitfalls{把长度前缀计入 length、把 CRC 覆盖到自身、把 null key 解释为空数组，都会破坏互操作。CRC 是损坏探测而非安全签名。真实 Kafka 通常按 record batch 组织并有更丰富的压缩与批量格式；课程故意用单记录格式让字段边界可见，不宣称 Kafka 磁盘格式相同。}
+\goals{定义稳定的磁盘边界，使写入方和读取方对每个字节有相同解释。}{理解长度、定宽整数、UTF-8 字节和 CRC32C；不要求先会二进制或文件扫描。}
+\background{文件中的数字和字段都只是字节；格式必须约定字段顺序、宽度和字节序，才能从字节还原字段。本课程用大端（高位字节先放）格式 \pathcode{length:int32 | crc32c:int32 | offset:int64 | timestamp:int64 | keyLength:int32 | valueLength:int32 | key | value}。length 从 CRC 字段起计，不含最前面的 4 字节 length 自身。定宽部分除 payload 外占 32 字节总空间，其中 length 值的固定部分是 28 字节。CRC32C 检查 offset 到 value 末尾是否与写入时一致；它能发现常见的意外损坏，但不是身份验证或安全签名。}
+\begin{center}
+\small
+\begin{tabular}{p{.17\textwidth}p{.18\textwidth}p{.55\textwidth}}
+\toprule
+字段 & 字节宽度 & 含义 \\
+\midrule
+\pathcode{length} & int32，4 & 不含自己的前 4 字节；合法值为 28--1,048,576。\\
+\pathcode{crc32c} & int32，4 & 校验 offset 至 value 末尾，不包含 length 与 CRC 自身。\\
+\pathcode{offset} & int64，8 & 分区内的逻辑编号，必须非负。\\
+\pathcode{timestamp} & int64，8 & 随记录保存的非负时间值。\\
+\pathcode{keyLength} & int32，4 & -1 表示 null key，0 表示空 key，否则是 key 的字节数。\\
+\pathcode{valueLength} & int32，4 & value 的非负字节数；value 不能为 null。\\
+\pathcode{key}、\pathcode{value} & 变长 & 按各自 length 紧随长度字段；总字节数按编码后的 bytes 计算。\\
+\bottomrule
+\end{tabular}
+\end{center}
+\providededit{\pathcode{LogRecord} 表示带逻辑 offset 的记录；\pathcode{RecordData} 保存 key、value、timestamp；\pathcode{CourseException} 与 \pathcode{ErrorCode}、大端字段及 CRC32C 工具已提供。}{仓库根目录下的 \pathcode{exercises/src/main/java/io/simplekafka/storage/RecordCodec.java}：实现 \method{public static ByteBuffer encode(LogRecord record)} 与 \method{public static LogRecord decode(ByteBuffer source)}。不要改 provided 类型、参考实现或测试。}
+\subsubsection*{开始前先读}
+这是课程第一步；只需能读 Java 类、方法和异常。本步引入 byte（字节，8 bit）作为文件长度单位：UTF-8 字符可以由多个字节组成，所以长度必须数编码后的字节而不是字符。下一步会把编码结果写进文件。
+\subsubsection*{输入、输出与状态}
+\begin{itemize}
+\item \method{encode} 接受一个 \pathcode{LogRecord(offset,data)}；若 record 为 null，报 \method{INVALID_REQUEST}。offset 与 timestamp 均为非负 \pathcode{long}，value 必须存在（可为零字节），key 可为 null、空数组或非空字节数组。成功返回 position=0、limit 恰好到该记录末尾的新 buffer，不读取或改变文件状态。
+\item \method{decode} 从 source 当前 position 开始读；source 为 null 时抛出 \method{NullPointerException}，没有消耗输入。它按大端解释字段，不依赖 source 自身的 byte order；heap、direct、read-only、slice buffer 都是有效输入。成功只消费一条记录并将 position 推到该记录之后，limit 不变，后续记录字节留给下一次调用。
+\item length 合法范围是 28 到 1,048,576（含）；总记录空间是 \pathcode{4 + length = 32 + keyBytes + valueBytes}。null key 写作 keyLength=-1，空 key 写作 0；valueLength 必须非负。普通记录没有额外身份字段。
+\end{itemize}
+\lessoncontract{输入不完整（连 4 字节 length 前缀都不全，或合法声明的 body 尚未全部到达）报 \method{INVALID_REQUEST}。完整但 length 越界、字段结构不合法、offset/timestamp 为负或 CRC 不匹配报 \method{CORRUPT_RECORD}。encode 的非法记录或大于上限的记录报 \method{INVALID_REQUEST}。decode 无论成功或失败都不得改 limit；失败不得推进 source position。}
+\subsubsection*{手算一个完整记录}
+先看测试的独立 golden：offset=7、timestamp=23、key=null、value 为空，所有整数为大端。十六进制字段依次为 \pathcode{0000001c df159f32 0000000000000007 0000000000000017 ffffffff 00000000}：length=28；CRC32C 为 \pathcode{df159f32}；keyLength 的 \pathcode{ffffffff} 是 -1；valueLength=0。前缀 4 字节不包含在 length 中，所以此记录总长是 32 字节。
+\par 另一个尺寸例子使用 null key 和 UTF-8 value“值”（假定 UTF-8 字节为 \pathcode{e580bc}，共 3 字节）：length=$28+0+3=31$，总空间 $4+31=35$ 字节。空 key 会编码为 keyLength=0，和 null key 的 -1 不相同；这不是上面的空 value golden。
+\expected{\method{Step01Test} 用独立字节 golden 比较 encode/decode，覆盖 null key 与空 key、零长 value、连续解码、多种 ByteBuffer 视图、每个不完整前缀、越界 length、CRC/结构损坏以及最大长度。关键方法：\pathcode{encodeAndDecodeMatchIndependentBigEndianGoldenRecords} 检查 golden，\pathcode{decodesOneRecordFromHeapDirectReadOnlyAndSliceBuffers} 检查 buffer 视图，\pathcode{rejectsEveryIncompletePrefixAndOutOfRangeRecordLength} 与 \pathcode{rejectsCorruptionInEveryStoredField} 检查错误边界，\pathcode{enforcesLengthLimitAndSupportsLargestNonnegativeLogicalValues} 检查最大值。最大普通记录的 length=1,048,576、总长=1,048,580；再多一个 value 字节必须拒绝。}
+\pitfalls{不能把 length 前缀算进 length，也不能把 CRC 字段本身放进 CRC 覆盖区。不要把 Unicode 字符数当作 valueBytes。CRC 匹配只说明这些被保护的字节与校验值一致，不证明来源可信。}
+\lessonhints{先把 4 字节 length、4 字节 CRC、两个 8 字节整数、两个 4 字节长度和变长尾部逐项列出。}{把 length 的取值范围、它覆盖的字段和总分配字节数分开计算；UTF-8 先转成字节再数长度。}{逐个检查解码失败发生在“不完整”还是“完整但非法”，再用成功后 position/limit 与后缀 sentinel 验证边界。}
 \lessoncommand{1}
-\lessonquestions{为什么 record 的逻辑 offset 不能从文件 byte position 推算？}{CRC 校验成功能证明哪些事情，不能证明哪些事情？}
+\lessonquestions{为什么 null key 与零字节空 key 必须使用不同表示？}{CRC 校验成功能说明什么，不能说明什么？}
+\paragraph*{自检参考解释}
+null key 表示没有 key，空 key 表示存在一个长度为零的 key；把两者合并会丢失调用者数据。CRC32C 可以发现覆盖字节的意外变化，但不能证明发送者身份，也不能代替结构字段校验。
 
 \lessonsection{2}{日志追加}
-\goals{实现单段日志的连续 offset 分配与可观察持久化。}{掌握第一步的编码，以及锁、全写循环和文件位置写入的区别。}
-\background{追加把数据从内存转为有序的日志事实。partition 的本地锁串行化同一分区的追加，使竞争批次不会获得交错或重叠的 offset。一次普通 FileChannel.write 可能只写部分 buffer，因此必须使用提供的 \method{ChannelIO.writeFully}。批次写完后调用 \method{force(false)}，再公布追加结果；\method{AppendResult(firstOffset,nextOffset)} 使用左闭右开区间，例如 [0,3) 表示三条记录。写入过程遇到 I/O 错误时课程不保证整批原子回滚，重启恢复负责识别物理尾部残片。}
-\providededit{\method{SegmentLog} 的 path、FileChannel、锁、baseOffset、nextOffset 与 \method{close()} 已给定；记录编码和部分写 I/O 已可复用。}{\pathcode{exercises/src/main/java/io/simplekafka/storage/SegmentLog.java}：\method{append(List<RecordData>)}。}
-\lessoncontract{空 batch 报 \method{INVALID_REQUEST}。非空 batch 在锁内以当前 LEO 为首 offset 分配连续编号；整批先做参数及单记录大小预检，不能让已知非法输入写入前缀后再失败。写出全部记录并 force 成功后返回首 offset 与下一 offset。每批记录的 timestamp/数据合法性由既定类型和 codec 契约约束。}
-\lessonhints{用一个 batch 的首尾 offset 表达结果，不把“记录数”误作下一批首 offset。}{想清楚哪类错误在取得锁以前就能判断，哪类状态必须在锁内读取。}{让并发追加只竞争同一个日志实例，并观察批次级次序与文件内容；别只断言最终 LEO。}
-\expected{空段依次追加三条、再追加两条，预期结果分别为 [0,3) 与 [3,5)，从文件解码得到 offset 0、1、2、3、4。两个并发两条记录 batch 的结果区间必须不相交，且总记录数为四。对应 \method{Step02Test} 的实际文件与并发检查。}
-\pitfalls{先写再发现某条记录超长，会留下不应存在的部分 batch。只更新 nextOffset 而不 force/检查写入同样错误。真实 Kafka 采用批处理、后台 I/O 与更复杂的持久化策略；本课程每次追加显式 force 以便观察边界，这不是 Kafka 默认每条消息同步落盘的性能模型。}
+\goals{实现单段日志的连续 offset 分配，并在成功返回前完成课程规定的写入。}{复用记录编码，理解共享状态的锁、完整写循环和文件字节位置。}
+\background{追加（append）把新记录放到已有日志尾部，不覆盖旧记录。一个分区日志把“下一条 offset”和文件尾字节位置作为共享状态；锁（lock）是保护共享状态的一段互斥操作，同一时刻只允许一个追加批次读取/更新这些状态，否则两个线程可能分配到同一 offset 或把批次字节交错。一次 \method{FileChannel.write} 允许只写出部分 buffer，提供的 \method{ChannelIO.writeFully} 会继续写完。课程要求完整批次写完并调用 \method{force(false)} 后才发布结果。}
+\providededit{\method{SegmentLog.create(Path,long)} 建立新段，段对象、FileChannel、锁、baseOffset、nextOffset、\method{close()}、\method{RecordCodec.encodedSize(RecordData)} 和 \method{ChannelIO.writeFully(...)} 已提供。}{\pathcode{exercises/src/main/java/io/simplekafka/storage/SegmentLog.java}：实现 \method{public AppendResult append(List<RecordData> records)}。}
+\subsubsection*{开始前先读}
+先完成 \stepref{1}{记录编解码}，尤其要能算出一条记录完整编码后的字节数，并知道非法记录在写入前可拒绝。测试从非零 baseOffset 开始，因此不要假定每个日志都从 offset 0 起。
+\subsubsection*{输入、输出与状态}
+\begin{itemize}
+\item 输入是按调用顺序写入的非空 \pathcode{List<RecordData>}；每条 data 要满足第 1 步的值、时间戳及最大长度规则。输出 \method{AppendResult(firstOffset,nextOffset)} 是左闭右开区间，含 firstOffset、不含 nextOffset。
+\item 空/null batch、null 元素、非法数据、单条超限，或 nextOffset 无法继续递增时以 \method{INVALID_REQUEST} 拒绝。已知非法输入必须在任何写盘前发现。
+\item 成功时文件在尾部增加整个 batch，LEO 移至 nextOffset；实际文件写入或 force 的 I/O 错误报 \method{STORAGE_ERROR}。I/O 失败可能已经写入部分或全部字节，课程不承诺回滚；因此不能声称失败后磁盘必定未改变。已关闭段也不可追加。
+\end{itemize}
+\lessoncontract{在锁内以当前 LEO 分配连续 offset，保持一个 batch 的记录相邻且不与并发 batch 交错；全部记录先预检，再写入。只有完整 writeFully 与 force 成功后才返回区间并发布新的 LEO。无效输入不改变文件和 LEO。}
+\subsubsection*{手算一个完整追加}
+初始段以 baseOffset=5 创建，文件为空，LEO=5。追加三条普通记录，每条假定 null key、1 字节 UTF-8 value，因此每条占 33 字节：先调用 \pathcode{append([a,b])}，写入 offsets 5、6，返回 \pathcode{[5,7)}，文件长 66、LEO=7；再调用 \pathcode{append([c])}，写入 offset 7，返回 \pathcode{[7,8)}，文件长 99、LEO=8。之后若有一条非法记录，拒绝后文件和 LEO 仍为 99 与 8，下一条有效记录从 8 开始。
+\expected{\method{Step02Test} 的 \pathcode{appendsBatchesFromNonzeroBaseAndPreservesIndependentDiskEncoding} 验证 base=5 时的 [5,7)、[7,8) 和磁盘字段；\pathcode{rejectsInvalidBatchesAtomicallyWithoutCreatingOffsetGaps} 验证空/null/含 null/超长 batch 拒绝后文件、LEO 与后续 offset；\pathcode{rejectsAppendAtMaximumOffsetWithoutChangingEmptyFile} 验证溢出；\pathcode{concurrentBatchesReceiveDisjointRangesWithoutInterleaving} 验证并发区间不重叠、不交错。}
+\pitfalls{不能只在末尾发现第三条无效后才返回错误，否则前两条可能已经写进日志。也不能用原始 value 长度替代 RecordCodec 的完整编码大小。force 成功是课程向上层返回的条件，不是断电后物理介质绝不丢数据的证明。}
+\lessonhints{先写出调用前的 LEO，再把它作为 batch 首 offset；nextOffset 是下一批的起点。}{把整批输入预检与持锁读取当前 LEO 分开考虑，并且用 writeFully 处理部分写。}{并发测试检查两个 AppendResult 区间和文件中每个 offset 的顺序，不要只断言最终 LEO。}
 \lessoncommand{2}
-\lessonquestions{为何验证整个 batch 应发生在任何磁盘写入之前？}{force 成功代表什么，又不代表什么？}
+\lessonquestions{为什么整批预检必须发生在第一次磁盘写入之前？}{一条写入若抛出 I/O 错误，为什么不能自动断言它完全没写入？}
+\paragraph*{自检参考解释}
+整批预检能使可预见的参数错误不留下半个 batch，也不消耗 offset。I/O 错误发生在操作系统已经接受部分字节之后也可能抛出，故失败返回不等于磁盘回滚；恢复步骤必须辨认合法边界。
 
 \lessonsection{3}{按位点读取}
-\goals{从指定 offset 读取完整记录，并同时尊重记录数和字节预算。}{区分 offset、段内 byte position、记录完整性以及游标状态。}
-\background{消费者请求的是逻辑位点，文件读取需要物理 byte position。第一版公开读取从段首开始；下一章索引会把一个逻辑位点附近的物理位置提示给日志。提示只能缩短搜索，不能改变 offset 语义。每条记录是不可拆的返回单位：若下一条完整记录放不进预算，就不返回半条。预算统计包含 length 前缀。显式 position 的 FileChannel 读取避免 read 与 append 共享可变 channel cursor。}
-\providededit{段生命周期和记录解码已完成；公开 \method{read(offset,maxRecords,maxBytes)} 会把默认 hint 传给内部方法。}{\pathcode{exercises/src/main/java/io/simplekafka/storage/SegmentLog.java}：\method{readFrom(long offset,long bytePositionHint,int maxRecords,int maxBytes)}。}
-\lessoncontract{参数 offset 可从 baseOffset 到 LEO（含 LEO 的空读）；段内超出有效范围报 \method{OFFSET_OUT_OF_RANGE}。maxRecords/maxBytes 必须为正。返回记录按 offset 连续且不超过两个预算；第一条自身超 byte budget 时结果为空。有效 hint 必须位于记录边界且不能越过目标 offset，否则报 \method{INVALID_REQUEST}。读取不得移动追加位置或改变 LEO。}
-\lessonhints{把“找到候选字节位置”与“输出应从哪个 offset 开始”视为两个独立问题。}{为 byte budget 计算完整记录占用，并考虑 length 前缀；不按 payload 字节数近似。}{设计一个 hint 指向目标之前的边界、另一个越过目标的边界，分别验证可用和拒绝条件。}
-\expected{追加 offset 0–4 后，\pathcode{read(2, 2, 4096)} 得 offset 2、3。再调用 \pathcode{readFrom(2,hint,2,4096)}，把 hint 设为 offset 1 记录在文件中的实际起始字节位置，仍应返回 offset 2、3；hint 是物理位置，不是逻辑 offset 数字。\pathcode{read(5, 2, 4096)} 返回空；从 offset 1 以 66 byte 预算读取恰好返回 1、2，以更小预算只返回 1。第一条完整记录超过 maxBytes 时返回空而不是部分 bytes。对应 \method{Step03Test}。}
-\pitfalls{offset 2 不是文件第 2 字节；将两者混为一谈会在索引出现后随机丢记录。忽略前缀预算会超过调用者内存预算。真实 Kafka fetch 通常以 batch 与网络字节上限协商，本实现以单记录为原子返回单位，消费跨段的总预算由下一章统一处理。}
+\goals{从逻辑 offset 读取完整记录，并同时遵守记录数与编码字节预算。}{区分逻辑位点、文件字节位置、hint（搜索提示）和追加游标。}
+\background{调用者用 offset 指定想要的第一条逻辑记录；文件读取器需要从某个 byte position 开始扫描。offset 是分区日志的编号，byte position 是本段文件内从 0 起算的字节数，它们单位不同、不能互换。bytePositionHint 只帮助减少扫描：必须是记录边界且不能跳过目标；真正返回仍从请求 offset 起。记录不可拆分，maxBytes 按完整编码记录计（包含 4 字节 length 前缀）。显式文件位置读取也让读操作不必改变追加位置。}
+\providededit{段的创建、LEO、锁与记录解码已提供；\method{read(long,int,int)} 会使用段起点作为默认 hint。}{\pathcode{exercises/src/main/java/io/simplekafka/storage/SegmentLog.java}：实现 \method{public List<LogRecord> readFrom(long offset,long bytePositionHint,int maxRecords,int maxBytes)}。}
+\subsubsection*{开始前先读}
+完成 \stepref{2}{日志追加}，理解成功追加后 offset 连续、文件按完整编码字节增长。没有稀疏索引时可以从段首找目标；本步的 hint 只是物理起点，不会改变逻辑请求。
+\subsubsection*{输入、输出与状态}
+\begin{itemize}
+\item offset 必须在 \pathcode{[baseOffset, LEO]}；正好等于 LEO 是合法空读。maxRecords 与 maxBytes 都必须大于 0。返回记录按 offset 连续，且不超过任一预算。
+\item bytePositionHint 是本段文件中的非负 byte position，必须位于实际记录边界且不晚于请求 offset 的物理位置；文件末尾 hint 仅当 offset=LEO 合法。负数、越过目标、落在记录内部或越过 EOF 的 hint 报 \method{INVALID_REQUEST}；offset 越过范围报 \method{OFFSET_OUT_OF_RANGE}；磁盘上完整记录损坏报 \method{CORRUPT_RECORD}；段已关闭或底层 I/O 失败报 \method{STORAGE_ERROR}。
+\item 若第一条完整记录本身大于 maxBytes，返回空列表，不返回半条。成功或失败读取均不追加、不更改 LEO，也不推进可供后续读取使用的持久消费进度。
+\end{itemize}
+\lessoncontract{从 hint 验证后的记录边界向前扫描，忽略 hint 所在 offset 小于目标的完整记录，输出必须从请求 offset 开始。每条记录完整后才计入记录数和 byte budget；只读不移动追加游标。}
+\subsubsection*{手算完整记录预算与提示}
+假设段 base=0，依次追加 5 条记录；每条 null key、1 字节 value、普通格式，因此都占 $32+1=33$ 字节。它们的 offset 为 0–4，文件起始 position 分别为 0、33、66、99、132，EOF 为 165。调用 \pathcode{readFrom(2,33,2,66)} 时 hint=33 指向 offset 1 的合法边界，读取器跳过 offset 1 后仍从 offset 2 返回 offsets 2、3。预算 32 返回 0 条；33 返回 1 条；65 仍只能容纳 1 条；66 正好容纳 2 条。offset=5 且 hint=165 返回空。
+\expected{\method{Step03Test} 的 \pathcode{validatesRecordBoundaryHintsAndWholeRecordBudgets} 检查 33-byte 位置、hint -1/1/67/166 和跳过目标的 165、预算及错误码；\pathcode{enforcesNonzeroBaseBoundsAndKeepsReadPagingSeparateFromAppendPosition} 检查非零 base 和分页不改追加位点；\pathcode{rereadsCompleteRecordsAndRejectsDamageWrittenThroughAnotherHandle} 检查外部损坏报 \method{CORRUPT_RECORD}。}
+\pitfalls{把 offset=2 当成文件第 2 字节会从记录中间开始；把 hint 当成返回首 offset 会漏掉目标之前之后的语义。字节预算不是 payload 大小，长度、CRC、字段头都占磁盘空间。}
+\lessonhints{画出 offset→文件起始 position 的两行映射，明确每个量的单位。}{再验证 hint 不晚于目标、处于记录边界；输出从 offset 开始而不是从 hint 开始。}{对 32、33、65、66 分别累计完整记录大小，并单独测首记录超过预算时的空结果。}
 \lessoncommand{3}
-\lessonquestions{稀疏索引为什么只能提供搜索起点，不能直接决定读取结果？}{第一条记录比 maxBytes 大时，返回部分记录会造成什么问题？}
+\lessonquestions{为何 hint 指到 offset 1 的边界时，读取 offset 2 不能把 offset 1 返回？}{当第一条记录放不进 maxBytes 时，为什么返回部分记录不是合理选择？}
+\paragraph*{自检参考解释}
+hint 只帮助定位搜索起点，请求 offset 才定义返回范围。记录含长度、校验和字段，部分字节不是可解码的完整记录；返回空让调用者知道本次没有完整记录适配预算。
 
 \lessonsection{4}{崩溃恢复}
-\goals{从一个可能在写入中途关闭的日志恢复连续 LEO，并仅修复可证明是不完整尾部的情况。}{理解记录边界、物理截断和错误类别。}
-\background{崩溃可能发生在 length 前缀、固定头或 payload 写入期间。若 EOF 位于最后一条的 header/body 内，完整前缀之前的数据仍可构成日志，可截断到上一条边界；但一个完整记录的 CRC 坏、长度非法、offset 不连续，都不是“安全丢弃的尾部”。将完整但损坏的证据静默截掉，会把介质故障误报成成功恢复。恢复从 baseOffset 建立期望 offset，扫描到最后一个有效边界并返回下一个可写位点。}
-\providededit{\method{SegmentLog.open(file,baseOffset)} 会打开已有文件并调用恢复；步骤 1 codec 与步骤 2/3 文件布局已经建立。}{\pathcode{exercises/src/main/java/io/simplekafka/storage/SegmentLog.java}：\method{recover()}。}
-\lessoncontract{成功时返回恢复后的 LEO，下一次 append 从它继续；只允许截断文件末尾的不完整记录。完整记录 CRC 错、长度不合法或 offset 断裂必须以 \method{CORRUPT_RECORD} 失败，不得跳过错误记录继续扫描。底层 I/O 异常使用 \method{STORAGE_ERROR} 并保留 cause。}
-\lessonhints{先定义每一个扫描成功后的“共同状态”：当前有效字节边界与下一期望 offset。}{将 EOF 不足字节与已读满却内容不正确的记录分开分类。}{构造半条尾记录与完整 CRC 损坏记录的两类 reopen 测试，确认只有前者改变文件长度。}
-\expected{文件含完整 offset 0、1，再含 offset 2 的半条 body；重新 open 后 LEO=2，文件恰截到第二条结尾；追加一条得到 offset 2。若 offset 1 完整但 CRC 错，reopen 应失败而不把它当作残尾。对应 \method{Step04Test}。}
-\pitfalls{“扫描到报错就截断”会吞掉完整记录损坏和格式错误；“任何 EOF 都是无效文件”又无法处理正常崩溃尾部。\method{force(false)} 提供的是本课程写入意图，不是断电安全证明。真实 Kafka 还有 segment recovery、索引修复、日志校验与更复杂的清理策略；本步骤只恢复一段的边界。}
+\goals{重启时恢复一段连续日志的 LEO，并只截去能够证明不完整的文件尾。}{区分未写完的记录与一条完整但损坏的记录。}
+\background{进程可能在写 length、固定字段或 value 的中途退出。恢复从 baseOffset 开始，将每个完整记录的 offset 与“下一条期望 offset”逐条比较。日志边界由 length 和完整字段共同决定：EOF 不足以组成下一条记录时，可以安全回到该记录起点；但完整记录的 CRC、字段或连续 offset 不合法，属于损坏证据，不能静默截掉。}
+\providededit{\method{SegmentLog.open(Path,long)} 会打开现有文件并调用恢复；文件位置、baseOffset、LEO 字段与第 1–3 步 codec/读写路径已给定。}{\pathcode{exercises/src/main/java/io/simplekafka/storage/SegmentLog.java}：实现 \method{public long recover()}。}
+\subsubsection*{开始前先读}
+先完成 \stepref{3}{按位点读取}，能够从长度前缀和固定字段辨认完整记录边界。此方法既被显式调用，也在 \method{open} 打开旧文件时调用；打开成功后再 recover 一次应得到同一结果。
+\subsubsection*{输入、输出与状态}
+\begin{itemize}
+\item 输入是打开的段及其 baseOffset；空段允许从任意非负 base 开始。输出为恢复后的 LEO，即下一条应追加的 offset；空段的 LEO=baseOffset。
+\item 剩余字节少于 4，length 前缀不完整：截到当前记录起点。完整读到 length 但值不在 [28,1,048,576]：\method{CORRUPT_RECORD}，即使 body 尚未出现也不能当残尾。length 合法但声明的 body 尚不完整：截到当前记录起点。
+\item 完整记录 CRC/字段非法或 offset 不等于下一期望值：\method{CORRUPT_RECORD}，拒绝并保持原文件字节不变。段已关闭或底层 I/O 失败报 \method{STORAGE_ERROR}，I/O cause 按异常契约保留。
+\end{itemize}
+\lessoncontract{成功恢复后文件只保留连续、完整、有效的前缀，LEO 指向其末端；只允许修复尾部不完整记录，不跳过或改写任何完整损坏记录。再次 recover 或关闭后 reopen 必须幂等。}
+\subsubsection*{手算恢复并继续追加}
+假定 base=0，文件含两条完整普通记录：null key、每条 value 为 1 byte，所以 offsets 0、1 各占 33 bytes，完整前缀长 66，下一 offset 为 2。offset 2 的第三条记录同样声明总长 33；文件只再含该条前 17 bytes（其中已包括完整 length=29，但 body 不完整），总文件长 83。recover 截到 byte position 66，返回 LEO=2；随后追加 value 为 1 byte 的一条记录，获得 \pathcode{[2,3)}。相反，若第三条只写了完整 length 前缀而声明 length=1,048,577，则长度本身非法，文件不截断并报 \method{CORRUPT_RECORD}。
+\expected{\method{Step04Test} 的 \pathcode{truncatesEveryIncompleteTailPrefixAndKeepsACompleteThirdRecord} 与 \pathcode{truncatesAnIncompleteFirstRecordAtZeroAndNonzeroBases} 验证只截去不完整尾；\pathcode{recoversEmptyAndNonzeroBaseFilesIdempotentlyAndRejectsWrongBase} 检查空段、非零 base、重复恢复；\pathcode{rejectsCompleteCorruptionAndOffsetDiscontinuitiesWithoutChangingFileBytes} 验证 CRC、字段、非法长度和 offset 断裂不改文件。}
+\pitfalls{把“任何解析失败”都当残尾，会吞掉完整记录损坏；把任何 EOF 都当坏文件，又无法恢复正常写入中断。只有合法 length 表明“期望多少 body”之后，才可区分短 body 与非法长度。}
+\lessonhints{扫描状态只需记录当前有效 byte boundary 与下一期望 offset。}{按“prefix 不足 4 / length 非法 / length 合法但 body 不足 / 完整有效或完整损坏”分类。}{用两条有效记录加半条尾记录 reopen；再单独用相同前缀加 CRC 损坏的完整记录，并比较错误码与文件字节。}
 \lessoncommand{4}
-\lessonquestions{哪些字节证据足以判定尾部不完整，哪些必须当成损坏上报？}{为什么恢复应返回 LEO 而不是最后一条记录的 offset？}
+\lessonquestions{为什么完整 length 前缀中的非法数值不能被当成“body 写了一半”？}{恢复后为什么返回 LEO=2，而不是最后一条记录的 offset=1？}
+\paragraph*{自检参考解释}
+非法 length 已经给出无法接受的完整声明，不是“合法记录没写完”，因此是 corruption。LEO 是下一条可追加的位置；最后已有记录的 offset=1，后续必须写 2。

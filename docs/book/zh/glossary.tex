@@ -5,14 +5,49 @@
 术语 & 本书中的含义与位置 \\
 \midrule
 \endhead
-追加（append） & 在日志尾部按连续 offset 写入记录；第 1、2、6 章。\\
-位点（offset） & 分区日志中的逻辑记录编号，不是文件字节位置；第 1 章。\\
-字节位置（position） & 记录在一个 segment 文件内的物理起始位置；第 1、2 章。\\
-LEO & Log End Offset，下一条可写记录的 offset；第 1、6 章。\\
-HW & High Watermark，普通消费者可见的提交边界；第 6、7 章。\\
-ISR & In-Sync Replicas，与当前 leader 保持在课程界定同步条件内的副本集合；第 6、7 章。\\
-generation & 消费组成员分配的版本号，用于拒绝旧成员提交；第 5 章。\\
-leader epoch & 分区 leader 角色版本；切换后旧角色请求被围栏；第 7 章。\\
-至少一次 & 处理可能重放，但在提交之前不会悄悄越过未成功处理的记录；第 4 章。\\
+消息／记录（message／record） & 生产者交给系统保存和读取的一条数据；本书先在导读建立概念，再于 \stepref{1}{记录编解码}解释字节格式。\\
+生产者（producer） & 发送记录的程序角色；批量发送见 \stepref{13}{批量生产者}。\\
+broker & 接收客户端请求并保存、提供记录的服务角色；单机请求见 \stepref{12}{单机broker}。\\
+消费者（consumer） & 主动拉取记录并执行处理的程序角色；读取位置见 \stepref{14}{拉取消费者}。\\
+topic（主题） & 相关记录的命名分类；注册和查询分区信息见 \stepref{10}{主题元数据}。\\
+partition（分区） & topic 内独立编号、独立保持顺序的一条日志；追加和读取多个分区见 \stepref{6}{分段日志}。\\
+key／value & 记录可选的关联/路由字节与必需的内容字节；null key 与空 key 的编码区别见 \stepref{1}{记录编解码}。\\
+timestamp（时间戳） & 随记录保存的时间值；本课程要求非负，但记录顺序由 offset 决定，见 \stepref{1}{记录编解码}。\\
+追加式日志（append-only log） & 新记录写到日志尾部，不因读取而删除；首次编码和追加见 \stepref{2}{日志追加}。\\
+offset（位点） & 分区内记录的逻辑编号；追加结果用左闭右开区间表示，见 \stepref{2}{日志追加}。\\
+byte position（字节位置） & 某个段文件中的物理字节位置，与逻辑 offset 不同；见 \stepref{3}{按位点读取}。\\
+LEO（日志末端位点） & 下一条可追加记录的 offset，而不是最后一条记录的 offset；见 \stepref{2}{日志追加}。\\
+segment（日志段） & 一个分区日志按文件切出的部分；段滚动见 \stepref{6}{分段日志}。\\
+sparse index（稀疏索引） & 保存部分 offset 与文件位置、帮助缩短搜索的可重建数据；见 \stepref{5}{稀疏索引}。\\
+retention（日志保留） & 按阈值删除已封闭的旧段，不代表消费者读过；见 \stepref{7}{日志保留}。\\
+truncation（截断） & 删除某个 next offset 之后的日志尾部，与删除旧头部相反；见 \stepref{8}{尾部截断}。\\
+metadata（元数据） & 告诉客户端 topic 的分区及其 broker 位置的信息；见 \stepref{10}{主题元数据}。\\
+frame（帧） & TCP 字节流中带长度边界的一条完整课程请求/响应；见 \stepref{11}{TCP帧协议}。\\
+batch（批次） & 一次一起校验、写入或发送的多条记录；存储追加见 \stepref{2}{日志追加}，producer 缓冲见 \stepref{13}{批量生产者}。\\
+consumer position（消费位置） & 当前消费者下一次读取的分区 offset，主要在内存中推进；见 \stepref{14}{拉取消费者}。\\
+committed offset（已提交消费位点） & 持久保存、供重启后恢复的下一条消费 offset；不等于日志 LEO 或 HW，见 \stepref{15}{消费位点持久化}。\\
+consumer group（消费组） & 共同消费 topic、协调分区归属的一组成员；见 \stepref{18}{成员与重平衡}。\\
+assignment（分配） & coordinator 当前交给每个成员的分区集合；基础轮询分配见 \stepref{17}{分区分配}。\\
+rebalance（重平衡） & 成员变化后重新计算分区归属；见 \stepref{18}{成员与重平衡}。\\
+heartbeat（心跳） & 成员定期向 coordinator 报告仍存活的请求；超时边界见 \stepref{19}{心跳与过期}。\\
+generation（代次） & 消费组成员集合变化时递增的版本；旧版本请求会被拒绝，见 \stepref{20}{消费组围栏}。\\
+fencing（围栏） & 用 epoch／generation 拒绝已过期角色或成员的请求；消费组示例见 \stepref{20}{消费组围栏}。\\
+leader／follower（主／从副本） & 对同一分区负责接收写入的副本，以及向它拉取记录的副本；见 \stepref{21}{拉取复制}。\\
+replication（复制） & 把 leader 的记录拉取并追加到其他副本日志的过程；见 \stepref{21}{拉取复制}。\\
+ISR（同步副本集合） & 满足课程同步条件、可参与提交边界判断的副本集合；见 \stepref{22}{ISR与高水位}。\\
+HW（高水位） & 普通消费者可见前缀的右边界；仅 offset 小于 HW 的记录可见，见 \stepref{22}{ISR与高水位}。\\
+ACK（写入确认） & producer 选择 broker 何时回复写入成功；确认策略见 \stepref{23}{生产确认}。\\
+minISR（最小同步副本数） & 某些写入允许成功所需的 ISR 最小成员数；见 \stepref{23}{生产确认}。\\
+deadline（截止时刻） & 一次等待允许达到的绝对时刻；超时不保证此前追加已回滚，见 \stepref{23}{生产确认}。\\
+leader epoch（leader代次） & 分区写入角色变化时递增、用于拒绝旧角色请求的版本；见 \stepref{25}{干净选举与epoch}。\\
+authority（权威状态） & 本课程同一 JVM 内可信、记录当前分区角色和复制进度的控制状态；见 \stepref{24}{并发副本broker}。\\
+at-least-once（至少一次） & 成功处理与进度提交之间失败时允许再次处理同一记录；见 \stepref{16}{至少一次处理}。\\
+结果未知（outcome unknown） & 请求可能已生效但回复未到达，调用者无法仅凭异常判定是否追加；见 \stepref{29}{三层一致性故障实验}。\\
+幂等（idempotence） & 相同 producer 身份、epoch 与序号的相同批次重试，不会重复追加；见 \stepref{30}{幂等生产者}。\\
+producer identity／epoch／sequence & 区分写入者、其代次和批次顺序的持久身份字段；见 \stepref{30}{幂等生产者}。\\
+event ID（事件标识） & 稳定标记一项业务事件，使不同 Kafka offset 的重放仍可识别为同一效果；见 \stepref{31}{消费副作用幂等}。\\
+side effect（副作用） & 消费回调产生的外部或业务状态变化，例如账户记账；见 \stepref{31}{消费副作用幂等}。\\
+事务（transaction） & 把一组相关操作作为整体提交或失败的机制；课程没有跨 producer、broker 与外部业务状态的原子事务，见 \stepref{29}{三层一致性故障实验}。\\
+恰好一次（exactly-once） & 对同一输入只产生一次可观察业务结果的保证，不等同于 callback 只执行一次；本课程不提供端到端保证，见 \stepref{29}{三层一致性故障实验}与 \stepref{31}{消费副作用幂等}。\\
 \bottomrule
 \end{longtable}

@@ -193,10 +193,10 @@ Topic & Official reference & Related chapters \\
 \midrule
 \endhead
 Kafka design and persistence model & \href{https://kafka.apache.org/42/design/design/}{Kafka 4.2 Design} & Official overview of logs, replication, and consumer positions; see the simplifications above for this course's differences.\\
-Consumer positions and commits & \href{https://kafka.apache.org/42/javadoc/org/apache/kafka/clients/consumer/KafkaConsumer.html}{KafkaConsumer 4.2 API} & Chapters 14–16: position, seek, commit, and thread constraints.\\
-Minimum ISR configuration & \href{https://kafka.apache.org/43/configuration/topic-configs/}{Kafka 4.3 Topic Configs} & Chapters 22–24: min.insync.replicas and write acknowledgments.\\
-Consumer-group protocol differences & \href{https://kafka.apache.org/43/operations/consumer-rebalance-protocol/}{Kafka 4.3 Rebalance Protocol} & Chapters 17–20: context for the classic and newer protocols; the course does not implement the full protocol.\\
-Leader epochs and truncation & \href{https://cwiki.apache.org/confluence/display/KAFKA/KIP-101+-+Alter+Replication+Protocol+to+use+Leader+Epoch+rather+than+High+Watermark+for+Truncation}{KIP-101} & Chapter 26: why HW alone is insufficient to locate a divergent log.\\
+Consumer positions and commits & \href{https://kafka.apache.org/42/javadoc/org/apache/kafka/clients/consumer/KafkaConsumer.html}{KafkaConsumer 4.2 API} & Steps 14–16: position, seek, commit, and thread constraints.\\
+Minimum ISR configuration & \href{https://kafka.apache.org/43/configuration/topic-configs/}{Kafka 4.3 Topic Configs} & Steps 22–24: min.insync.replicas and write acknowledgments.\\
+Consumer-group protocol differences & \href{https://kafka.apache.org/43/operations/consumer-rebalance-protocol/}{Kafka 4.3 Rebalance Protocol} & Steps 17–20: context for the classic and newer protocols; the course does not implement the full protocol.\\
+Leader epochs and truncation & \href{https://cwiki.apache.org/confluence/display/KAFKA/KIP-101+-+Alter+Replication+Protocol+to+use+Leader+Epoch+rather+than+High+Watermark+for+Truncation}{KIP-101} & Step 26: why HW alone is insufficient to locate a divergent log.\\
 JUnit test execution & \href{https://docs.junit.org/5.11.4/user-guide/}{JUnit 5.11.4 User Guide} & Read actual Step behavior failures and test reports.\\
 Tectonic compile options & \href{https://tectonic-typesetting.github.io/book/latest/v2cli/compile.html}{Tectonic compile} & The book uses XeTeX/CJK with the declared bundle and local cache; see the build notes below.\\
 \bottomrule

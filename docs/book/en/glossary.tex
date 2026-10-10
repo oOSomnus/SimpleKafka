@@ -5,14 +5,49 @@
 Term & Meaning and location in this book \\
 \midrule
 \endhead
-Append & Write records at the log tail using consecutive offsets; Chapters 1, 2, and 6.\\
-Offset & A logical record number in a partition log, not a file byte position; Chapter 1.\\
-Byte position & The physical starting position of a record in one segment file; Chapters 1 and 2.\\
-LEO & Log End Offset, the offset of the next record that can be written; Chapters 1 and 6.\\
-HW & High Watermark, the committed boundary visible to ordinary consumers; Chapters 6 and 7.\\
-ISR & In-Sync Replicas, the set of replicas that satisfy this course’s synchronization conditions with the current leader; Chapters 6 and 7.\\
-Generation & A version assigned to consumer-group membership, used to reject commits from stale members; Chapter 5.\\
-Leader epoch & A version of the partition leader role; requests from the previous role are fenced after a transition; Chapter 7.\\
-At-least-once & Processing may be repeated, but records that were not successfully processed are not silently skipped before commit; Chapter 4.\\
+Message/record & One item of data handed to the system for storage and reading; introduced in the course guide and given a byte format in \stepref{1}{Record encoding and decoding}.\\
+Producer & The program role that sends records; batching is taught in \stepref{13}{Batched producer}.\\
+Broker & The service role that accepts client requests and stores/provides records; single-broker requests are in \stepref{12}{Single-broker requests}.\\
+Consumer & The program role that actively fetches and processes records; its read position is in \stepref{14}{Pull-based consumer}.\\
+Topic & A named category of related records; registration and partition metadata are in \stepref{10}{Topic metadata}.\\
+Partition & An independently numbered, ordered log within a topic; multi-partition append and reads are in \stepref{6}{Segmented log}.\\
+Key/value & Optional association/routing bytes and required content bytes on a record; null and empty keys are distinguished in \stepref{1}{Record encoding and decoding}.\\
+Timestamp & A time value stored with a record; this course requires it to be nonnegative, but record order is determined by offset; see \stepref{1}{Record encoding and decoding}.\\
+Append-only log & A log where new records are written at the tail and reading does not delete them; encoding and append start in \stepref{2}{Log append}.\\
+Offset & A logical record number within one partition; append results use half-open intervals, as shown in \stepref{2}{Log append}.\\
+Byte position & A physical byte location in one segment file, distinct from a logical offset; see \stepref{3}{Offset-based reads}.\\
+LEO & Log End Offset: the next offset available for append, not the offset of the last record; see \stepref{2}{Log append}.\\
+Segment & One file-sized slice of a partition log; segment rolling is taught in \stepref{6}{Segmented log}.\\
+Sparse index & Rebuildable data containing selected offset/file-position pairs to shorten searches; see \stepref{5}{Sparse index}.\\
+Retention & Deleting closed old segments before a threshold; this does not mean a consumer has read them; see \stepref{7}{Log retention}.\\
+Truncation & Removing a log tail after a chosen next offset, unlike deleting the old head; see \stepref{8}{Tail truncation}.\\
+Metadata & Information that tells a client a topic's partitions and their broker locations; see \stepref{10}{Topic metadata}.\\
+Frame & One complete course request/response with a length boundary in the TCP byte stream; see \stepref{11}{TCP framing}.\\
+Batch & Multiple records validated, written, or sent together; storage append is in \stepref{2}{Log append}, and producer buffering in \stepref{13}{Batched producer}.\\
+Consumer position & The in-memory partition offset from which a consumer next reads; see \stepref{14}{Pull-based consumer}.\\
+Committed offset & The persisted next offset restored after restart; it is distinct from log LEO and HW; see \stepref{15}{Consumer offset persistence}.\\
+Consumer group & Members that coordinate ownership of a topic's partitions; see \stepref{18}{Membership and rebalancing}.\\
+Assignment & The current set of partitions given to each group member; basic round-robin assignment is in \stepref{17}{Partition assignment}.\\
+Rebalance & Recomputing partition ownership when membership changes; see \stepref{18}{Membership and rebalancing}.\\
+Heartbeat & A request by which a member periodically reports to the coordinator that it is alive; timeout boundaries are in \stepref{19}{Heartbeats and expiration}.\\
+Generation & A version incremented when group membership changes; requests with an old version are rejected; see \stepref{20}{Consumer group fencing}.\\
+Fencing & Rejecting requests from an expired role or member using an epoch/generation; the group example is in \stepref{20}{Consumer group fencing}.\\
+Leader/follower & Replicas for one partition: the leader accepts writes and a follower fetches its records; see \stepref{21}{Fetch-based replication}.\\
+Replication & Fetching the leader's records and appending them to other replica logs; see \stepref{21}{Fetch-based replication}.\\
+ISR & In-Sync Replicas: replicas meeting the course's synchronization conditions and participating in commit-boundary decisions; see \stepref{22}{ISR and high watermark}.\\
+HW & High Watermark: the right boundary of the prefix visible to ordinary consumers; only offsets below HW are visible; see \stepref{22}{ISR and high watermark}.\\
+ACK & The producer's choice of when the broker replies that a write succeeded; see \stepref{23}{Produce acknowledgments}.\\
+minISR & The minimum ISR membership required for certain writes to succeed; see \stepref{23}{Produce acknowledgments}.\\
+Deadline & The absolute time by which a wait may complete; a timeout does not prove an earlier append was rolled back; see \stepref{23}{Produce acknowledgments}.\\
+Leader epoch & A version incremented when the partition's writing role changes, used to reject requests from the old role; see \stepref{25}{Clean election and leader epochs}.\\
+Authority & The trusted in-JVM teaching control state that records the current partition role and replication progress; see \stepref{24}{Concurrent replicated broker}.\\
+At-least-once & A failure between successful processing and progress commit may cause the same record to be processed again; see \stepref{16}{At-least-once processing}.\\
+Outcome unknown & A request may have taken effect even though its reply did not arrive, so the caller cannot infer from the exception alone whether it appended; see \stepref{29}{Cross-layer consistency experiments}.\\
+Idempotence & Retrying the same batch with the same producer identity, epoch, and sequence does not append it twice; see \stepref{30}{Idempotent producer}.\\
+Producer identity/epoch/sequence & Persistent identity fields that distinguish a writer, its generation, and batch order; see \stepref{30}{Idempotent producer}.\\
+Event ID & A stable business-event identifier that recognizes a replay as the same effect even at a different Kafka offset; see \stepref{31}{Idempotent consumer effects}.\\
+Side effect & A business or external state change made by a consumer callback, such as an account update; see \stepref{31}{Idempotent consumer effects}.\\
+Transaction & A mechanism for committing a related set of operations as a unit or failing them together; this course has no atomic transaction across a producer, broker, and external business state; see \stepref{29}{Cross-layer consistency experiments}.\\
+Exactly-once & A guarantee that one input produces one observable business result, not that a callback executes only once; this course makes no end-to-end exactly-once guarantee; see \stepref{29}{Cross-layer consistency experiments} and \stepref{31}{Idempotent consumer effects}.\\
 \bottomrule
 \end{longtable}

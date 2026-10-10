@@ -1,5 +1,5 @@
 \chapter{分区与真实网络 broker}
-上一章的日志只有本地意义；本章为 topic 建立多个 partition，再用真实 loopback TCP 请求把客户端与 broker 分开。分区决定记录的有序范围，topic metadata 告诉客户端每个 partition 的 leader。TCP 是字节流，不保留 Java write 的边界，因此协议必须自带帧长度。课程只实现教学二进制消息，不兼容 Kafka wire protocol。
+前两章已经把记录写成可恢复的单段/分段日志；本章让一个 topic（主题，消息的命名分类）拥有多个 partition（分区，每个分区是一条各自有序的日志），再让客户端通过 loopback TCP 与 broker（保存分区数据并响应请求的进程）通信。同一 topic 的每个 partition 都有自己的 offset 序列，例如 orders-0 的 offset 0 和 orders-1 的 offset 0 是两条不同记录，不能比较出 topic 的全局顺序。metadata（元数据）告诉客户端有哪些分区、leader broker 和连接地址。TCP 只交付有序字节流，不保留 Java write 的边界，故应用协议需要 frame 长度。课程协议仅用于教学，不兼容 Kafka wire protocol。
 
 \begin{figure}[ht]
 \centering
@@ -17,43 +17,92 @@
 \end{figure}
 
 \lessonsection{9}{分区路由}
-\goals{让相同 key 稳定进入相同分区，同时为 null key 提供可观察的轮转。}{理解 key 的字节身份、CRC32C 与取模。}
-\background{producer 必须先选择 partition 才能确定该分区内的顺序。课程规定 key 非 null 时计算 CRC32C，再把 CRC 视作 unsigned 值对分区数取模；同一字节串因此稳定命中同一 partition。key 为 null 时没有可供 hash 的键，单个 Partitioner 实例按 0 起始轮转。空 byte array 是存在但长度为零的 key，不等价 null。partition count 必须大于零。这个简单规则让输出确定，便于观察 routing 结果。}
-\providededit{partitioner 实例的 round-robin 状态与无参构造器已提供；topic metadata 会给出 partition count。}{\pathcode{exercises/src/main/java/io/simplekafka/client/Partitioner.java}：\method{choose(byte[] key,int partitions)}。}
-\lessoncontract{partitions<=0 属于非法请求。非 null key 路由依赖其 CRC32C 的 unsigned 解释；每次选择 null key 前，按当前 partition count 归一化实例级游标，因此 topic 数量变化仍会返回有效分区。不同实例各自从零开始。}
-\lessonhints{先区分 null、空数组与非空数组三种输入。}{检查 Java signed int 与题设 unsigned CRC 的转换语义，避免负余数成为负 partition。}{用同一个实例混合调用有 key、null key 和不同 partition count 的情形，审视轮转游标是否只在约定输入上推进。}
-\expected{3 partitions 下，同一 key 连续 100 次选择都相同；空 key 也是确定路由。fresh Partitioner 对 null 连续六次返回 0、1、2、0、1、2。partition count 为 3、3、1、3、3、2、2 时，null-key 选择为 0、1、0、0、1、0、1。对应 \method{Step09Test}。}
-\pitfalls{把 key 的 hashCode 当作 CRC32C，或对可能负值直接取余，都会违反路由契约。真实 Kafka 默认 partitioner 的 key hash 算法和 null-key sticky batching 策略与本课程不同；此处 null key 采用实例级 round-robin，不应描述成 Kafka 默认行为。}
+\goals{让相同 key 稳定进入同一分区，并为 null key 提供可观察的轮转分配。}{理解 key 字节、CRC32C unsigned 值与正分区数取模。}
+\background{producer 在追加之前选择一个 partition，才能确定记录进入哪条有序日志。课程规则是：非 null key 取其字节的 CRC32C，把 32-bit 结果按 unsigned 数值解释，再对分区数取模；同一字节串与同一分区数会稳定选中同一分区。null key 没有可 hash 的字节，由同一个 Partitioner 实例在可用分区中轮转。空 byte array 是长度为零但确实存在的 key，不等同 null。}
+\providededit{无参 \method{Partitioner()} 构造器已提供，但轮转游标状态不是 provided 答案；学生可在本类添加实现所需实例状态。}{实现 \pathcode{exercises/src/main/java/io/simplekafka/client/Partitioner.java} 的 \method{public int choose(byte[] key,int partitions)}。}
+\subsubsection*{开始前先读}
+本步依赖 \stepref{8}{尾部截断}；上一章建立了分区日志可承载的连续 offset。本章开头已解释 topic、partition 与 broker：本步只决定写入哪个已有 partition，不创建主题或日志。
+\subsubsection*{输入、输出与状态}
+\begin{itemize}
+\item key 是 null 或任意非 null byte array（含空数组）；partitions 是可用分区数，必须 >0。返回 int 分区编号，范围 \pathcode{[0,partitions)}。
+\item 非 null key 使用 \pathcode{unsigned(CRC32C(key)) mod partitions}，不读写 null-key 游标；空数组 CRC32C=0。null key 使用该实例游标：先归一化 \pathcode{cursor mod partitions} 得到当前所选分区，再把游标设为 \pathcode{(selectedPartition+1) mod partitions}；分区数变化时也按新的正数归一化。
+\item partitions<=0 报 \method{INVALID_REQUEST} 且不推进游标。不同 Partitioner 实例互不共享游标；这是内存状态，没有磁盘或网络副作用。
+\end{itemize}
+\lessoncontract{分区数必须先验证为正。Java signed int CRC 不可直接得到负分区余数，须按无符号 32-bit 数解释。只有 null key 调用轮转游标；keyed 与空数组选择都不改变该游标。分区数变动后每次 null 调用仍须返回有效编号。}
+\subsubsection*{手算 key 路由与游标}
+假定 key 字符串“123456789”使用 ASCII 字节，CRC32C 为 \pathcode{0xe3069283}（unsigned 数值 3,808,858,755）；对 7 个分区取模为 2，所以返回 partition 2。空数组 CRC 为 0，7 分区时返回 0，但不改变 null 游标。全新实例的 null 调用若 partitions 依次为 3、3、1、3、3、2、2，结果依次为 0、1、0、0、1、0、1：分区数为 1 时归一化后的游标回到 0，后续使用新的分区数。
+\expected{\method{Step09Test}：\pathcode{routesByKnownUnsignedCrc32cVectorsAndKeepsEmptyKeyAsAKey} 检查 CRC32C 与空 key；\pathcode{keyedAndEmptyKeysDoNotAdvanceTheNullKeyCursor} 检查游标不变；\pathcode{nullKeyCursorsAreIndependentAndSinglePartitionAlwaysSelectsZero} 与 \pathcode{nullKeyCursorStaysWithinPartitionsWhenTopicSizesChange} 检查实例隔离和分区数变化；\pathcode{requiresAPositivePartitionCount} 检查非法 count。}
+\pitfalls{不要使用 Java 对象的 \method{hashCode()} 替代 key bytes 的 CRC32C，也不要对可能为负的 signed int 直接取余。真实 Kafka 的 key hash 与 null-key sticky batching 规则不同；本课程的实例级轮转不代表 Kafka 默认行为。}
+\lessonhints{先画出 null、空数组、非空数组三种输入与各自是否影响游标。}{将 CRC 视为 0 到 $2^{32}-1$ 的 unsigned 数，再对正分区数取模。}{手工逐次维护 null 游标；在 count 变化时先归一化，并插入一次 keyed 调用确认它不改变游标。}
 \lessoncommand{9}
-\lessonquestions{为什么 hash 应作用于 key bytes 而不是 RecordData 对象的 Java hashCode？}{key 为 null 与 key 为零长度数组，在协议和路由上有何不同？}
+\lessonquestions{为什么分区 hash 应基于 key bytes，而不是 RecordData 对象的 Java hashCode？}{null key 和零长度 key 在路由与状态更新上有什么不同？}
+\paragraph*{自检参考解释}
+hash 作用于稳定的 key bytes，Java 对象 hashCode 不是课程规定且不保证同样的跨重启语义。null key 轮转并更新实例游标；空数组有实际 CRC32C 值 0，确定路由且不更新游标。
 \lessonsection{10}{主题元数据}
-\goals{在安全目录结构中登记 topic 的固定 partition 集合，并让客户端按确定顺序发现 leader。}{了解分区元数据和幂等创建的意义。}
-\background{元数据把逻辑名称映射到物理分区。每个分区至少携带 TopicPartition、leader id、epoch、replica/ISR 列表和 Endpoint；单机模式的 epoch 为 0，replicas 与 ISR 都只含当前 broker。一个 topic 的 partition 数在这个课程 catalog 中创建时固定。目录结构为 root/topic/partition，topic 名受 \pathcode{[A-Za-z0-9._-]+} 限制并拒绝 \pathcode{.} 与 \pathcode{..}，避免路径逃逸。目录重启时显式再次创建相同 topic/count 来打开既有日志，不从偶然存在的文件猜测分区总数。}
-\providededit{endpoint、分区元数据值类型与日志注册路径已提供；Catalog 构造器固定 broker id 和 endpoint。}{\pathcode{exercises/src/main/java/io/simplekafka/broker/PartitionCatalog.java}：\method{createTopic(String,int)}、\method{metadata(String)}。}
-\lessoncontract{正数 partition count 创建固定分区；同 topic 同 count 幂等，不同 count 报 \method{INVALID_REQUEST}。未知 topic 报 \method{UNKNOWN_TOPIC_OR_PARTITION}。metadata 按 partition id 递增返回，不泄露 root 外路径。单机 metadata 的 epoch=0、replicas/isr=[brokerId]。}
-\lessonhints{创建 topic 不只是 mkdir：要考虑 partition 数和后续重启时可验证的约束。}{让同名同数量调用和同名不同数量调用走不同语义。}{用特殊路径字符、空名和目录重开做行为测试，确认名字验证在文件创建前发生。}
-\expected{创建 \pathcode{orders} 2 partitions 后，metadata 中包含 \pathcode{orders-0}、\pathcode{orders-1} 且顺序固定；再次创建相同定义无损；改为 3 报错；未知主题查询给出 topic/partition 错误码。对应 \method{Step10Test}。}
-\pitfalls{直接把用户 topic 拼进 path 会让路径穿越风险进入磁盘边界；靠目录枚举恢复 partition 数会把手工残留当元数据。真实 Kafka topic 元数据由集群控制面管理，partition 可在受控操作中扩展；本课程 catalog 只做显式固定数量，不处理动态扩容。}
+\goals{在本地 catalog 登记固定分区集合，并返回可供客户端路由的确定性 metadata。}{区分磁盘目录与内存中的 topic 注册。}
+\background{topic 是读者使用的逻辑名称；其 partition 目录里保存日志文件。metadata 是 broker 对外给客户端的结构化描述，不是从任意磁盘目录推测出的目录清单。创建时固定分区数量后，单机 broker 对每个分区公布 TopicPartition、当前 broker leader、epoch、replicas、ISR 与 endpoint；本课程单机 epoch=0，replicas 和 ISR 都只有这个 broker。}
+\providededit{\method{PartitionCatalog} 构造器固定 root、broker id 和 endpoint；\method{TopicPartition}、\method{PartitionMetadata}、日志注册与目录根检查已提供。}{实现 \pathcode{exercises/src/main/java/io/simplekafka/broker/PartitionCatalog.java} 的 \method{public synchronized void createTopic(String topic,int partitionCount)} 与 \method{public synchronized List<PartitionMetadata> metadata(String topic)}。}
+\subsubsection*{开始前先读}
+完成 \stepref{9}{分区路由}，知道 partition id 是 topic 内编号；并使用 \stepref{6}{分段日志} 的 PartitionLog 作为每个分区的存储。metadata 只登记/描述已有分区，不负责 producer 选 key。
+\subsubsection*{输入、输出与状态}
+\begin{itemize}
+\item topic 必须是 1–255 个 ASCII 字节，字符限于 \pathcode{[A-Za-z0-9._-]}，且不能是 \pathcode{.} 或 \pathcode{..}。partitionCount 必须为正；这些检查要在创建 topic/partition 路径前完成。无效名称或数量报 \method{INVALID_REQUEST}，不得改目录。
+\item \method{createTopic} 成功无返回值，注册 partitions 0 到 count-1 并打开各自日志。同名同 count 再调用是幂等操作，不清空现有数据；同名不同 count 报 \method{INVALID_REQUEST}，原 metadata、文件与日志保持不变。底层创建/打开 I/O 错误为 \method{STORAGE_ERROR}。catalog 已关闭后调用则抛 \method{IllegalStateException}。
+\item \method{metadata} 按 partition id 升序返回列表；每项单机 leaderId=当前 brokerId、epoch=0、replicas=[brokerId]、isr=[brokerId]，endpoint 为构造器地址。未登记的 topic 报 \method{UNKNOWN_TOPIC_OR_PARTITION}。新 catalog 实例的注册表是空的，必须显式 createTopic 才重新登记并打开目录；意外残留数字目录不会自动加入 metadata。catalog 已关闭后调用抛 \method{IllegalStateException}。
+\end{itemize}
+\lessoncontract{创建前先验证标识符与正 partitionCount；同定义重复创建不改磁盘，不同数量拒绝且不变更旧目录。元数据排序稳定且不暴露 root 外路径。topic 名最大 255 字节是模型界限；具体文件系统若拒绝 255 字节单个目录名，可以导致目录创建失败，但 TopicPartition 本身仍接受该标识符。}
+\subsubsection*{手算创建、重开与注册}
+假定 brokerId=7、endpoint 已配置、root 为空。createTopic(\pathcode{orders},2) 后 metadata 顺序为 orders-0、orders-1，两项都 leader=7、epoch=0、replicas=isr=[7]。把 records 0、1 追加到 orders-0 后关闭并新建 Catalog：此时 metadata(\pathcode{orders}) 是 UNKNOWN\_TOPIC\_OR\_PARTITION，因为 topic 注册不是持久 metadata。再显式 createTopic(\pathcode{orders},2) 会打开同一目录，orders-0 仍可读 0、1；追加一条返回 [2,3)。即使磁盘上额外有 orders/9 目录，它也不会增加已登记的两项。
+\expected{\method{Step10Test}：\pathcode{createsIndependentFixedTopicsAndReopensOnlyWithExplicitPartitionCounts} 检查 metadata、磁盘日志与显式重登记；\pathcode{rejectsInvalidCountsAndTopicNamesWithoutMutatingTheFilesystemOrEscapingTheRoot} 检查参数校验与目录不变；\pathcode{acceptsA255ByteTopicIdentifierWhereTheFilesystemAllowsIt} 检查标识符长度边界。}
+\pitfalls{不可把用户 topic 未验证就拼接路径；也不可枚举现有目录来猜分区数，把手工残留误注册。真实 Kafka 的 topic 控制面与扩分区流程不由本课程 catalog 模拟。}
+\lessonhints{先区分“内存注册表中的 topic”与“磁盘上存在的日志目录”。}{把同名同 count、同名不同 count、重启未注册三种调用分别写出状态结果。}{记录目录快照，在错误创建与重启前后对比，再显式注册后检查 offset 连续性。}
 \lessoncommand{10}
-\lessonquestions{为何“同名但不同分区数”不能当成幂等成功？}{磁盘目录能提供哪些证据，不能替代哪些元数据？}
-
+\lessonquestions{为什么同名但分区数不同不能当成幂等成功？}{重启后已有的数字目录能证明哪些事实，又不能证明什么？}
+\paragraph*{自检参考解释}
+分区数决定可路由的固定集合；悄悄接受另一数量会使同一 topic 的 metadata/日志不一致。目录证明某些文件存在，但不能证明它们属于当前登记的 topic 集合或决定未出现分区的数量。
 \lessonsection{11}{TCP帧协议}
-\goals{把 TCP 字节流切分成有界、可匹配的请求/响应帧。}{理解 readFully、EOF 位置、长度前缀和 correlation id。}
-\providededit{Messages 请求/成功响应 body、API id 常量、Frame 值类型与 ErrorCode wire id 已提供；body codec 不由本步重写。}{\pathcode{exercises/src/main/java/io/simplekafka/protocol/FrameCodec.java}：\method{write(OutputStream,Frame)}、\method{read(InputStream)}。}
-\lessoncontract{第一字节前 EOF 返回 null；帧中途 EOF 为 \method{INVALID_REQUEST}。拒绝负数或超限长度后再分配。未知 version/api 和非零请求 error 由服务端验证拒绝。多帧连续流逐帧读取不丢边界；输出一帧不能发半帧。Stream I/O 按接口抛 IOException，协议格式错误使用课程错误码。响应 body 超出单帧上限时，服务端返回有界的 \method{INVALID_REQUEST} error Reply，而不是静默关闭连接。}
-\lessonhints{帧的最短长度由固定 header 各字段宽度之和决定，不由示例 payload 推测。}{把“干净的流结束”与“帧内提前结束”分开处理。}{用每次只返回一个 byte 的 InputStream 喂入连续两帧，并用只有超长前缀的输入检查是否立即拒绝。}
-\expected{把两帧流拆成单字节块，连续两次 read 得到原 correlation id 和 payload；下一次 read 才得到 null。只有 4-byte 超长 length、没有 body 的输入会立即失败而不是等待或分配数 MB。对应 \method{Step11Test}。}
-\pitfalls{使用一次 read 期待填满 header 会受到 TCP 分段影响；先分配后检查 length 会被恶意请求放大内存。真实 Kafka 使用自己的请求头、API 版本协商与消息格式，本课程 version=1/API 列表是教学协议，不可接入官方客户端。}
+\goals{把 TCP 字节流切分为有界帧，并在连接中逐帧往返请求或响应。}{理解短读、长度前缀、EOF 位置和 correlation id。}
+\background{TCP 提供有序字节流，却不保存应用每次 write 的边界：一次写入可能分多次 read 到达，多次写入也可能合并到一次 read。frame（帧）用自身 length 告诉读取方后面这一条协议单元有多少字节；固定 header 提供版本、API、请求关联号和错误码，payload 才是业务 body。correlationId 是请求与回复配对的编号。}
+\providededit{\method{Frame} 值类型、API id、ErrorCode wire id、\method{Messages} body 类型与 \method{MessageCodec} body codec 均已提供；本步不重写业务 body。}{实现 \pathcode{exercises/src/main/java/io/simplekafka/protocol/FrameCodec.java} 的 \method{public static void write(OutputStream output,Frame frame) throws IOException} 与 \method{public static Frame read(InputStream input) throws IOException}。}
+\subsubsection*{开始前先读}
+完成 \stepref{10}{主题元数据}，认识 API 通过协议请求 broker；并理解 \stepref{1}{记录编解码} 的大端定宽整数。这里的 frame 是课程 TCP 封装，不是磁盘 record，也不是 Kafka 官方请求头。
+\subsubsection*{输入、输出与状态}
+\begin{itemize}
+\item wire 顺序固定为大端 \pathcode{length:int32 | version:int16(1) | api:int16 | correlationId:int32 | error:int16 | payload}。length 不含自身的 4 字节，但包含其余 10-byte header 与 payload；合法范围 [10,8,388,608]，payload 最大 8,388,598 bytes，最大物理帧共 8,388,612 bytes。
+\item \method{write} 写一个 Frame；null 参数、未知 API 或总 length 越界时报 \method{INVALID_REQUEST}，并须在开始写流前拒绝。成功输出恰好一帧。底层流错误按同一 \method{IOException} 传播；发生实际 I/O 错误时不承诺外部流回滚。
+\item \method{read} 每次最多返回一帧。input 为 null 时报 \method{INVALID_REQUEST}。若第一个 length 字节前已 EOF，返回 null；若 length 前缀或 frame body 只收到一部分，报 \method{INVALID_REQUEST}。length 越界、version 非 1、未知 API 或未知 error wire id 也报 \method{INVALID_REQUEST}；检查长度后才按声明大小读取/分配。输入流 I/O 异常按原 \method{IOException} 传播。
+\end{itemize}
+\lessoncontract{读循环必须填满所需字节，不能假定一次 read 得到 header/body。正常边界 EOF 才返回 null；半帧不是空结果。连续多帧按各自 length 消费且不吞下一帧。超长/非法前缀只能消耗已读的 4-byte length，不能继续消费其后缀或按恶意长度分配内存。frame 中已知 error id 只表示该帧的错误字段有效；provided server 还会在分派前以 \method{INVALID_REQUEST} 拒绝带非零 error 的请求帧。}
+\subsubsection*{逐字段解读 golden 帧}
+Step11Test 的请求/响应 golden 为 \pathcode{0000000d 0001 0001 00000029 0008 010203}。首 4 bytes 的 13 是 length，即之后 10-byte header 加 3-byte payload；version=\pathcode{0001}=1，API=\pathcode{0001}=METADATA，correlationId=\pathcode{00000029}=41，error=\pathcode{0008}=REQUEST\_TIMEOUT，payload 为 \pathcode{010203}。因此物理帧总长是 17 bytes。若没有 payload，length 仍为 10，完整物理帧长 14 bytes。
+\expected{\method{Step11Test}：\pathcode{writesAndReadsTheIndependentGoldenFrameAndHandlesEmptyPayload} 检查 golden；\pathcode{acceptsMaximumFrameAndRejectsOneByteOverBeforeWritingAnything} 检查长度边界和零字节拒绝；\pathcode{rejectsEveryIncompletePrefixOfTheGoldenFrame} 检查 EOF；\pathcode{readsBackToBackFramesFromStreamsDeliveringOneTwoOrThreeBytesAtATime} 检查短读和连续帧；\pathcode{rejectsInvalidLengthsWithoutConsumingBytesAfterTheHeader} 与 \pathcode{rejectsUnknownVersionApiAndErrorIds} 检查格式边界；\pathcode{propagatesTheSameUnderlyingIoExceptionFromReadAndWrite} 检查异常原样传播。}
+\pitfalls{一次 read 不保证填满 length 或 header；先按未经验证的 length 分配可能让无效输入放大内存请求。课程 version=1/API/错误号只是教学 wire contract，不能连接官方 Kafka client。}
+\lessonhints{把固定 header 的字段宽度相加得到 length 最小值 10，再判断 length 是否包括自身。}{把 EOF 分为“还没开始新帧”与“帧已经开始却缺字节”，并让 readFully 循环处理短读。}{逐字节输入 golden，确认每次只消费一帧；给超长 length 后追加 sentinel，确认 sentinel 未被读取。}
 \lessoncommand{11}
-\lessonquestions{为什么 correlationId 必须被回送给对应请求？}{在流中区分“正常 EOF”和“半帧 EOF”有什么价值？}
-
+\lessonquestions{为什么回复要带回对应请求的 correlationId？}{干净 EOF 与半帧 EOF 分开报告有什么价值？}
+\paragraph*{自检参考解释}
+关联号让客户端把并发或连续请求的回复配对到正确调用。边界 EOF 说明连接正常结束；半帧意味着协议数据被截断，不能把它伪装成“没有更多请求”。
 \lessonsection{12}{单机broker}
-\goals{把 metadata、produce、fetch 三种业务请求接入本地 catalog，并通过真实 TCP 端到端验证。}{完成 frame、body codec 和单段/分段日志步骤。}
-\background{broker 是请求语义边界：收到请求先验证 topic、partition、epoch 与参数，再调用日志，最后把成功结果或统一错误包装成 Reply。单机模式把 log end offset 同时视为 high watermark，因此 append 后消费者可立即读。produce 返回追加区间，fetch 按偏移和两种预算读取记录并返回 logStart、LEO、HW 与 epoch。未知 api 在 transport 层拒绝；业务错误只影响本次请求，broker 不应因此停止接受后续 TCP 请求。真实 TCP 调用能同时验证客户端 framing 与服务端 handler，而不只是直接调用方法。}
-\providededit{\method{BrokerHarness.single} 管理日志注册、TCP transport、MessageCodec、请求体解析与服务生命周期；\method{SingleBrokerMain} 使用 loopback 和 OS 分配端口。}{\pathcode{exercises/src/main/java/io/simplekafka/broker/BrokerHandler.java}：\method{handle(Request)}。}
-\lessoncontract{先实现 METADATA/PRODUCE/FETCH，未知分区错误为 \method{UNKNOWN_TOPIC_OR_PARTITION}，单机 epoch 仅接受 0，位点越界保留对应错误码。成功 produce 返回 AppendResult；成功 fetch 不越过 LEO=HW。错误 Reply 只带错误码和简短 message，不把堆栈送上线。课程 RpcClient 每次请求使用新 TCP 连接；一次业务错误不得让 broker 停止接受后续请求。}
-\lessonhints{按 API 类型分派，各请求在访问日志之前先完成身份和范围校验。}{检查 error 发生在 transport、handler 还是日志层；不同层的责任不可互相吞并。}{用一条真实 loopback 连接先 produce、fetch，再发送一个失败请求并继续发送合法请求。}
-\expected{经 TCP produce 三条记录，返回首尾区间；fetch 同一 partition 得到三个 offset/key/value 及 logStart=0、LEO=HW=3。unknown partition 返回正确错误码，随后通过一个新的 TCP 请求合法 fetch 仍成功。对应 \method{Step12Test}，命令行也可用 \coursecmd{SingleBrokerMain} 与 \coursecmd{ClientMain} 手动观察。}
-\pitfalls{仅调用 handler 单元方法无法发现 frame 边界/correlation id 错误；把异常转成空成功响应会隐藏错误且破坏客户端语义。真实 Kafka broker 还有认证、配额、请求版本兼容、持久控制面等；本课程 broker 绑定 loopback，API 与官方客户端不兼容。}
+\goals{把 metadata、produce、fetch 业务请求接到本地 catalog，并用真实 loopback TCP 验证完整路径。}{串起 frame、已提供 body codec 与日志的输入/输出边界。}
+\background{broker 是请求语义边界：它把收到的 Request 分派到 metadata、produce 或 fetch，检查分区、参数和 epoch 后调用对应 backend，再返回 success body 或带错误码的 ErrorBody。produce 把 records 追加到一个分区，fetch 按 offset/预算主动读取记录；读取不会删除日志。单机模式没有 follower，故本步 high watermark（HW，可见提交边界）与 LEO 相等。测试真实 TCP 同时经过客户端 framing、provided body codec、server handler 与返回 framing。}
+\providededit{\method{BrokerHarness.single}、TCP server/client、\method{MessageCodec} 的请求/响应体、请求类型/回复类型、日志注册与服务生命周期已提供；\method{SingleBrokerMain} 用 loopback 与 OS 分配端口。}{实现 \pathcode{exercises/src/main/java/io/simplekafka/broker/BrokerHandler.java} 的 \method{public Messages.Reply handle(Messages.Request request)}。本步只实现 METADATA、PRODUCE、FETCH 分派，不重写 transport/body codec。}
+\subsubsection*{开始前先读}
+完成 \stepref{11}{TCP帧协议}，并具备 \stepref{9}{分区路由}、\stepref{10}{主题元数据} 所用的 topic/partition 概念。本步 fetch 使用单机 HW=LEO；多副本时 HW 的意义会在复制章重新讲解，不把单机规则外推。
+\subsubsection*{输入、输出与状态}
+\begin{itemize}
+\item metadata 输入 \method{MetadataRequest(topic)}，成功输出 \method{MetadataBody(List<PartitionMetadata>)}；null 或格式非法的 topic 返回 \method{INVALID_REQUEST}，未知的合法 topic 返回 \method{UNKNOWN_TOPIC_OR_PARTITION}。它只读 catalog，不改日志。
+\item produce 输入 \method{ProduceRequest(tp,epoch,acks,timeoutMillis,records)}；单机只接受 epoch=0，acks 必须是已提供的 \method{Acks.LEADER}（wire=1）或 \method{Acks.ALL}（wire=-1），timeoutMillis 非负，records 非空。单机 backend 忽略 acks 模式，非负 timeout 不触发等待；副本确认含义见 \stepref{23}{生产确认}。检查顺序是解析 partition、检查 produce 参数、取得 backend、检查 epoch/leader，最后调用 backend produce。未知 partition 返回 \method{UNKNOWN_TOPIC_OR_PARTITION}；参数错误为 \method{INVALID_REQUEST}；不匹配 epoch 为 \method{FENCED_EPOCH}。成功追加并返回 \method{ProduceBody(AppendResult)}。前置校验拒绝时不追加；底层 I/O 在写入开始后失败时，不保证没有物理副作用。
+\item fetch 输入 \method{FetchRequest(tp,epoch,offset,maxRecords,maxBytes,token)}；本步 token=null，不实现之后的消费组围栏。检查顺序是解析 partition、检查 maxRecords/maxBytes 为正、取得 backend、检查 epoch/leader、再读取 backend。单机接受 epoch=0；越出已保留区间 \pathcode{[logStartOffset,LEO]} 的 offset 返回 \method{OFFSET_OUT_OF_RANGE}，已知请求校验失败不改日志。成功 \method{FetchBody(records,logStartOffset,logEndOffset,highWatermark,epoch)}，records 不超过任一预算且不拆记录；本步 HW=LEO，offset=LEO 是空成功读取。fetch 不修改日志。
+\item handler 返回 \method{Reply}：成功时 error=\pathcode{NONE} 并携带对应 success body；失败时带原课程错误码及安全 \method{ErrorBody}。null 或不支持的 request 报 \method{INVALID_REQUEST}。\method{CourseException} 保留错误码；参数类 \method{IllegalArgumentException}/\method{NullPointerException} 映射 \method{INVALID_REQUEST}，意外 runtime 映射不泄露原因的 \method{STORAGE_ERROR}。\method{ExerciseNotImplementedException} 透传供课程 runner 定位未完成方法。transport 层（已提供）处理非法 frame、request frame 非零 error、body 格式/尾随字节与回复 frame 编码；handler 不重复实现这些解析。
+\end{itemize}
+\lessoncontract{unknown partition、stale epoch 与位点越界必须保留各自错误码；已知在访问 backend 前拒绝的请求不能追加。单机 metadata epoch=0；成功 fetch 不超过 LEO=HW。错误只影响当前请求，不能把 Java 堆栈或私有异常消息送上线，后续合法 TCP 请求仍须可处理。provided \method{MessageCodec} 会把 fetch maxBytes 夹到单个 response frame 可容纳的上限 8,388,566 磁盘字节；一条超大完整记录不拆分，剩余记录留给下一次从后续 offset 拉取。}
+\subsubsection*{手算 produce、fetch 与大响应分页}
+假定 orders-0 已创建、epoch=0、LEO=0，并用 acks=\method{Acks.LEADER}、timeoutMillis=0 调用 produce，按序写三条：key \pathcode{k}（1 byte）/value \pathcode{v0}（2 bytes）、key \pathcode{k}/value \pathcode{v1}、null key/value \pathcode{v2}。普通记录总长分别是 35、35、34 bytes，成功返回 [0,3)，新 LEO=3。fetch offset=0、maxRecords=2、maxBytes=4096 返回 offsets 0、1，FetchBody 中 start=0、LEO=3、HW=3、epoch=0；fetch offset=3 返回空。若改用 maxBytes=69（比两条 35-byte 记录总和少 1），只返回 offset 0。
+\par 再假定 9 条记录各自使用 null key 与 1,048,548-byte value；每条普通磁盘记录大小 1,048,580。请求 maxBytes=10,000,000 会被 provided codec 限到 8,388,566：7 条共 7,340,060 bytes，可返回 offsets 0–6；8 条共 8,388,640 超限，因此第一次响应不能包含 offset 7，下一次以 offset 7 请求返回 7、8。记录不得拆开以凑预算。
+\expected{\method{Step12Test}：\pathcode{servesPreciseMetadataRecordsAndFailuresWithoutMutatingTheLog} 检查 metadata、produce/fetch 和错误不变更日志；\pathcode{boundsLargeFetchRepliesAndPreservesRecordContinuation} 与 \pathcode{returnsAnErrorReplyWhenAHandlerProducesAnOversizedFetchBody} 检查大响应预算；\pathcode{sanitizesHandlerRuntimeExceptionsAndKeepsBothConnectionsUsable} 检查错误消毒与服务续用；\pathcode{isolatesExistingTopicPartitionsAndServesFetchesFromNonzeroLogStart} 检查分区/起点隔离；\pathcode{rawTcpRequestsAndMalformedBodiesStayIsolatedToTheirConnections} 检查真实 TCP 失败隔离。}
+\pitfalls{直接调用 handler 看不到 TCP 边界、correlationId 或 reply codec 错误；把异常吞成空成功会让调用者误以为追加/读取已成功。一次业务错误不得让 broker 停止；但成功 produce 与客户端收到回复不是同一个网络动作，回复可能在网络失败时不可达。}
+\lessonhints{先把 METADATA、PRODUCE、FETCH 各自的输入类型、前置检查与成功 body 列成三条路径。}{错误发生在 frame/MessageCodec、handler 校验还是 backend，要保留对应层责任与错误码。}{用真实 loopback TCP 先 metadata、produce、fetch，再发一个已知失败请求并继续 fetch，比较日志与回复。}
 \lessoncommand{12}
-\lessonquestions{为什么 broker 错误回复不应泄露 Java 堆栈？}{单机 HW=LEO 为何不代表副本模式下也能这样处理？}
+\lessonquestions{为什么 error Reply 不能把 Java 堆栈或内部异常消息发给客户端？}{单机模式中 HW=LEO，为何不能直接把这条规则当作副本模式的语义？}
+\paragraph*{自检参考解释}
+内部异常可能泄露实现细节且不是稳定协议契约；对外只返回课程错误码和简短安全 message。单机没有复制进度差异；复制时 LEO 只表示本地尾端，HW 另行决定可读范围。

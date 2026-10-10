@@ -53,11 +53,12 @@ public final class ReplicaReconciler {
     /**
      * Step 26: clear any prior proof, capture epoch, high watermark, leader LEO, and local mutation
      * version, then compare the complete prefix using recovery-read batches of four records and 4.2
-     * MB. The local log must start at zero; a conflict at or below the captured/current high
-     * watermark is not repairable. Leader RPCs run outside locks. Before repair, revalidate the
-     * captured epoch, leader, LEO, log start, and mutation version while holding the authority
-     * state lock before the local log monitor; then truncate the divergence and append the leader
-     * suffix. A failed reconciliation publishes no proof. See Step26Test and book step 26.
+     * MB. The local log must start at zero; a conflict strictly below the captured high watermark
+     * or a truncation point strictly below the current high watermark is not repairable. Leader
+     * RPCs run outside locks. Before repair, revalidate the captured epoch, leader, LEO, log start,
+     * and mutation version while holding the authority state lock before the local log monitor;
+     * then truncate the divergence and append the leader suffix. A failed reconciliation publishes
+     * no proof. See Step26Test and book step 26.
      *
      * @param expectedEpoch epoch the caller expects the partition to use
      * @return the repaired local log end offset, matching the captured leader LEO
