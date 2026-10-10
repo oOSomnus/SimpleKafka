@@ -16,8 +16,10 @@ import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.stream.IntStream;
 
 /** One append-only, offset-contiguous on-disk log segment. */
 public final class SegmentLog implements AutoCloseable {
@@ -112,7 +114,55 @@ public final class SegmentLog implements AutoCloseable {
      * @throws ExerciseNotImplementedException while the Step 2 exercise method is a skeleton
      */
     public AppendResult append(List<RecordData> records) {
-        throw new ExerciseNotImplementedException(2, "SegmentLog.append");
+        lock.lock();
+        try {
+            if (closed) {
+                throw new CourseException(ErrorCode.STORAGE_ERROR, "segment closed");
+            }
+            if (records == null || records.isEmpty()) {
+                throw new CourseException(ErrorCode.INVALID_REQUEST, "records must not be empty");
+            }
+            List<ByteBuffer> byteBuffers;
+            try {
+                byteBuffers =
+                        new ArrayList<>(
+                                IntStream.range(0, records.size())
+                                        .mapToObj(
+                                                i -> new LogRecord(i + nextOffset, records.get(i)))
+                                        .map(RecordCodec::encode)
+                                        .toList());
+            } catch (IllegalArgumentException | NullPointerException exception) {
+                throw new CourseException(ErrorCode.INVALID_REQUEST, "invalid input");
+            }
+            long resultOffset = nextOffset;
+            FileChannel channel;
+            try {
+                channel = FileChannel.open(path, StandardOpenOption.READ, StandardOpenOption.WRITE);
+            } catch (IOException exception) {
+                throw storageError("open segment " + path, exception);
+            }
+            for (ByteBuffer byteBuffer : byteBuffers) {
+                try {
+                    resultOffset = Math.addExact(resultOffset, 1);
+                    byteBuffer.order(ByteOrder.BIG_ENDIAN);
+                    ChannelIO.writeFully(channel, byteBuffer, channel.size());
+                } catch (IOException exception) {
+                    throw storageError("write segment " + path, exception);
+                } catch (ArithmeticException exception) {
+                    throw new CourseException(ErrorCode.INVALID_REQUEST, "segment overflow");
+                }
+            }
+            AppendResult appendResult = new AppendResult(nextOffset, resultOffset);
+            nextOffset = resultOffset;
+            try {
+                channel.force(false);
+            } catch (IOException exception) {
+                throw storageError("write segment " + path, exception);
+            }
+            return appendResult;
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
