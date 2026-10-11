@@ -112,8 +112,6 @@ private-member	reference	io/simplekafka/replication/ReplicationTracker.java	Repl
 private-member	reference	io/simplekafka/storage/PartitionLog.java	PartitionLog#closeEntry(SegmentEntry)	implementation-only private member
 private-member	reference	io/simplekafka/storage/PartitionLog.java	PartitionLog#deleteEntryFiles(SegmentEntry)	implementation-only private member
 private-member	reference	io/simplekafka/storage/SegmentLog.java	SegmentLog#truncateTail(long)	implementation-only private member
-private-member	reference	io/simplekafka/storage/SegmentLog.java	SegmentLog#type:Hint	implementation-only private member
-private-member	reference	io/simplekafka/storage/SegmentLog.java	SegmentLog#validateHint(long,long,long)	implementation-only private member
 private-member	reference	io/simplekafka/storage/SparseIndex.java	SparseIndex#readRecordAt(FileChannel,long,long)	implementation-only private member
 private-member	reference	io/simplekafka/storage/SparseIndex.java	SparseIndex#type:RecordAt	implementation-only private member
 method-body	both	io/simplekafka/lab/ConsistencyExperiments.java	ConsistencyExperiments#producerOutcomeUnknown(ClusterHarness,TopicPartition,RecordData,FaultProxy)	Step 29: editable method body

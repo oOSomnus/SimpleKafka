@@ -132,19 +132,24 @@ public final class SegmentLog implements AutoCloseable {
     }
 
     /**
-     * Step 3: read complete records within both limits from a verified record-boundary hint without
-     * changing append position. A hint cannot skip the requested offset; an EOF hint at LEO returns
-     * an empty list. See Step03Test and book step 3.
+     * Step 3: read complete records within both limits directly from a caller-verified record
+     * boundary, without scanning the earlier prefix or changing append position. The caller
+     * guarantees the boundary, using the segment start or a trusted index entry. Do not verify it
+     * by scanning from the segment start. Decode and check the contiguous offsets of records
+     * scanned from the hint, including records skipped before the target; skipped records consume
+     * neither return budget. A hint cannot skip the requested offset; an EOF hint at LEO returns an
+     * empty list. Arbitrary positions inside records are outside this method's contract. See
+     * Step03Test and book step 3.
      *
      * @param offset first segment offset to read
-     * @param bytePositionHint file position at a verified record boundary
+     * @param bytePositionHint caller-verified record boundary within this segment
      * @param maxRecords maximum records to return
      * @param maxBytes maximum encoded bytes to return
      * @return the records within both limits
      * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} for a negative, out-of-file,
-     *     non-boundary, or skipping hint or a nonpositive limit; with {@link
+     *     or target-skipping hint or a nonpositive limit; with {@link
      *     ErrorCode#OFFSET_OUT_OF_RANGE} when {@code offset} is outside this segment, with {@link
-     *     ErrorCode#CORRUPT_RECORD} for corrupt stored contents, or with {@link
+     *     ErrorCode#CORRUPT_RECORD} for corruption in scanned records, or with {@link
      *     ErrorCode#STORAGE_ERROR} for storage failure or a closed segment
      * @throws ExerciseNotImplementedException while the Step 3 exercise method is a skeleton
      */

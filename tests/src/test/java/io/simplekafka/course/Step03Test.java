@@ -27,8 +27,9 @@ import java.util.List;
 
 class Step03Test {
     @Test
-    @DisplayName("Validates record boundary hints and whole record budgets")
-    void validatesRecordBoundaryHintsAndWholeRecordBudgets() throws Exception {
+    @DisplayName(
+            "Reads from trusted record boundaries and validates ranges and whole record budgets")
+    void readsFromTrustedHintsAndValidatesRangesAndWholeRecordBudgets() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {
             Path file = temp.root().resolve("0.log");
             List<RecordData> batch =
@@ -51,10 +52,11 @@ class Step03Test {
                         offsets(log.readFrom(2, 33, 2, 66)),
                         "a hint before the requested offset must not change the target offset");
 
-                for (long invalidHint : new long[] {-1, 1, 67, 166}) {
+                for (long invalidHint : new long[] {-1, 166}) {
                     assertCode(
                             ErrorCode.INVALID_REQUEST, () -> log.readFrom(0, invalidHint, 5, 165));
                 }
+                assertCode(ErrorCode.INVALID_REQUEST, () -> log.readFrom(2, 99, 5, 165));
                 assertCode(ErrorCode.INVALID_REQUEST, () -> log.readFrom(0, 165, 5, 165));
                 assertEquals(
                         List.of(),
@@ -137,6 +139,77 @@ class Step03Test {
 
                 assertCode(ErrorCode.CORRUPT_RECORD, () -> log.readFrom(0, 0, 1, 33));
             }
+        }
+    }
+
+    @Test
+    @DisplayName("Starts at a trusted hint and checks only records scanned from that boundary")
+    void startsAtTrustedHintWithoutReadingEarlierRecords() throws Exception {
+        try (TempDirectory temp = new TempDirectory()) {
+            Path file = temp.root().resolve("5.log");
+            try (SegmentLog log = SegmentLog.create(file, 5)) {
+                log.append(List.of(value("a"), value("a longer second value"), value("tail")));
+                List<Long> positions = RecordBytes.positions(file);
+                List<LogRecord> records = RecordBytes.readRecords(file);
+                byte[] bytes = Files.readAllBytes(file);
+                bytes[32] ^= 1;
+                Files.write(file, bytes);
+
+                assertEquals(
+                        records.subList(2, 3),
+                        log.readFrom(7, positions.get(1), 1, 36),
+                        "the longer skipped record consumes neither the count nor byte budget");
+                assertEquals(records.subList(1, 3), log.readFrom(6, positions.get(1), 2, 4096));
+                assertCode(ErrorCode.CORRUPT_RECORD, () -> log.read(5, 3, 4096));
+
+                bytes[Math.toIntExact(positions.get(1)) + 32] ^= 1;
+                Files.write(file, bytes);
+                assertCode(
+                        ErrorCode.CORRUPT_RECORD, () -> log.readFrom(7, positions.get(1), 1, 36));
+                assertEquals(records.subList(2, 3), log.readFrom(7, positions.get(2), 1, 36));
+                assertEquals(8, log.logEndOffset());
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("Rejects offset gaps within the records scanned from a trusted hint")
+    void rejectsOffsetGapsWithinScannedRecords() throws Exception {
+        try (TempDirectory temp = new TempDirectory()) {
+            Path file = temp.root().resolve("5.log");
+            try (SegmentLog log = SegmentLog.create(file, 5)) {
+                log.append(List.of(value("a"), value("b"), value("c"), value("d")));
+                byte[] first = RecordBytes.record(5, value("a"));
+                byte[] second = RecordBytes.record(6, value("b"));
+                byte[] third =
+                        RecordBytes.withField(RecordBytes.record(7, value("c")), 8, 8, 8, true);
+                byte[] fourth = RecordBytes.record(8, value("d"));
+                Files.write(file, RecordBytes.concat(first, second, third, fourth));
+                assertCode(ErrorCode.CORRUPT_RECORD, () -> log.readFrom(6, 33, 2, 66));
+
+                first = RecordBytes.withField(first, 8, 6, 8, true);
+                Files.write(file, RecordBytes.concat(first, second, third, fourth));
+                assertCode(ErrorCode.CORRUPT_RECORD, () -> log.readFrom(5, 0, 1, 33));
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("Validates hint ranges and budgets before returning empty reads")
+    void validatesHintsAndLimitsForEmptyReads() throws Exception {
+        try (TempDirectory temp = new TempDirectory();
+                SegmentLog log = SegmentLog.create(temp.root().resolve("5.log"), 5)) {
+            assertEquals(List.of(), log.readFrom(5, 0, 1, 33));
+            assertCode(ErrorCode.INVALID_REQUEST, () -> log.readFrom(5, -1, 1, 33));
+            assertCode(ErrorCode.INVALID_REQUEST, () -> log.readFrom(5, 1, 1, 33));
+            assertCode(ErrorCode.INVALID_REQUEST, () -> log.readFrom(5, 0, 0, 33));
+            assertCode(ErrorCode.INVALID_REQUEST, () -> log.readFrom(5, 0, 1, 0));
+            log.append(List.of(value("a")));
+            assertEquals(List.of(), log.readFrom(6, 0, 1, 33));
+            assertEquals(List.of(), log.readFrom(6, 33, 1, 33));
+            assertCode(ErrorCode.INVALID_REQUEST, () -> log.readFrom(6, 34, 1, 33));
+            assertCode(ErrorCode.INVALID_REQUEST, () -> log.readFrom(6, 33, 0, 33));
+            assertCode(ErrorCode.INVALID_REQUEST, () -> log.readFrom(6, 33, 1, 0));
         }
     }
 

@@ -24,6 +24,7 @@
 \lessonhints{先写清楚 floor 的数学定义：候选集合是哪些 offset，空集合的约定是什么。}{把索引读取失败分成“索引可丢弃”和“主日志不可恢复”两类。}{用多段记录构造间隔索引，删除索引文件后再通过真实读取观察恢复效果，而不只检查内存 map。}
 \expected{interval=4 时，对 offset 0、4、8 建项；floor(6) 返回 offset 4 对应的物理位置。删去 \pathcode{.index} 后 reopen 并读取 offset 6，仍得到正确记录。非法长度索引文件也可重建；有损坏日志仍报错。对应 \method{Step05Test}。}
 \pitfalls{索引项若指向记录内部，读取会把任意 payload 当作 header；floor 误用 ceiling 会跳过目标前的边界。索引若成为唯一数据来源，缺索引就丢日志。Kafka 的索引组织与精度/字节偏移模型更复杂；课程每 intervalRecords 条记录索引一次，不是按固定字节间隔。}
+\paragraph{读取所用的可信边界。}传给 add 的 position 必须来自实际追加记录的起点。分区启动时先恢复日志并重建索引，再将 floor 项作为可信读取 hint；未重建的持久索引不能证明其位置与当前日志匹配。SegmentLog.readFrom 从该边界开始，不重新扫描此前的前缀。
 \lessoncommand{5}
 \lessonquestions{为什么找到 floor entry 后仍要扫描记录？}{损坏的 index 和损坏的 log 为何不能采用同一种恢复策略？}
 
