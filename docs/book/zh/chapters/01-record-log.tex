@@ -82,22 +82,24 @@ null key 表示没有 key，空 key 表示存在一个长度为零的 key；把�
 
 \lessonsection{3}{按位点读取}
 \goals{从逻辑 offset 读取完整记录，并同时遵守记录数与编码字节预算。}{区分逻辑位点、文件字节位置、hint（搜索提示）和追加游标。}
-\background{调用者用 offset 指定想要的第一条逻辑记录；文件读取器需要从某个 byte position 开始扫描。offset 是分区日志的编号，byte position 是本段文件内从 0 起算的字节数，它们单位不同、不能互换。bytePositionHint 只帮助减少扫描：必须是记录边界且不能跳过目标；真正返回仍从请求 offset 起。记录不可拆分，maxBytes 按完整编码记录计（包含 4 字节 length 前缀）。显式文件位置读取也让读操作不必改变追加位置。}
+\background{调用者用 offset 指定想要的第一条逻辑记录，文件读取则从 byte position 开始。bytePositionHint 是调用方提供的可信记录边界，例如段首 0，或由追加/恢复记录建立的索引项。读取直接从该边界开始，不再扫描此前的文件前缀来验证它；请求 offset 仍决定返回范围。若记录从字节位置 p 开始、length=L，则完整记录占 4+L 字节，下一条边界是 p+4+L。记录不可拆分，maxBytes 按完整编码字节计，包括最前面的 length 字段。显式位置读取不移动追加游标。}
 \providededit{段的创建、LEO、锁与记录解码已提供；\method{read(long,int,int)} 会使用段起点作为默认 hint。}{\pathcode{exercises/src/main/java/io/simplekafka/storage/SegmentLog.java}：实现 \method{public List<LogRecord> readFrom(long offset,long bytePositionHint,int maxRecords,int maxBytes)}。}
 \subsubsection*{开始前先读}
 完成 \stepref{2}{日志追加}，理解成功追加后 offset 连续、文件按完整编码字节增长。没有稀疏索引时可以从段首找目标；本步的 hint 只是物理起点，不会改变逻辑请求。
 \subsubsection*{输入、输出与状态}
 \begin{itemize}
 \item offset 必须在 \pathcode{[baseOffset, LEO]}；正好等于 LEO 是合法空读。maxRecords 与 maxBytes 都必须大于 0。返回记录按 offset 连续，且不超过任一预算。
-\item bytePositionHint 是本段文件中的非负 byte position，必须位于实际记录边界且不晚于请求 offset 的物理位置；文件末尾 hint 仅当 offset=LEO 合法。负数、越过目标、落在记录内部或越过 EOF 的 hint 报 \method{INVALID_REQUEST}；offset 越过范围报 \method{OFFSET_OUT_OF_RANGE}；磁盘上完整记录损坏报 \method{CORRUPT_RECORD}；段已关闭或底层 I/O 失败报 \method{STORAGE_ERROR}。
+\item bytePositionHint 是本段中由调用方验证过的记录起始字节位置，不能晚于请求记录。负数、越过 EOF 或跳过目标的 hint 报 \method{INVALID_REQUEST}；EOF hint 仅当 offset=LEO 合法。是否属于记录边界是调用前提，不要求从段首扫描验证。实际扫描记录损坏报 \method{CORRUPT_RECORD}；段已关闭或 I/O 失败报 \method{STORAGE_ERROR}。
 \item 若第一条完整记录本身大于 maxBytes，返回空列表，不返回半条。成功或失败读取均不追加、不更改 LEO，也不推进可供后续读取使用的持久消费进度。
 \end{itemize}
-\lessoncontract{从 hint 验证后的记录边界向前扫描，忽略 hint 所在 offset 小于目标的完整记录，输出必须从请求 offset 开始。每条记录完整后才计入记录数和 byte budget；只读不移动追加游标。}
+\paragraph{可信 hint 从哪里来？}Step 3 可以使用段首 0，或构造测试记录时已确定的起始位置；Step 5 根据已知记录边界建立稀疏索引，Step 6 把 floor 索引项传给本方法。恢复检查完整日志，普通 hinted read 只检查实际扫描的记录。本步无需另建一份索引，也无需从段首验证边界。
+\lessoncontract{调用方保证 hint 是真实记录边界；记录内部的任意字节位置不属于本方法契约。offset 必须位于 [baseOffset,LEO]，否则报 \method{OFFSET_OUT_OF_RANGE}；两个预算必须为正。负 hint、越过 EOF，或 hint 所指记录的 offset 大于目标，报 \method{INVALID_REQUEST}；EOF hint 仅当 offset=LEO 合法。从 hint 开始验证实际扫描记录的格式、CRC 和 offset 连续性，跳过目标之前的记录且不消耗返回预算。位置 0 的首记录 offset 必须等于 baseOffset；后面的可信边界用首条解码记录的 offset 建立连续性检查。扫描范围中的损坏报 \method{CORRUPT_RECORD}，hint 之前的前缀不读取、不校验。仅返回满足两个预算的完整记录；首条结果超字节预算时返回空。读取不修改文件、LEO 或追加游标。}
 \subsubsection*{手算完整记录预算与提示}
 假设段 base=0，依次追加 5 条记录；每条 null key、1 字节 value、普通格式，因此都占 $32+1=33$ 字节。它们的 offset 为 0–4，文件起始 position 分别为 0、33、66、99、132，EOF 为 165。调用 \pathcode{readFrom(2,33,2,66)} 时 hint=33 指向 offset 1 的合法边界，读取器跳过 offset 1 后仍从 offset 2 返回 offsets 2、3。预算 32 返回 0 条；33 返回 1 条；65 仍只能容纳 1 条；66 正好容纳 2 条。offset=5 且 hint=165 返回空。
-\expected{\method{Step03Test} 的 \pathcode{validatesRecordBoundaryHintsAndWholeRecordBudgets} 检查 33-byte 位置、hint -1/1/67/166 和跳过目标的 165、预算及错误码；\pathcode{enforcesNonzeroBaseBoundsAndKeepsReadPagingSeparateFromAppendPosition} 检查非零 base 和分页不改追加位点；\pathcode{rereadsCompleteRecordsAndRejectsDamageWrittenThroughAnotherHandle} 检查外部损坏报 \method{CORRUPT_RECORD}。}
-\pitfalls{把 offset=2 当成文件第 2 字节会从记录中间开始；把 hint 当成返回首 offset 会漏掉目标之前之后的语义。字节预算不是 payload 大小，长度、CRC、字段头都占磁盘空间。}
-\lessonhints{画出 offset→文件起始 position 的两行映射，明确每个量的单位。}{再验证 hint 不晚于目标、处于记录边界；输出从 offset 开始而不是从 hint 开始。}{对 32、33、65、66 分别累计完整记录大小，并单独测首记录超过预算时的空结果。}
+\expected{\method{Step03Test} 的 \pathcode{readsFromTrustedHintsAndValidatesRangesAndWholeRecordBudgets} 检查 33-byte 位置、hint -1/166 和跳过目标的 99/165、预算及错误码；\pathcode{enforcesNonzeroBaseBoundsAndKeepsReadPagingSeparateFromAppendPosition} 检查非零 base 和分页不改追加位点；\pathcode{rereadsCompleteRecordsAndRejectsDamageWrittenThroughAnotherHandle} 检查外部损坏报 \method{CORRUPT_RECORD}。}
+\pitfalls{offset=2 不是文件第 2 字节。从任意位置解码成功也不能证明那里是真实边界，payload 本身可能包含一条可解码记录；边界必须由调用方事先建立。每次 hinted read 都从段首验证，会抵消稀疏索引的加速作用。字节预算包含完整头部和 length 前缀，跳过的记录不计入返回预算。}
+\lessonhints{使用编码、追加或恢复时已经确认的边界；没有索引时使用安全 hint=0。}{从 hint 读取 length 和完整 body，再按 4+length 前进，用解码后的逻辑 offset 找到目标。}{分别检查目标之前和之后的真实边界、完整记录预算，以及 hint 之前和扫描范围内的损坏。}
+\paragraph{Hint 回归测试。}\method{Step03Test.startsAtTrustedHintWithoutReadingEarlierRecords} 使用非零 base 和变长记录：hint 之前的损坏不影响后续读取，但 hint 与目标之间跳过的记录损坏必须报错。\method{rejectsOffsetGapsWithinScannedRecords} 检查扫描范围内的 offset 连续性，\method{validatesHintsAndLimitsForEmptyReads} 检查空读参数；\method{Step06Test.startsReadsAtTheSparseIndexBoundary} 通过分区稀疏索引验证读取确实跳过前缀。
 \lessoncommand{3}
 \lessonquestions{为何 hint 指到 offset 1 的边界时，读取 offset 2 不能把 offset 1 返回？}{当第一条记录放不进 maxBytes 时，为什么返回部分记录不是合理选择？}
 \paragraph*{自检参考解释}

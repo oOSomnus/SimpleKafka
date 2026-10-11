@@ -102,6 +102,30 @@ class Step06Test {
     }
 
     @Test
+    @DisplayName("Uses the sparse index boundary without rereading the earlier segment prefix")
+    void startsReadsAtTheSparseIndexBoundary() throws Exception {
+        try (TempDirectory temp = new TempDirectory()) {
+            Path directory = temp.root().resolve("indexed-read");
+            try (PartitionLog log = new PartitionLog(directory, 4096, 2)) {
+                List<LogRecord> expected = expectedRecords(0, 6);
+                log.append(expected.stream().map(LogRecord::data).toList());
+                Path file = directory.resolve(segmentName(0));
+                byte[] bytes = Files.readAllBytes(file);
+                bytes[16] ^= 1;
+                Files.write(file, bytes);
+
+                assertEquals(expected.subList(5, 6), log.read(5, 1, 32));
+                assertCode(ErrorCode.CORRUPT_RECORD, () -> log.read(0, 1, 32));
+
+                long indexedPosition = RecordBytes.positions(file).get(4);
+                bytes[Math.toIntExact(indexedPosition) + 16] ^= 1;
+                Files.write(file, bytes);
+                assertCode(ErrorCode.CORRUPT_RECORD, () -> log.read(5, 1, 32));
+            }
+        }
+    }
+
+    @Test
     @DisplayName("Invalid batch does not mutate an existing multi segment log")
     void invalidBatchDoesNotMutateAnExistingMultiSegmentLog() throws Exception {
         try (TempDirectory temp = new TempDirectory()) {

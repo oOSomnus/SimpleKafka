@@ -119,6 +119,23 @@ public final class SegmentLog implements AutoCloseable {
         return readFrom(offset, 0, maxRecords, maxBytes);
     }
 
+    /**
+     * Reads directly from a caller-verified record boundary, without scanning the earlier prefix.
+     * The caller supplies a trusted boundary such as the segment start or a rebuilt index entry.
+     * Records scanned from the hint are decoded and checked for contiguous offsets; skipped records
+     * before the requested offset consume neither return budget.
+     *
+     * @param offset first segment offset to return
+     * @param bytePositionHint caller-verified record boundary within this segment
+     * @param maxRecords maximum records to return
+     * @param maxBytes maximum encoded bytes to return
+     * @return complete records within both limits, or an empty list at LEO
+     * @throws CourseException with {@link ErrorCode#INVALID_REQUEST} for invalid limits, a
+     *     negative, out-of-file, or target-skipping hint; with {@link
+     *     ErrorCode#OFFSET_OUT_OF_RANGE} for an offset outside the segment; with {@link
+     *     ErrorCode#CORRUPT_RECORD} for corruption in scanned records; or with {@link
+     *     ErrorCode#STORAGE_ERROR} for storage failure or a closed segment
+     */
     public List<LogRecord> readFrom(
             long offset, long bytePositionHint, int maxRecords, int maxBytes) {
         if (maxRecords <= 0 || maxBytes <= 0)
@@ -129,20 +146,26 @@ public final class SegmentLog implements AutoCloseable {
             if (offset < baseOffset || offset > nextOffset)
                 throw new CourseException(
                         ErrorCode.OFFSET_OUT_OF_RANGE, "offset is outside this segment");
-            if (bytePositionHint < 0)
-                throw new CourseException(
-                        ErrorCode.INVALID_REQUEST, "byte-position hint must be nonnegative");
             long fileSize = channel.size();
-            Hint hint = validateHint(bytePositionHint, offset, fileSize);
-            long position = hint.position();
+            if (bytePositionHint < 0 || bytePositionHint > fileSize)
+                throw new CourseException(
+                        ErrorCode.INVALID_REQUEST, "byte-position hint is outside this segment");
+            if (bytePositionHint == fileSize && offset != nextOffset)
+                throw new CourseException(
+                        ErrorCode.INVALID_REQUEST, "EOF hint skips the requested offset");
             if (offset == nextOffset) return List.of();
 
+            long position = bytePositionHint;
             ArrayList<LogRecord> result = new ArrayList<>(Math.min(maxRecords, 16));
-            long expectedOffset = hint.offset();
+            long expectedOffset = position == 0 ? baseOffset : -1;
             long totalBytes = 0;
             while (position < fileSize && result.size() < maxRecords) {
                 RecordAt found = readRecordAt(position, fileSize);
                 long recordOffset = found.record().offset();
+                if (recordOffset < baseOffset || recordOffset >= nextOffset)
+                    throw new CourseException(
+                            ErrorCode.CORRUPT_RECORD, "stored offset is outside this segment");
+                if (expectedOffset < 0) expectedOffset = recordOffset;
                 if (recordOffset != expectedOffset)
                     throw new CourseException(
                             ErrorCode.CORRUPT_RECORD, "segment offsets are not contiguous");
@@ -294,29 +317,6 @@ public final class SegmentLog implements AutoCloseable {
         }
     }
 
-    private Hint validateHint(long hint, long requestedOffset, long fileSize) throws IOException {
-        if (hint > fileSize)
-            throw new CourseException(
-                    ErrorCode.INVALID_REQUEST, "byte-position hint exceeds segment size");
-        long position = 0;
-        long expectedOffset = baseOffset;
-        while (position < hint) {
-            RecordAt found = readRecordAt(position, fileSize);
-            if (found.record().offset() != expectedOffset)
-                throw new CourseException(
-                        ErrorCode.CORRUPT_RECORD, "segment offsets are not contiguous");
-            position += found.bytes();
-            expectedOffset++;
-            if (position > hint)
-                throw new CourseException(
-                        ErrorCode.INVALID_REQUEST, "byte-position hint is not a record boundary");
-        }
-        if (position != hint || expectedOffset > requestedOffset)
-            throw new CourseException(
-                    ErrorCode.INVALID_REQUEST, "byte-position hint skips the requested offset");
-        return new Hint(position, expectedOffset);
-    }
-
     private RecordAt readRecordAt(long position, long fileSize) throws IOException {
         if (position < 0 || position >= fileSize || fileSize - position < Integer.BYTES)
             throw new CourseException(
@@ -375,6 +375,4 @@ public final class SegmentLog implements AutoCloseable {
     }
 
     private record RecordAt(LogRecord record, int bytes) {}
-
-    private record Hint(long position, long offset) {}
 }

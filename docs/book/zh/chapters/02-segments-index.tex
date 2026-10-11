@@ -34,6 +34,7 @@
 \expected{\method{Step05Test}：\pathcode{writesBigEndianEntriesAtIntervalAndFloorsSafely} 检查 16-byte 项、间隔和 floor；\pathcode{supportsNonzeroBasesAndReopensPersistedPoints} 检查非零 base 与重开；\pathcode{rejectedObservationsLeaveTheIndexAndOrderingStateUnchanged} 检查拒绝后状态不变；\pathcode{rebuildsMissingTruncatedAndStaleIndexesFromTheCurrentLog} 与 \pathcode{rebuildRejectsMalformedLogsWithoutChangingTheirBytes} 分别检查索引重建和坏日志拒绝。}
 \pitfalls{floor 不是“最接近的任意项”：只能取不晚于目标的项。索引位置必须指向记录开头，否则读者会把 payload 当 header。索引可以丢弃重建，主日志不可以用猜测替代。}
 \lessonhints{写出候选条件 offset\(\le\)target，再定义没有候选时的结果：(base,0)。}{把每个 observation 的顺序状态与该位置是否已持久化分开；区间以 offset-base 为准。}{删除索引文件，再创建 SparseIndex，通过真实日志读取观察重建，而不只检查内存 floor。}
+\paragraph{读取所用的可信边界。}传给 add 的 position 必须来自实际追加记录的起点。分区启动时先恢复日志并重建索引，再将 floor 项作为可信读取 hint；未重建的持久索引不能证明其位置与当前日志匹配。SegmentLog.readFrom 从该边界开始，不重新扫描此前的前缀。
 \lessoncommand{5}
 \lessonquestions{为什么 floor 找到索引项后仍要逐条扫描主日志？}{索引坏了可以重建，为什么主日志坏了不能采用同一种恢复方式？}
 \paragraph*{自检参考解释}
