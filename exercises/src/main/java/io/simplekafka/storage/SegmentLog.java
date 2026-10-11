@@ -9,6 +9,7 @@ import io.simplekafka.model.ProducerStamp;
 import io.simplekafka.model.RecordData;
 
 import java.io.IOException;
+import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
@@ -17,6 +18,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.IntStream;
@@ -205,7 +207,75 @@ public final class SegmentLog implements AutoCloseable {
      */
     public List<LogRecord> readFrom(
             long offset, long bytePositionHint, int maxRecords, int maxBytes) {
-        throw new ExerciseNotImplementedException(3, "SegmentLog.readFrom");
+        lock.lock();
+        try {
+            ensureOpen();
+            if (offset < baseOffset || offset > logEndOffset()) {
+                throw new CourseException(ErrorCode.OFFSET_OUT_OF_RANGE, "invalid offset");
+            }
+            FileChannel channel;
+            try {
+                channel = FileChannel.open(path, StandardOpenOption.READ);
+            } catch (IOException exception) {
+                throw storageError("open segment " + path, exception);
+            }
+            if (maxRecords <= 0 || maxBytes <= 0) {
+                throw new CourseException(ErrorCode.INVALID_REQUEST, "invalid max records");
+            }
+            // valid empty read
+            if (bytePositionHint == channel.size() && offset == logEndOffset()) {
+                return Collections.emptyList();
+            }
+            if (bytePositionHint < 0 || bytePositionHint >= channel.size()) {
+                throw new CourseException(ErrorCode.INVALID_REQUEST, "invalid hint");
+            }
+            int bytesRead = 0, recordsRead = 0;
+            long currentReadPos = bytePositionHint;
+            List<LogRecord> logRecords = new ArrayList<>();
+            boolean firstRecord = true;
+            for (; ; ) {
+                if (recordsRead >= maxRecords
+                        || bytesRead >= maxBytes
+                        || currentReadPos >= channel.size()) {
+                    return logRecords;
+                }
+                ByteBuffer lengthBuffer = ByteBuffer.allocate(4);
+                channel.read(lengthBuffer, currentReadPos);
+                int length = lengthBuffer.getInt(0);
+                ByteBuffer recordBuffer = ByteBuffer.allocate(length + 4);
+                channel.read(recordBuffer, currentReadPos);
+                recordBuffer.flip();
+                currentReadPos += length + 4;
+                LogRecord record = RecordCodec.decode(recordBuffer);
+                if (firstRecord && bytePositionHint == 0 && record.offset() != baseOffset) {
+                    throw new CourseException(
+                            ErrorCode.CORRUPT_RECORD, "segment starts at an unexpected offset");
+                }
+                if (firstRecord && record.offset() > offset) {
+                    throw new CourseException(ErrorCode.INVALID_REQUEST, "invalid offset");
+                } else {
+                    firstRecord = false;
+                }
+                if (record.offset() >= offset) {
+                    if (!logRecords.isEmpty()
+                            && record.offset() != logRecords.getLast().offset() + 1) {
+                        throw new CourseException(ErrorCode.CORRUPT_RECORD, "corrupt record");
+                    }
+                    recordsRead += 1;
+                    bytesRead += length + 4;
+                    if (bytesRead > maxBytes) {
+                        return logRecords;
+                    }
+                    logRecords.add(record);
+                }
+            }
+        } catch (IOException e) {
+            throw storageError("read segment " + path, e);
+        } catch (BufferUnderflowException e) {
+            throw new CourseException(ErrorCode.CORRUPT_RECORD, "invalid buffer");
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
